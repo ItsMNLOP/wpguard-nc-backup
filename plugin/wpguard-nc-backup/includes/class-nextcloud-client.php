@@ -209,6 +209,15 @@ class Nextcloud_Client {
 			'filename' => $local_path,
 			'timeout'  => 300,
 		);
+		$tolerance = 0;
+		if ( $expected_max_bytes > 0 ) {
+			$tolerance = max( 4096, (int) ( $expected_max_bytes * 0.01 ) );
+			// Vex audit L-02: abort while streaming once the response
+			// exceeds the manifest's declared size (plus tolerance),
+			// rather than only discovering the overrun after the full
+			// object has already landed on disk.
+			$args['limit_response_size'] = $expected_max_bytes + $tolerance;
+		}
 		$response = $this->request( 'GET', $this->url_for( $relative_path ), $args );
 		if ( is_wp_error( $response ) ) {
 			return $response;
@@ -217,9 +226,11 @@ class Nextcloud_Client {
 		if ( 200 !== $code ) {
 			return new \WP_Error( 'wpguard_nc_get_failed', sprintf( 'GET failed with HTTP %d', $code ), array( 'status' => $code ) );
 		}
+		// Kept as defense in depth: limit_response_size's behavior isn't
+		// identical across every WP HTTP transport, so the post-hoc check
+		// still catches anything that slipped past the streaming limit.
 		if ( $expected_max_bytes > 0 && file_exists( $local_path ) ) {
 			$actual = filesize( $local_path );
-			$tolerance = max( 4096, (int) ( $expected_max_bytes * 0.01 ) );
 			if ( $actual > $expected_max_bytes + $tolerance ) {
 				unlink( $local_path );
 				return new \WP_Error( 'wpguard_nc_size_exceeded', 'Downloaded object exceeded the manifest-declared size; aborted.' );

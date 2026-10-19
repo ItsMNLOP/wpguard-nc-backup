@@ -15,9 +15,21 @@ class CA_Bundle {
 	/**
 	 * @return true|string True if valid, else a translated error string.
 	 */
+	/** A real CA bundle (even one with many intermediates) is a few KB; this is a generous ceiling, not a tight one. */
+	const MAX_BYTES = 1048576; // 1 MiB
+
 	public static function validate_path( string $path ) {
 		if ( ! is_readable( $path ) ) {
 			return __( 'CA bundle path does not exist or is not readable by the web server.', 'wpguard-nc-backup' );
+		}
+		// Vex audit L-04: this is an admin-only path (manage_options +
+		// nonce), but file_get_contents() with no size bound still lets a
+		// misconfigured or malicious path (e.g. a device file or a huge
+		// file) exhaust PHP's memory limit before the content is even
+		// inspected.
+		$size = @filesize( $path );
+		if ( false !== $size && $size > self::MAX_BYTES ) {
+			return __( 'CA bundle file is larger than expected for a certificate bundle; refusing to read it.', 'wpguard-nc-backup' );
 		}
 		$contents = file_get_contents( $path );
 		if ( false === $contents || '' === trim( $contents ) ) {
