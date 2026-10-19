@@ -34,6 +34,21 @@ Per-job structured log (last 200 entries), redacted at write time
 `wp wpguard-nc-backup status`. No secrets should ever appear there — this
 is tested (`tests/unit/LoggerRedactionTest.php`), not just asserted.
 
+## No stale-lock recovery (disclosed, not fixed in MVP — found live during E2E testing)
+
+JOB-01 requires preventing overlapping backups, implemented via
+`Job_Store::has_running_job()` refusing a new job while one is
+`queued`/`running`. MVP has no corresponding **expiry**: JOB-05 ("lock
+leasing with expiration/recovery") is explicitly Phase 2/[H]. A job that
+is genuinely interrupted (PHP killed, container restarted, browser tab
+closed with WP-Cron also failing to pick it up) stays `running` forever
+and blocks every future "Back Up Now" until an administrator manually
+updates the job row (`wp db query "UPDATE ... SET status='interrupted' ...`)
+or a future version adds lock expiry. This was hit for real during this
+build's own E2E testing (a deliberately interrupted job from a failure
+test blocked the next real backup) and is disclosed here rather than
+silently worked around.
+
 ## WP-Cron limitation (disclosed, not fixed in MVP)
 
 The cron fallback relies on WP-Cron, which only fires on a page load on a

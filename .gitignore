@@ -8,6 +8,7 @@ node_modules/
 vendor/
 .phpunit.result.cache
 tests/e2e/artifacts/
+.e2e-scratch/
 *.sql
 *.zip
 !docs/**/*.zip

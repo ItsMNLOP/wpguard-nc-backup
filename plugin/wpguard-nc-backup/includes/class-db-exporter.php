@@ -119,6 +119,21 @@ class DB_Exporter {
 		);
 	}
 
+	/**
+	 * Neither $wpdb->prepare('%s', $val) NOR esc_sql($val) alone is safe
+	 * here: both internally call wpdb::add_placeholder_escape(), which
+	 * replaces literal '%' in the value with a one-time '{salt}' token
+	 * so a LATER prepare() call can restore it after doing its own
+	 * sprintf-style substitution. We never make that later call — we
+	 * write the escaped string straight to a SQL file as a final
+	 * literal — so the token was leaking into stored data verbatim
+	 * (found live, during E2E restore testing, via a post slug with
+	 * percent-encoded emoji bytes: "...%f0%9f..." came back as
+	 * "...{64-hex-chars}f0{64-hex-chars}9f...", which then overflowed
+	 * the post_name column on import). remove_placeholder_escape()
+	 * undoes exactly that wrapping, restoring the real '%' characters,
+	 * giving a value safe to use as a standalone terminal SQL literal.
+	 */
 	private static function write_inserts( $fh, string $table, string $column_list, array $columns, array $types, array $rows ): void {
 		global $wpdb;
 		$value_groups = array();
@@ -131,7 +146,7 @@ class DB_Exporter {
 				} elseif ( self::is_binary_type( $types[ $col ] ) ) {
 					$values[] = "0x" . bin2hex( $val );
 				} else {
-					$values[] = $wpdb->prepare( '%s', $val );
+					$values[] = "'" . $wpdb->remove_placeholder_escape( esc_sql( $val ) ) . "'";
 				}
 			}
 			$value_groups[] = '(' . implode( ', ', $values ) . ')';

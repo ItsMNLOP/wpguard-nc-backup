@@ -105,7 +105,7 @@ class Job_Orchestrator {
 			return self::fail( $job_id, 'init', 'Nextcloud URL, username, and app password must all be configured before a backup can run.' );
 		}
 		$client = Nextcloud_Client::from_settings( self::logger() );
-		$mk = $client->mkcol_recursive( trim( Settings::get_remote_folder(), '/' ) . '/' . Settings::get_site_id() . '/backups/' . $job['backup_id'] );
+		$mk = $client->mkcol_recursive( $client->relative_path( Settings::get_site_id() . '/backups/' . $job['backup_id'] ) );
 		if ( is_wp_error( $mk ) ) {
 			return self::fail( $job_id, 'init', 'Could not prepare remote destination folder: ' . $mk->get_error_message() );
 		}
@@ -284,13 +284,13 @@ class Job_Orchestrator {
 		}
 
 		$item = array_shift( $cp['parts_to_upload'] );
-		$remote_rel = Settings::get_site_id() . '/backups/' . $job['backup_id'] . '/' . $item['remote'];
+		$client = Nextcloud_Client::from_settings( self::logger() );
+		$remote_rel = $client->relative_path( Settings::get_site_id() . '/backups/' . $job['backup_id'] . '/' . $item['remote'] );
 
 		$local_bytes = file_get_contents( $item['local'] );
 		$local_sha256 = $item['sha256'] ?? hash( 'sha256', $local_bytes );
 		$local_size = $item['bytes'] ?? strlen( $local_bytes );
 
-		$client = Nextcloud_Client::from_settings( self::logger() );
 		$put = $client->put_bytes( $remote_rel, $local_bytes );
 		unset( $local_bytes );
 		if ( is_wp_error( $put ) ) {
@@ -329,8 +329,8 @@ class Job_Orchestrator {
 		$complete_path = $tmp . 'COMPLETE.json';
 		file_put_contents( $complete_path, $complete_json );
 
-		$remote_rel = Settings::get_site_id() . '/backups/' . $job['backup_id'] . '/COMPLETE.json';
 		$client = Nextcloud_Client::from_settings( self::logger() );
+		$remote_rel = $client->relative_path( Settings::get_site_id() . '/backups/' . $job['backup_id'] . '/COMPLETE.json' );
 		$put = $client->put_bytes( $remote_rel, $complete_json );
 		if ( is_wp_error( $put ) ) {
 			return self::fail( $job_id, 'finalize', 'Could not upload completion marker: ' . $put->get_error_message() );

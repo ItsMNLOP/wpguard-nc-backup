@@ -36,14 +36,28 @@ class Nextcloud_Client {
 		);
 	}
 
-	/** Full remote.php/dav URL for a path relative to the configured destination folder. */
+	/**
+	 * Full remote.php/dav URL for a path relative to the user's WebDAV
+	 * root. Does NOT prepend the configured destination folder — callers
+	 * that want a path under it must build it via relative_path() first.
+	 * (Keeping this one literal, instead of two different "relative to
+	 * what" conventions, is what fixed a real double-prefix bug found
+	 * during E2E testing: mkcol_recursive() needs to create the
+	 * destination folder itself as part of its chain, which an
+	 * auto-prepending url_for() made impossible to express correctly.)
+	 */
 	public function url_for( string $relative_path ): string {
-		$folder = trim( Settings::get_remote_folder(), '/' );
 		$relative_path = trim( $relative_path, '/' );
 		$encoded_user = rawurlencode( $this->user );
-		$path = $folder . ( $relative_path !== '' ? '/' . $relative_path : '' );
-		$encoded_path = implode( '/', array_map( 'rawurlencode', explode( '/', $path ) ) );
-		return $this->base_url . '/remote.php/dav/files/' . $encoded_user . '/' . $encoded_path;
+		$encoded_path = $relative_path === '' ? '' : implode( '/', array_map( 'rawurlencode', explode( '/', $relative_path ) ) );
+		return $this->base_url . '/remote.php/dav/files/' . $encoded_user . ( $encoded_path !== '' ? '/' . $encoded_path : '' );
+	}
+
+	/** Path relative to the WebDAV root, under the configured destination folder. */
+	public function relative_path( string $suffix ): string {
+		$folder = trim( Settings::get_remote_folder(), '/' );
+		$suffix = trim( $suffix, '/' );
+		return $suffix === '' ? $folder : $folder . '/' . $suffix;
 	}
 
 	/**
@@ -96,7 +110,7 @@ class Nextcloud_Client {
 		if ( in_array( $code, array( 201, 405 ), true ) ) {
 			return true;
 		}
-		return new \WP_Error( 'wpguard_nc_mkcol_failed', sprintf( 'MKCOL failed with HTTP %d', $code ) );
+		return new \WP_Error( 'wpguard_nc_mkcol_failed', sprintf( 'MKCOL failed with HTTP %d', $code ), array( 'status' => $code ) );
 	}
 
 	/** Creates nested remote directories one level at a time. */
@@ -154,7 +168,7 @@ class Nextcloud_Client {
 			return array( 'exists' => false, 'length' => 0 );
 		}
 		if ( 207 !== $code ) {
-			return new \WP_Error( 'wpguard_nc_propfind_failed', sprintf( 'PROPFIND failed with HTTP %d', $code ) );
+			return new \WP_Error( 'wpguard_nc_propfind_failed', sprintf( 'PROPFIND failed with HTTP %d', $code ), array( 'status' => $code ) );
 		}
 		$xml_text = wp_remote_retrieve_body( $response );
 		$previous = libxml_use_internal_errors( true );
@@ -188,7 +202,7 @@ class Nextcloud_Client {
 		}
 		$code = wp_remote_retrieve_response_code( $response );
 		if ( 200 !== $code ) {
-			return new \WP_Error( 'wpguard_nc_get_failed', sprintf( 'GET failed with HTTP %d', $code ) );
+			return new \WP_Error( 'wpguard_nc_get_failed', sprintf( 'GET failed with HTTP %d', $code ), array( 'status' => $code ) );
 		}
 		if ( $expected_max_bytes > 0 && file_exists( $local_path ) ) {
 			$actual = filesize( $local_path );
@@ -210,7 +224,7 @@ class Nextcloud_Client {
 		if ( in_array( $code, array( 200, 204, 404 ), true ) ) {
 			return true;
 		}
-		return new \WP_Error( 'wpguard_nc_delete_failed', sprintf( 'DELETE failed with HTTP %d', $code ) );
+		return new \WP_Error( 'wpguard_nc_delete_failed', sprintf( 'DELETE failed with HTTP %d', $code ), array( 'status' => $code ) );
 	}
 
 	/**
@@ -228,18 +242,19 @@ class Nextcloud_Client {
 			return $this->classify_failure( $mk, 'folder' );
 		}
 
-		$put = $this->put_bytes( $probe_name, 'wpguard-nc-backup-connection-test' );
+		$probe_rel = $this->relative_path( $probe_name );
+		$put = $this->put_bytes( $probe_rel, 'wpguard-nc-backup-connection-test' );
 		if ( is_wp_error( $put ) ) {
 			return $this->classify_failure( $put, 'write' );
 		}
 
-		$info = $this->propfind_size( $probe_name );
+		$info = $this->propfind_size( $probe_rel );
 		if ( is_wp_error( $info ) || empty( $info['exists'] ) ) {
-			$this->delete( $probe_name );
+			$this->delete( $probe_rel );
 			return array( 'ok' => false, 'reason' => 'read', 'message' => __( 'Wrote the test file but could not read it back.', 'wpguard-nc-backup' ) );
 		}
 
-		$del = $this->delete( $probe_name );
+		$del = $this->delete( $probe_rel );
 		if ( is_wp_error( $del ) ) {
 			return array( 'ok' => false, 'reason' => 'delete', 'message' => __( 'Connected and wrote/read a test file, but could not delete it. Check folder permissions.', 'wpguard-nc-backup' ) );
 		}
@@ -258,7 +273,7 @@ class Nextcloud_Client {
 		if ( 404 === $status ) {
 			return array( 'ok' => false, 'reason' => 'not_found', 'message' => __( 'Destination not found (404). Check the Nextcloud URL and folder path.', 'wpguard-nc-backup' ) );
 		}
-		if ( 507 === $status || 403 === $status ) {
+		if ( 507 === $status ) {
 			return array( 'ok' => false, 'reason' => 'quota', 'message' => __( 'Nextcloud reported insufficient storage/quota.', 'wpguard-nc-backup' ) );
 		}
 		if ( 0 === $status ) {

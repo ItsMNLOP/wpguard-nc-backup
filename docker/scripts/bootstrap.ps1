@@ -103,6 +103,16 @@ Wait-For "db-source" { (docker compose exec -T db-source mariadb-admin ping -h 1
 Wait-For "db-nextcloud" { (docker compose exec -T db-nextcloud mariadb-admin ping -h 127.0.0.1 -u root -p"$ncDbRootPw" 2>$null) -match "mysqld is alive" }
 Wait-For "db-restore" { (docker compose exec -T db-restore mariadb-admin ping -h 127.0.0.1 -u root -p"$wpRestoreRootPw" 2>$null) -match "mysqld is alive" }
 Wait-For "wp-source http" { try { (Invoke-WebRequest -Uri "http://127.0.0.1:8081/wp-login.php" -UseBasicParsing -TimeoutSec 5).StatusCode -in 200,302 } catch { $false } }
+
+Write-Host "Ensuring the dotted internal hostname is trusted by Nextcloud..."
+# The nextcloud image only seeds NEXTCLOUD_TRUSTED_DOMAINS on first install;
+# a dotted alias added later (needed because wp_http_validate_url rejects
+# dotless hostnames - see ADR 0009) must be added explicitly and is safe to
+# repeat.
+$trustedDomains = docker compose exec -T nextcloud php occ config:system:get trusted_domains 2>$null
+if ($trustedDomains -notmatch "nc-proxy\.wpguard-test\.local") {
+    docker compose exec -T nextcloud php occ config:system:set trusted_domains 2 --value="nc-proxy.wpguard-test.local" | Out-Null
+}
 Wait-For "nextcloud http (via proxy)" { try { (Invoke-WebRequest -Uri "https://127.0.0.1:8443/status.php" -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200 } catch { $false } }
 
 $wpAdminUser = Env "WP_ADMIN_USER"

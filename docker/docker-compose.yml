@@ -56,7 +56,7 @@ services:
       MYSQL_PASSWORD: ${NC_DB_PASSWORD}
       NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER}
       NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
-      NEXTCLOUD_TRUSTED_DOMAINS: nc-proxy
+      NEXTCLOUD_TRUSTED_DOMAINS: "nc-proxy nc-proxy.wpguard-test.local"
       TRUSTED_PROXIES: 0.0.0.0/0
       OVERWRITEPROTOCOL: https
       OVERWRITECLIURL: https://nc-proxy
@@ -114,11 +114,19 @@ services:
     image: wordpress:cli
     restart: "no"
     user: "33:33"
+    environment:
+      # wp-config.php calls getenv_docker() live on every request (it is
+      # not a one-time-rendered file), so this must match wp-source's own
+      # setting whenever wpcli operates on html-source (ADR 0007's CA
+      # trust path and the DB_* vars below for the same reason).
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WPGUARD_NC_CA_BUNDLE', '/usr/local/share/ca-certificates/wpguard-test-ca.crt');
     volumes:
       - wp_source_html:/var/www/html-source
       - ../plugin/wpguard-nc-backup:/var/www/html-source/wp-content/plugins/wpguard-nc-backup
       - wp_restore_html:/var/www/html-restore
       - ./certs:/certs:ro
+      - ./certs:/usr/local/share/ca-certificates:ro
       - ../tests/fixtures:/fixtures:ro
     networks: [wpguard-test]
 
