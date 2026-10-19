@@ -38,5 +38,37 @@ assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
 
 - Scheduling/retention/one-click restore/multisite/chunked-upload-v2 (Phase 2+).
 - **Stale-job-lock recovery** (JOB-05, [H]): found live — an interrupted job blocks all future backups until an admin manually clears its row. Disclosed in `docs/operations.md`.
-- Vex independent security audit (SOP-023) — required before any production use, not before this MVP test handoff, since no production deployment occurred.
 - CI actually executing — written, not run.
+
+## Vex security audit (SOP-023) — 2026-10-19
+
+First independent security pass. Verdict was **BLOCKED** pending two HIGH
+findings; both fixed same-day, re-verified (22/22 unit tests, full E2E
+drill green), committed in `0310976`. See `docs/threat-model.md` (T9,
+T12, T14) for the updated per-threat detail.
+
+- **H-01** (concurrent AJAX+cron job-advance race could mark a
+  structurally corrupt backup `verified`) — fixed: MySQL advisory lock
+  around `Job_Orchestrator::advance()`.
+- **H-02** (constant-override credential path backed up `wp-config.php`
+  containing the very credential protecting the backup) — fixed:
+  `wp-config.php` redacted before archiving; stale `wp_options` copy
+  purged once the constant takes over.
+- **M-01** (WebDAV client followed HTTP redirects) — fixed: `redirection
+  => 0`.
+- **L-01** (temp files not cleaned up on job failure, web-accessible by
+  URL on Nginx) — fixed: `cleanup_tmp()` now runs on the failure path too.
+- **L-03** (`simplexml_load_string` without explicit `LIBXML_NONET`) —
+  fixed.
+- **L-02** (archive-bomb check is post-download, not a true streaming
+  abort) and **L-04** (CA-bundle file read has no size cap) — not yet
+  fixed; both judged low-severity/admin-only-path by Vex, tracked as
+  Phase 2 hardening.
+- **Not yet done, per Vex's own sign-off conditions**: a regression test
+  that exercises concurrent AJAX+cron advancement directly (today's
+  verification is code review + the lock mechanism, not a race-
+  simulating test), and an E2E scenario exercising the constant-override
+  credential path specifically (today's verification is the new unit
+  test + the lock mechanism, not an extension of the E2E credential-leak
+  check to file archives). **Final Vex re-review/sign-off against these
+  two conditions is still outstanding before production use.**
