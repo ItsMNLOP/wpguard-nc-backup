@@ -58,12 +58,17 @@ T12, T14) for the updated per-threat detail.
   => 0`.
 - **L-01** (temp files not cleaned up on job failure, web-accessible by
   URL on Nginx) — fixed: `cleanup_tmp()` now runs on the failure path too.
+- **L-02** (archive-bomb check was post-download, not a true streaming
+  abort) — fixed: `download_to_file()` now passes `limit_response_size`
+  to abort mid-stream, with the original post-hoc check kept as
+  defense in depth.
 - **L-03** (`simplexml_load_string` without explicit `LIBXML_NONET`) —
   fixed.
-- **L-02** (archive-bomb check is post-download, not a true streaming
-  abort) and **L-04** (CA-bundle file read has no size cap) — not yet
-  fixed; both judged low-severity/admin-only-path by Vex, tracked as
-  Phase 2 hardening.
+- **L-04** (CA-bundle file read has no size cap) — fixed: 1 MiB ceiling
+  checked via `filesize()` before the content is ever read.
+
+**All findings from the 2026-10-19 audit are now fixed** (both HIGHs,
+the one MEDIUM, all four LOWs) — see commits `0310976`, `31068b6`.
 - **Vex's two re-verification conditions are now met** (2026-10-19,
   same day): `tests/e2e/run-e2e-lock-race.sh` proves the H-01 lock
   actually excludes a genuinely concurrent second OS process/MySQL
