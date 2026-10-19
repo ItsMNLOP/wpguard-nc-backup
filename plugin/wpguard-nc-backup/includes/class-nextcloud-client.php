@@ -71,6 +71,14 @@ class Nextcloud_Client {
 				'Authorization' => 'Basic ' . base64_encode( $this->user . ':' . $this->app_password ),
 			),
 			'sslverify' => true,
+			// WebDAV methods have no standardized redirect semantics (a
+			// followed redirect can silently turn a PUT into a GET that
+			// returns 200, or downgrade https->http on the same host,
+			// forwarding the Authorization header over plaintext). A
+			// correctly configured Nextcloud server never redirects
+			// WebDAV requests; if one does, that must surface as an
+			// error, not be followed transparently.
+			'redirection' => 0,
 		);
 		if ( '' !== $this->ca_bundle_path ) {
 			$defaults['sslcertificates'] = $this->ca_bundle_path;
@@ -172,7 +180,12 @@ class Nextcloud_Client {
 		}
 		$xml_text = wp_remote_retrieve_body( $response );
 		$previous = libxml_use_internal_errors( true );
-		$xml = simplexml_load_string( $xml_text );
+		// LIBXML_NONET: defense in depth against external entity loading
+		// in a server's PROPFIND response (Vex audit L-03). Already
+		// disabled by default on the libxml >=2.9 that ships with this
+		// plugin's required PHP 8.1+, but explicit here so the guarantee
+		// doesn't silently depend on a future runtime's default.
+		$xml = simplexml_load_string( $xml_text, 'SimpleXMLElement', LIBXML_NONET );
 		libxml_use_internal_errors( $previous );
 		if ( false === $xml ) {
 			return new \WP_Error( 'wpguard_nc_propfind_parse_failed', 'Could not parse PROPFIND XML response.' );

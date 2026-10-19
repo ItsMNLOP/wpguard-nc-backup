@@ -116,7 +116,11 @@ class Settings {
 
 		// App password: blank submission means "leave unchanged" (never clears it).
 		if ( self::is_app_password_locked() ) {
-			$clean['app_password'] = $current['app_password']; // stored value irrelevant while locked, kept as-is.
+			// Vex audit H-02: purge any previously option-stored value once
+			// the constant override takes over. Leaving the old value in
+			// wp_options meant switching to the "more secure" constant path
+			// didn't actually revoke the old credential from the database.
+			$clean['app_password'] = '';
 		} else {
 			$submitted = isset( $input['app_password'] ) ? (string) $input['app_password'] : '';
 			$clean['app_password'] = ( '' === $submitted ) ? $current['app_password'] : $submitted;
@@ -190,5 +194,18 @@ class Settings {
 	public static function get_site_id(): string {
 		$id = get_option( self::SITE_ID_KEY, '' );
 		return is_string( $id ) && '' !== $id ? $id : self::ensure_site_id();
+	}
+
+	/**
+	 * Strips any line defining the app-password or CA-bundle constants
+	 * (ADR 0002's escape hatch) out of wp-config.php content before it is
+	 * archived (Vex audit H-02) — a backup that depends on the
+	 * credential protecting it must not also contain that credential.
+	 * Pure string transform, no I/O, so the orchestrator handles reading
+	 * the real file and writing the redacted copy to the job's tmp dir.
+	 */
+	public static function redact_wp_config_contents( string $content ): string {
+		$pattern = '/define\s*\(\s*[\'"](?:' . preg_quote( self::APP_PW_CONST, '/' ) . '|' . preg_quote( self::CA_BUNDLE_CONST, '/' ) . ')[\'"]\s*,.*?\)\s*;/';
+		return preg_replace( $pattern, '// wpguard-nc-backup: line redacted from backup archive (credential constant).', $content );
 	}
 }

@@ -115,8 +115,35 @@ class Job_Store {
 
 	public static function has_running_job(): bool {
 		global $wpdb;
-		$count = $wpdb->get_var( "SELECT COUNT(*) FROM " . self::table_name() . " WHERE status IN ('queued','running')" );
+		$count = $wpdb->get_var( "SELECT COUNT(*) FROM " . self::table_name() . " WHERE status IN ('queued','running','uploaded-unverified')" );
 		return (int) $count > 0;
+	}
+
+	/**
+	 * Non-blocking MySQL advisory lock keyed by job_id (Vex audit H-01):
+	 * AJAX polling and the WP-Cron fallback can both call
+	 * Job_Orchestrator::advance() for the same job in overlapping
+	 * requests. Without mutual exclusion, two processes race on the same
+	 * checkpoint read-modify-write, corrupting the SQL dump or losing zip
+	 * entries while each side's locally-computed hash still matches what
+	 * it uploaded — a backup that passes verification while being
+	 * structurally broken. GET_LOCK is session-scoped on the $wpdb
+	 * connection, so it is also released automatically if the PHP
+	 * process dies before reaching release_lock().
+	 */
+	public static function try_lock( string $job_id ): bool {
+		global $wpdb;
+		$got = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 0)', self::lock_name( $job_id ) ) );
+		return '1' === (string) $got;
+	}
+
+	public static function release_lock( string $job_id ): void {
+		global $wpdb;
+		$wpdb->query( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', self::lock_name( $job_id ) ) );
+	}
+
+	private static function lock_name( string $job_id ): string {
+		return 'wpguard_nc_job_' . $job_id;
 	}
 
 	/** @return array|null The most recent job with status = 'verified'. */

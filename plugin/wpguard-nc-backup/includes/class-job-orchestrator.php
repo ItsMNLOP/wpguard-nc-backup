@@ -62,7 +62,16 @@ class Job_Orchestrator {
 		$safe = self::logger()->redact( $message );
 		self::log( $job_id, $step, 'error', $safe );
 		Job_Store::update( $job_id, array( 'status' => 'failed', 'error' => $safe ) );
-		return Job_Store::get( $job_id );
+		$job = Job_Store::get( $job_id );
+		// Vex audit L-01: cleanup_tmp() previously only ran on the success
+		// path, leaving partial database/archive files under
+		// wp-content/wpguard-nc-backup-tmp/ indefinitely on failure —
+		// .htaccess-protected on Apache but directly web-accessible on
+		// Nginx with no equivalent guard.
+		if ( null !== $job && ! empty( $job['backup_id'] ) ) {
+			self::cleanup_tmp( self::tmp_dir_for( $job['backup_id'] ) );
+		}
+		return $job;
 	}
 
 	/**
@@ -71,31 +80,44 @@ class Job_Orchestrator {
 	 * @return array Updated job row (see Job_Store::get()).
 	 */
 	public static function advance( string $job_id ): array {
-		$job = Job_Store::get( $job_id );
-		if ( null === $job ) {
-			return array( 'status' => 'not_found' );
-		}
-		if ( in_array( $job['status'], array( 'verified', 'failed' ), true ) ) {
-			return $job;
+		// Vex audit H-01: AJAX polling and the WP-Cron fallback can both
+		// reach this method for the same job in overlapping requests. If
+		// another process already holds the lock, just report the
+		// current state instead of racing it on the same checkpoint.
+		if ( ! Job_Store::try_lock( $job_id ) ) {
+			$job = Job_Store::get( $job_id );
+			return $job ?? array( 'status' => 'not_found' );
 		}
 
-		Job_Store::update( $job_id, array( 'status' => 'running' ) );
+		try {
+			$job = Job_Store::get( $job_id );
+			if ( null === $job ) {
+				return array( 'status' => 'not_found' );
+			}
+			if ( in_array( $job['status'], array( 'verified', 'failed' ), true ) ) {
+				return $job;
+			}
 
-		switch ( $job['step'] ) {
-			case 'init':
-				return self::step_init( $job );
-			case 'export_db':
-				return self::step_export_db( $job );
-			case 'export_files':
-				return self::step_export_files( $job );
-			case 'package_manifest':
-				return self::step_package_manifest( $job );
-			case 'upload_parts':
-				return self::step_upload_parts( $job );
-			case 'finalize':
-				return self::step_finalize( $job );
-			default:
-				return self::fail( $job_id, $job['step'], 'Unknown job step: ' . $job['step'] );
+			Job_Store::update( $job_id, array( 'status' => 'running' ) );
+
+			switch ( $job['step'] ) {
+				case 'init':
+					return self::step_init( $job );
+				case 'export_db':
+					return self::step_export_db( $job );
+				case 'export_files':
+					return self::step_export_files( $job );
+				case 'package_manifest':
+					return self::step_package_manifest( $job );
+				case 'upload_parts':
+					return self::step_upload_parts( $job );
+				case 'finalize':
+					return self::step_finalize( $job );
+				default:
+					return self::fail( $job_id, $job['step'], 'Unknown job step: ' . $job['step'] );
+			}
+		} finally {
+			Job_Store::release_lock( $job_id );
 		}
 	}
 
@@ -186,6 +208,10 @@ class Job_Orchestrator {
 			$abs = $cp['files_remaining'][ $relative ];
 			unset( $cp['files_remaining'][ $relative ] );
 
+			if ( 'wp-config.php' === $relative ) {
+				$abs = self::redacted_wp_config_copy( $abs, $tmp );
+			}
+
 			$size = @filesize( $abs );
 			$size = false === $size ? 0 : $size;
 
@@ -215,6 +241,23 @@ class Job_Orchestrator {
 		self::log( $job_id, 'export_files', 'info', 'File archiving complete (' . count( $cp['parts_meta'] ) . ' part(s)).' );
 		Job_Store::update( $job_id, array( 'step' => 'package_manifest', 'checkpoint' => $cp ) );
 		return Job_Store::get( $job_id );
+	}
+
+	/**
+	 * Vex audit H-02: ADR 0002's constant-override escape hatch puts the
+	 * Nextcloud app password directly in wp-config.php — which this same
+	 * backup then archives verbatim, circularly exposing the credential
+	 * that protects the backup inside the backup itself. Strips any line
+	 * defining the app-password or CA-bundle constants before the file
+	 * reaches the archive, regardless of whether the override is
+	 * currently active (so a backup taken while it's off can't later be
+	 * "upgraded" into leaking a value that gets set afterward).
+	 */
+	private static function redacted_wp_config_copy( string $original_abs, string $tmp ): string {
+		$redacted = Settings::redact_wp_config_contents( file_get_contents( $original_abs ) );
+		$redacted_path = $tmp . 'wp-config.redacted.php';
+		file_put_contents( $redacted_path, $redacted );
+		return $redacted_path;
 	}
 
 	private static function part_path( string $tmp, int $index ): string {
