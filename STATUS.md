@@ -64,11 +64,15 @@ T12, T14) for the updated per-threat detail.
   abort) and **L-04** (CA-bundle file read has no size cap) — not yet
   fixed; both judged low-severity/admin-only-path by Vex, tracked as
   Phase 2 hardening.
-- **Not yet done, per Vex's own sign-off conditions**: a regression test
-  that exercises concurrent AJAX+cron advancement directly (today's
-  verification is code review + the lock mechanism, not a race-
-  simulating test), and an E2E scenario exercising the constant-override
-  credential path specifically (today's verification is the new unit
-  test + the lock mechanism, not an extension of the E2E credential-leak
-  check to file archives). **Final Vex re-review/sign-off against these
-  two conditions is still outstanding before production use.**
+- **Vex's two re-verification conditions are now met** (2026-10-19,
+  same day): `tests/e2e/run-e2e-lock-race.sh` proves the H-01 lock
+  actually excludes a genuinely concurrent second OS process/MySQL
+  connection (the waiter blocks for multiple attempts and only acquires
+  at or after the holder's release — not just a code-review argument);
+  `tests/e2e/run-e2e-const-override.sh` runs a real backup through the
+  constant-override credential path specifically and confirms the
+  archived `wp-config.php` carries the redaction marker instead of the
+  literal credential, with unrelated content intact. Both PASSED; full
+  baseline E2E drill re-verified green afterward. **Final Vex re-review
+  against these two specific tests is still the last open step before
+  production use** — not yet requested/performed.
