@@ -1,0 +1,92 @@
+# Threat model — WPGuard Nextcloud Backup (MVP)
+
+Status: MVP draft. Security checks below were executed by the implementing
+agent (Holt) as part of build-and-test. This is **not** a substitute for
+Vex's independent security audit (SOP-023), which is required before any
+production use. See "Vex handoff" at the end.
+
+## Assets
+
+1. Nextcloud app password (credential).
+2. Full site database export (contains user password hashes, session
+   tokens, any PII in posts/comments/users, plugin secrets stored in
+   `wp_options`).
+3. Full site file export (contains `wp-config.php` — DB credentials, auth
+   salts; themes/plugins; media, which may include non-public uploads).
+4. The backup archives at rest on Nextcloud.
+5. WordPress admin capability to trigger backups / read settings.
+
+## Actors
+
+- **Site admin** (trusted, `manage_options`): intended operator.
+- **Other authenticated WP users** (lower capability): must not reach any
+  plugin action.
+- **Unauthenticated web visitor**: must not reach any plugin action or file.
+- **Network attacker** (on path between WP host and Nextcloud, or
+  on-path within the shared host): sees only TLS-protected traffic if TLS
+  verification holds.
+- **Someone with read access to the WordPress database** (e.g., via a
+  different vulnerability, or a hosting-provider insider): sees the stored
+  app password (ADR 0002 documents this residual risk explicitly) and sees
+  job metadata (never the DB/file archive contents themselves, those aren't
+  stored locally after upload).
+- **Someone with read access to the configured Nextcloud account/folder**:
+  this is the intended backup consumer, but if that account is
+  over-privileged (e.g., admin, or shared with other data), the full
+  archive content is exposed to anyone with equivalent access — hence
+  ADR's and the brief's insistence on a *dedicated, non-admin* Nextcloud
+  account.
+
+## STRIDE-style pass over the MVP surface
+
+| # | Threat | Where | Mitigation in this build |
+|---|---|---|---|
+| T1 | CSRF triggering a backup or changing settings | `admin-ajax.php` actions | `wp_verify_nonce` on every write action; nonce scoped per-form, checked server-side, action rejected (403 + logged) without it |
+| T2 | Non-admin triggers backup or reads settings/secrets | same actions | `current_user_can('manage_options')` checked on every action handler before any other logic; denied requests return 403 and are logged (sanitized, no secret echo) |
+| T3 | Reflected/stored XSS via settings fields (URL, folder path, CA bundle path) | admin settings page render | All output escaped with `esc_html`/`esc_attr`/`esc_url` at render; all input sanitized (`sanitize_text_field`, `esc_url_raw`) and validated (URL scheme must be `https`, folder path restricted to a safe charset) on save |
+| T4 | SQL injection in the DB exporter | `class-db-exporter.php` | Table/column identifiers come only from `SHOW TABLES`/`SHOW COLUMNS` against the live schema (never user input) and are backtick-quoted; all values are read via prepared `$wpdb->prepare` style parameter binding when filtering, never string-concatenated from request input |
+| T5 | SSRF — plugin fetches an attacker-controlled internal URL | Nextcloud base URL setting | Base URL is admin-only (`manage_options`), not reachable by lower-privileged users or request parameters; URL must be `https`; this is an accepted admin-configurable *destination*, not a general-purpose fetcher (no feature lets a non-admin or a webhook influence the target). Documented residual risk: a malicious admin (already fully trusted in WordPress's model) could point it at an internal HTTPS service — out of scope, admins are already trusted |
+| T6 | Path traversal / zip-slip on restore | restore runbook / any future restore tooling | Archive writer never writes paths containing `..` or absolute paths into the zip; restore runbook instructs extraction with a modern `unzip`/`ZipArchive` (both reject `..`-escaping entries) and the manual runbook explicitly tells the operator to verify extracted paths stay under the target root before use. Covered by an automated unit test asserting a crafted `../../evil.php` entry name is rejected by the archive writer at write time (defense in depth: reject at creation, not just at extraction) |
+| T7 | Zip/archive bomb on restore or on verification read-back | verification step, restore | Read-back verification streams to a temp file with a byte-size ceiling check against the manifest's declared size *before* full download completes (abort if actual exceeds declared by more than a small tolerance); restore runbook warns to check available disk space against manifest-declared sizes before extracting |
+| T8 | Credential disclosure via logs | `class-logger.php`, any error message | A single redaction routine (`Logger::redact()`) strips any string matching the stored app password (compared by value, not just key name) and any string matching common secret-shaped patterns before writing any log line, admin notice, or AJAX response. Unit-tested: logger given a string containing the live test app password emits a log line that does **not** contain it |
+| T9 | Credential disclosure via the SQL/file archive itself | DB exporter, file inventory | The exporter explicitly excludes the plugin's own options row(s) that hold the app password/CA path from the `wp_options` table dump (row-level exclusion, not whole-table exclusion, since `wp_options` holds much else that must be backed up); file inventory excludes the plugin's own local staging/temp directory. Verified by an automated test: generate a backup, grep the resulting SQL export and every archived file for the literal app-password string — must not match |
+| T10 | Credential disclosure via browser (settings page re-renders saved password) | settings page | Password field is always rendered empty/masked on load; saving a blank password field means "leave unchanged," never "clear it" — enforced server-side, not just UI convention |
+| T11 | Man-in-the-middle due to disabled/weakened TLS verification | Nextcloud client | No code path sets `sslverify => false` (grep-enforced, see `tests/unit/NoInsecureTlsTest.php`); only mitigation available is a verified, admin-supplied private CA bundle (ADR 0007), never a bypass |
+| T12 | False success — upload reported OK without real verification | transport/verification | ADR 0006: every part is read back and hashed; `COMPLETE.json` is the only success signal and is itself verified after upload; unit + integration tests assert a corrupted/truncated remote object is detected and the job is marked failed, not verified |
+| T13 | A failed/interrupted run destroys the last good backup | retention | MVP performs **no deletion of any kind** (no retention logic ships in MVP — RET-01 is satisfied trivially by not pruning at all); verified by test: a deliberately interrupted job leaves a prior `COMPLETE.json`-bearing backup folder untouched on Nextcloud |
+| T14 | Public exposure of backup files or temp archives | local temp storage, Nextcloud folder | Local temp files are written under `wp-content/uploads/wpguard-nc-backup-tmp/` guarded by a generated `index.php` (empty, prevents directory listing) and a `.htaccess` deny-all (defense in depth on Apache hosts; not relied upon as the sole control — files are deleted immediately after use); Nextcloud destination folder is created under the dedicated non-admin account, never shared publicly by the plugin |
+| T15 | Archive bomb / resource exhaustion from a malicious or corrupted SQL/file component during restore testing | E2E harness | E2E harness runs inside disposable containers with no access to production resources regardless of outcome |
+| T16 | Downgrade: admin accidentally points Nextcloud URL at plain `http://` | settings validation | Save-time validation rejects any scheme other than `https`; no setting exists to override this in MVP |
+
+## Explicitly out of scope for MVP (and why)
+
+- Encryption at rest of the archive content: NFR-04/Phase 5 — "never invent
+  cryptography" and no key-management story exists yet. Documented as a
+  limitation: anyone with legitimate access to the Nextcloud destination
+  account can read the raw backup content (same as TRN transport once
+  stored — Nextcloud's own at-rest protections, if any, apply, not the
+  plugin's).
+- Scheduling/automation attack surface (no WP-Cron-triggered unattended
+  runs with elevated risk in MVP, since MVP is manual-only).
+- Multi-tenant/multisite isolation (multisite explicitly out of scope).
+
+## Residual risks accepted for MVP, with owner-visible documentation
+
+- App password at rest in `wp_options` (ADR 0002) unless the operator uses
+  the constant override.
+- No at-rest encryption of the uploaded archive (NFR-04).
+- A fully trusted WordPress admin remains fully trusted (standard WordPress
+  threat model; this plugin does not attempt to defend against its own
+  administrator).
+
+## Vex handoff
+
+This document, plus the automated tests referenced inline (T8, T9, T11,
+T12, T13, T6), constitute the self-review Holt is permitted to do under his
+own contract ("produce a data-flow and threat-model summary... deliver to
+Vex before the feature ships to any production site"). **No production
+deployment has occurred or is proposed as part of this MVP delivery.**
+Before any real-world (non-disposable-test) use, this document and the
+credential-storage deviation in ADR 0002 must go to Vex for independent
+audit per SOP-023. That has not happened yet and is called out explicitly in
+the final MVP report as an open item, not a completed gate.

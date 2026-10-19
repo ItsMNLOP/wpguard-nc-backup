@@ -1,0 +1,15 @@
+.env
+docker/certs/
+docker/volumes/
+*.log
+/dist/
+/build/
+node_modules/
+vendor/
+.phpunit.result.cache
+tests/e2e/artifacts/
+*.sql
+*.zip
+!docs/**/*.zip
+.DS_Store
+Thumbs.db
