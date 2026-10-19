@@ -7,10 +7,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 /**
  * Job state machine. Each advance() call does one bounded unit of work
- * and persists a checkpoint before returning (JOB-03) — safe to call
- * repeatedly from AJAX, WP-Cron, or WP-CLI (ADR 0003). Never buffers an
- * entire backup in memory; the largest single in-memory object at any
- * point is one archive part (bounded by PART_SIZE_BYTES, ADR 0004).
+ * (or, for export_db/export_files, as many as fit in
+ * STEP_TIME_BUDGET_SECONDS) and persists a checkpoint after every single
+ * item regardless of batching (JOB-03) — safe to call repeatedly from
+ * AJAX, WP-Cron, or WP-CLI (ADR 0003). Never buffers an entire backup in
+ * memory; the largest single in-memory object at any point is one archive
+ * part (bounded by PART_SIZE_BYTES, ADR 0004).
  *
  * Steps: init -> export_db -> export_files -> package_manifest ->
  * upload_parts -> finalize -> (verified | failed).
@@ -18,6 +20,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Job_Orchestrator {
 
 	const PART_SIZE_BYTES = 64 * 1024 * 1024;
+
+	// Perf: export_db/export_files used to do exactly one table/file per
+	// advance() call, so a site with thousands of small files meant
+	// thousands of separate AJAX round trips (each a full WP bootstrap,
+	// plus the client's 500ms poll delay). Each call now keeps working
+	// through additional tables/files until this budget is spent, while
+	// still persisting the checkpoint after every single item (same
+	// durability as before — a crash mid-batch can re-run at most the one
+	// item in flight, not the whole batch). Conservative relative to
+	// typical shared-hosting max_execution_time.
+	const STEP_TIME_BUDGET_SECONDS = 2.0;
 
 	public static function tmp_dir_for( string $backup_id ): string {
 		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/' . $backup_id . '/';
@@ -152,21 +165,24 @@ class Job_Orchestrator {
 		}
 
 		if ( ! empty( $cp['tables_remaining'] ) ) {
-			$table = array_shift( $cp['tables_remaining'] );
-			$fh = fopen( $sql_path, 'a' );
-			$result = DB_Exporter::export_table( $fh, $table );
-			fclose( $fh );
-			$cp['tables_metadata'][] = array(
-				'name'              => $table,
-				'row_count'         => $result['row_count'],
-				'ordering_strategy' => $result['ordering_strategy'],
-				'primary_key'       => $result['primary_key'],
-			);
-			if ( $result['warning'] ) {
-				$cp['db_warnings'][] = $result['warning'];
-			}
-			self::log( $job_id, 'export_db', 'info', "Exported table {$table} ({$result['row_count']} rows)." );
-			Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+			$deadline = microtime( true ) + self::STEP_TIME_BUDGET_SECONDS;
+			do {
+				$table = array_shift( $cp['tables_remaining'] );
+				$fh = fopen( $sql_path, 'a' );
+				$result = DB_Exporter::export_table( $fh, $table );
+				fclose( $fh );
+				$cp['tables_metadata'][] = array(
+					'name'              => $table,
+					'row_count'         => $result['row_count'],
+					'ordering_strategy' => $result['ordering_strategy'],
+					'primary_key'       => $result['primary_key'],
+				);
+				if ( $result['warning'] ) {
+					$cp['db_warnings'][] = $result['warning'];
+				}
+				self::log( $job_id, 'export_db', 'info', "Exported table {$table} ({$result['row_count']} rows)." );
+				Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+			} while ( ! empty( $cp['tables_remaining'] ) && microtime( true ) < $deadline );
 			return Job_Store::get( $job_id );
 		}
 
@@ -204,34 +220,37 @@ class Job_Orchestrator {
 		}
 
 		if ( ! empty( $cp['files_remaining'] ) ) {
-			$relative = array_key_first( $cp['files_remaining'] );
-			$abs = $cp['files_remaining'][ $relative ];
-			unset( $cp['files_remaining'][ $relative ] );
+			$deadline = microtime( true ) + self::STEP_TIME_BUDGET_SECONDS;
+			do {
+				$relative = array_key_first( $cp['files_remaining'] );
+				$abs = $cp['files_remaining'][ $relative ];
+				unset( $cp['files_remaining'][ $relative ] );
 
-			if ( 'wp-config.php' === $relative ) {
-				$redacted = self::redacted_wp_config_copy( $abs, $tmp );
-				if ( is_wp_error( $redacted ) ) {
-					return self::fail( $job_id, 'export_files', $redacted->get_error_message() );
+				if ( 'wp-config.php' === $relative ) {
+					$redacted = self::redacted_wp_config_copy( $abs, $tmp );
+					if ( is_wp_error( $redacted ) ) {
+						return self::fail( $job_id, 'export_files', $redacted->get_error_message() );
+					}
+					$abs = $redacted;
 				}
-				$abs = $redacted;
-			}
 
-			$size = @filesize( $abs );
-			$size = false === $size ? 0 : $size;
+				$size = @filesize( $abs );
+				$size = false === $size ? 0 : $size;
 
-			if ( $cp['current_part_bytes'] > 0 && ( $cp['current_part_bytes'] + $size ) > self::PART_SIZE_BYTES ) {
-				$cp['parts_meta'][] = self::finalize_files_part( $cp, $tmp );
-				$cp['current_part_index']++;
-				$cp['current_part_bytes'] = 0;
-			}
+				if ( $cp['current_part_bytes'] > 0 && ( $cp['current_part_bytes'] + $size ) > self::PART_SIZE_BYTES ) {
+					$cp['parts_meta'][] = self::finalize_files_part( $cp, $tmp );
+					$cp['current_part_index']++;
+					$cp['current_part_bytes'] = 0;
+				}
 
-			$part_path = self::part_path( $tmp, $cp['current_part_index'] );
-			$result = Archive_Writer::add_file( $part_path, $abs, $relative );
-			if ( is_wp_error( $result ) ) {
-				return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $result->get_error_message() );
-			}
-			$cp['current_part_bytes'] += $size;
-			Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+				$part_path = self::part_path( $tmp, $cp['current_part_index'] );
+				$result = Archive_Writer::add_file( $part_path, $abs, $relative );
+				if ( is_wp_error( $result ) ) {
+					return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $result->get_error_message() );
+				}
+				$cp['current_part_bytes'] += $size;
+				Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+			} while ( ! empty( $cp['files_remaining'] ) && microtime( true ) < $deadline );
 			return Job_Store::get( $job_id );
 		}
 
