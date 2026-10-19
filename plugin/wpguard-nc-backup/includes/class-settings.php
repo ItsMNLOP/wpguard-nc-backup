@@ -91,7 +91,7 @@ class Settings {
 		$url = rtrim( $url, '/' );
 		if ( '' === $url || 0 !== strpos( $url, 'https://' ) ) {
 			$errors['nextcloud_url'] = __( 'Nextcloud URL must start with https:// — plain HTTP is not permitted.', 'wpguard-nc-backup' );
-		} elseif ( false === wp_http_validate_url( $url ) ) {
+		} elseif ( ! self::is_syntactically_valid_destination_url( $url ) ) {
 			$errors['nextcloud_url'] = __( 'That does not look like a valid URL.', 'wpguard-nc-backup' );
 		} else {
 			$clean['nextcloud_url'] = sanitize_text_field( $url );
@@ -145,6 +145,31 @@ class Settings {
 
 		update_option( self::OPTION_KEY, $clean, false );
 		return array( 'ok' => true, 'errors' => array() );
+	}
+
+	/**
+	 * Deliberately NOT wp_http_validate_url(): that function's default
+	 * private-IP/hostname blocklist (SSRF hardening meant for fetching
+	 * arbitrary third-party URLs) would reject exactly the self-hosted,
+	 * private-network Nextcloud instances this plugin exists to support
+	 * (NFR-03: "restrict network targets as practical while supporting
+	 * private Nextcloud"; threat-model T5 accepts this as an admin-only,
+	 * fully trusted, explicitly-configured destination, not a general
+	 * fetcher). This only checks that it's syntactically a URL with a
+	 * host and no embedded credentials/control characters.
+	 */
+	private static function is_syntactically_valid_destination_url( string $url ): bool {
+		$parsed = wp_parse_url( $url );
+		if ( ! $parsed || empty( $parsed['host'] ) ) {
+			return false;
+		}
+		if ( isset( $parsed['user'] ) || isset( $parsed['pass'] ) ) {
+			return false;
+		}
+		if ( false !== strpbrk( $parsed['host'], ":#?[]" ) ) {
+			return false;
+		}
+		return true;
 	}
 
 	public static function ensure_site_id(): string {

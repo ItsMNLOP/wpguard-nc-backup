@@ -20,7 +20,7 @@ openssl genrsa -out nc-proxy.key 2048
 openssl req -new -key nc-proxy.key -subj "/CN=nc-proxy" -out nc-proxy.csr
 
 cat > san.ext <<EOF
-subjectAltName = DNS:nc-proxy,DNS:localhost,IP:127.0.0.1
+subjectAltName = DNS:nc-proxy,DNS:nc-proxy.wpguard-test.local,DNS:localhost,IP:127.0.0.1
 EOF
 
 openssl x509 -req -in nc-proxy.csr -CA wpguard-test-ca.crt -CAkey ca.key \

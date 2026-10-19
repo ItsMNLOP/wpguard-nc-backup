@@ -73,7 +73,14 @@ services:
       - ./certs:/certs:ro
     ports:
       - "127.0.0.1:8443:443"
-    networks: [wpguard-test]
+    networks:
+      wpguard-test:
+        aliases:
+          # wp_http_validate_url() rejects hostnames with no dot (SSRF
+          # hardening) - a real Nextcloud hostname always has one, so the
+          # test stack needs a dotted alias too rather than weakening the
+          # plugin's validation for test convenience.
+          - nc-proxy.wpguard-test.local
 
   db-restore:
     image: mariadb:11.4
@@ -109,11 +116,11 @@ services:
     user: "33:33"
     volumes:
       - wp_source_html:/var/www/html-source
+      - ../plugin/wpguard-nc-backup:/var/www/html-source/wp-content/plugins/wpguard-nc-backup
       - wp_restore_html:/var/www/html-restore
       - ./certs:/certs:ro
       - ../tests/fixtures:/fixtures:ro
     networks: [wpguard-test]
-    entrypoint: ["true"]
 
 volumes:
   db_source_data:
