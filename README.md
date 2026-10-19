@@ -38,6 +38,16 @@ docker/scripts/package.ps1       # builds the installable ZIP into dist/
 docker/scripts/cleanup.ps1       # tears down only this project's containers/volumes/networks
 ```
 
+**Gotcha confirmed live:** `wp-source` (8081) bind-mounts the real
+`plugin/wpguard-nc-backup/` dev folder straight into its container. WP
+admin's "Delete" on that install deletes the actual files on your host
+disk (git-recoverable: `git checkout -- plugin/wpguard-nc-backup/`), and
+uploading the packaged ZIP there collides with the existing folder and
+gets silently nested into a broken `wpguard-nc-backup-0.1.0/wpguard-nc-backup/`
+wrapper that can't activate. To test the packaged ZIP's real install/
+activate UX, use **8082** (`wp-restore`, no bind mount) instead — that's
+also what `docker/scripts/package.ps1`'s own smoke test does.
+
 Source site: http://127.0.0.1:8081/wp-admin · Restore target:
 http://127.0.0.1:8082/wp-admin · Nextcloud: https://127.0.0.1:8443
 (self-signed via a generated local CA at `docker/certs/wpguard-test-ca.crt`
