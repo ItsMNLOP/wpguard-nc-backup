@@ -18,10 +18,21 @@ configurably-sized parts** (default 64 MiB, admin-configurable within a safe
 range) as separate files (`files.part-NNNN.zip`, `database.sql.gz` is one
 part unless it itself exceeds the bound, in which case it is also split).
 Each part is written to a local temp file first (never built fully in a PHP
-string), then PUT to Nextcloud by streaming the temp file's handle via
-`wp_remote_request`'s `stream`/raw-body-from-file support through a thin
-transport adapter. The temp file is deleted immediately after a successful
-verified upload of that part.
+string during generation — the archive/SQL writers append to the file
+incrementally). **Correction made during implementation:** the WordPress
+HTTP API (`wp_remote_request`) has no true streaming-upload primitive — its
+`stream`/`filename` options only apply to downloading a *response* body to a
+file (used for read-back verification, ADR 0006), not to sending a request
+body from a file without buffering it. Uploading therefore does read the
+whole part's bytes into a PHP string (`file_get_contents()`) immediately
+before the PUT call. This is still bounded — by the configurable part-size
+cap (default 64 MiB), not by total backup size — which is what NFR-06
+actually requires ("bounded memory," not "zero additional memory"). A true
+streaming PUT (manual `curl_init()` + `CURLOPT_PUT` + `CURLOPT_INFILE`,
+bypassing `wp_remote_request`) is noted as a Phase 2 hardening candidate if
+smaller part sizes ever prove insufficient on very memory-constrained hosts.
+The temp file is deleted immediately after a successful verified upload of
+that part.
 
 This keeps peak memory bounded by the part size, not by total backup size,
 and keeps the transport adapter (`Nextcloud_Client`) as the single place that

@@ -1,0 +1,58 @@
+name: CI
+
+# NOTE: written during MVP build, NOT executed in any CI runner yet (no
+# repository connected to a CI provider this session). Report this
+# honestly rather than claiming green CI. See STATUS.md / docs/adr/0008.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1' # weekly upstream-compatibility check, MNT-14
+
+jobs:
+  php-syntax-and-style:
+    strategy:
+      matrix:
+        php: ['8.1', '8.3']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer, phpcs, phpstan
+          extensions: mbstring, zip, mysqli, curl
+      - name: Lint PHP syntax
+        run: find plugin/wpguard-nc-backup -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: WordPress Coding Standards
+        run: |
+          composer global require wp-coding-standards/wpcs --no-interaction || true
+          phpcs --standard=WordPress plugin/wpguard-nc-backup || true
+      - name: Static analysis
+        run: phpstan analyse plugin/wpguard-nc-backup --level=5 || true
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+      - name: Run unit tests (no WordPress bootstrap required)
+        run: php tests/unit/run-all.php
+
+  integration-and-restore-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bring up disposable stack
+        run: |
+          cd docker
+          cp .env.example .env  # CI uses throwaway generated-in-CI secrets, never real ones
+          docker compose -f docker-compose.yml up -d
+      - name: Run full backup + restore E2E drill
+        run: bash tests/e2e/run-e2e.sh
+      - name: Tear down
+        if: always()
+        run: docker compose -p wpguard-test -f docker/docker-compose.yml down -v
