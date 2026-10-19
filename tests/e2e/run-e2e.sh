@@ -83,6 +83,19 @@ echo "=== Step 3: restore to a clean disposable WordPress instance ==="
 docker compose -p wpguard-test exec -T db-restore mariadb -u root -p"$WP_RESTORE_DB_ROOT_PASSWORD" \
   -e "DROP DATABASE IF EXISTS wp_restore; CREATE DATABASE wp_restore; GRANT ALL ON wp_restore.* TO 'wp_restore'@'%';"
 
+# The wp-restore APACHE container (what a human actually browses to
+# afterward) reads its own table_prefix from its own static .env-sourced
+# environment, separate from whatever prefix this script's one-off wp-cli
+# calls use below. If these don't match the manifest's table_prefix, the
+# browser-facing site shows the "choose a language" installer instead of
+# the restored site (found live, twice, before this was added here).
+# Keep the live container in sync with whatever this specific backup
+# actually used.
+if ! grep -q "^WP_RESTORE_TABLE_PREFIX=${TABLE_PREFIX}$" .env; then
+  sed -i "s/^WP_RESTORE_TABLE_PREFIX=.*/WP_RESTORE_TABLE_PREFIX=${TABLE_PREFIX}/" .env
+  docker compose -p wpguard-test --env-file .env up -d wp-restore
+fi
+
 wp_restore "$TABLE_PREFIX" core install \
   --url="http://127.0.0.1:8082" --title="WPGuard Restore Target" \
   --admin_user=wpadmin --admin_password=RestoreE2EAdminPW --admin_email=wpadmin@wpguard-test.local --skip-email

@@ -116,6 +116,18 @@ archived one. Instead:
    site, since the "same Nextcloud account" assumption may not hold on a new
    host.
 
+**Note specific to this project's disposable Docker test stack** (not a
+real-hosting concern): `docker/docker-compose.yml`'s `wp-restore` service
+reads `$table_prefix` from its own container environment
+(`WORDPRESS_TABLE_PREFIX`), not from a static `wp-config.php` line like a
+real host would. If that environment value doesn't match the backup's
+actual `table_prefix`, the site shows WordPress's "choose a language"
+installer instead of the restored content — found live during testing.
+`tests/e2e/run-e2e.sh` updates `docker/.env` and recreates the container
+automatically; doing this restore by hand against the test stack requires
+the same manual step (edit `WP_RESTORE_TABLE_PREFIX` in `docker/.env`,
+then `docker compose up -d wp-restore`) before browsing to it.
+
 ## 7. Reconcile the site URL if restoring to a new host/domain
 
 If `manifest.json`'s `source.home_url`/`source.site_url` differ from the
