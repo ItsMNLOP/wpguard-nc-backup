@@ -78,6 +78,39 @@ the one MEDIUM, all four LOWs) — see commits `0310976`, `31068b6`.
   constant-override credential path specifically and confirms the
   archived `wp-config.php` carries the redaction marker instead of the
   literal credential, with unrelated content intact. Both PASSED.
+## Real-host bug found via the owner's own hands-on activation test — 2026-10-19
+
+The automated packaging smoke test (`wp plugin install <zip> --activate`
+against a Docker `wordpress:cli` instance) passed, but installing the same
+ZIP on the owner's real production host produced a white screen: **"Plugin file
+does not exist."** Root cause: `docker/scripts/package.ps1` built the ZIP
+with PowerShell's `Compress-Archive`, which stores path separators as
+backslashes — non-compliant with the ZIP spec, which requires forward
+slashes. `unzip` tolerates this with a warning (hence the Docker smoke test
+passing), but raw PHP `ZipArchive::extractTo()` — confirmed directly inside
+a `wordpress:cli` container, side-by-side against both the old and fixed
+ZIPs — takes the stored name literally: every file lands flat with a
+literal backslash *in* the filename, no real `includes/` subdirectory is
+ever created, and `wpguard-nc-backup.php` never exists at the path
+WordPress's activation check expects.
+
+**Fixed:** `package.ps1` now builds the ZIP with `System.IO.Compression.ZipFile`
+directly, writing each entry name with an explicit forward slash. Verified:
+the rebuilt ZIP extracts cleanly via real `ZipArchive` with the correct
+nested layout; the old ZIP, tested the same way, reproduces the owner's exact
+symptom (main file absent at the expected path). The Docker-based packaging
+smoke test did not and could not have caught this — it only caught it
+because the owner tested hands-on against a real host, exactly per the
+hands-on-test ask. `docs/test-matrix.md` updated with a new check
+(raw-`ZipArchive` extraction, not just WP-CLI's install path) so this
+class of bug is caught automatically going forward.
+
+Action for the owner: remove whatever got left in `wp-content/plugins/` on
+the owner's production site from the failed install attempt before re-uploading the
+rebuilt `dist/wpguard-nc-backup-0.1.0.zip` — the flat, backslash-named
+files are not a normal plugin folder and a stray leftover could collide
+with the next upload.
+
 - **Vex's final sign-off (2026-10-19): CLEAR TO SHIP** for
   testable/controlled deployment, consistent with this document's own
   standing caveats (CI not yet executing, scheduling/retention/
