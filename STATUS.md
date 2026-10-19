@@ -40,6 +40,45 @@ assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
 - **Stale-job-lock recovery** (JOB-05, [H]): found live — an interrupted job blocks all future backups until an admin manually clears its row. Disclosed in `docs/operations.md`.
 - CI actually executing — written, not run.
 
+## Performance: time-boxed step batching — 2026-10-19
+
+the owner's hands-on backup against his real site (the owner's production site /
+the owner's Nextcloud instance) flagged the run as noticeably slower than his existing
+solution. Root cause: `export_db`/`export_files` did exactly one table or
+file per `advance()` call — on a real site with many small files that's
+thousands of separate AJAX round trips, each a full WordPress bootstrap
+plus the admin UI's 500ms poll delay. Fixed: each call now keeps working
+through additional tables/files for up to 2 seconds (`STEP_TIME_BUDGET_SECONDS`)
+before returning, while still persisting the checkpoint after every single
+item — same crash-safety as before, just far fewer round trips. Commit
+`aa7ed28`. 25/25 unit tests and the full E2E drill re-verified green.
+
+The other flagged cost — every uploaded part is fully re-downloaded and
+re-hashed to verify, doubling upload-stage transfer — is intentional
+(ADR 0006: Nextcloud's ETag isn't a reliable content hash).
+
+**Investigated and rejected, 2026-10-19**: Nextcloud's `OC-Checksum`
+upload header + `oc:checksums` WebDAV property looked like a cheaper
+alternative (server-side hash check, no full re-download). Tested live
+against the real target server (`the owner's Nextcloud instance`, dedicated test
+account) before building anything, per standing practice of not inventing
+API semantics from memory:
+- Upload with a correct `OC-Checksum` header: stored, echoed back on
+  PROPFIND. Looked promising in isolation.
+- Upload with a **deliberately wrong** checksum: still `201 Created`,
+  stored and echoed back unchanged — **no server-side rejection**.
+- Upload with no checksum header at all: `oc:checksums` comes back empty
+  (404) — the server never computes one on its own either.
+
+**Conclusion: on this server, `OC-Checksum` is pure client-asserted
+metadata with zero independent verification** — it would only ever catch
+an error the client already knew about, not transit/storage corruption,
+which is the entire point of verification. Not implemented. The existing
+full re-download-and-rehash in `step_upload_parts()` remains the only
+proven-safe verification method; no cheaper substitute holds up against
+the real target server. Do not re-attempt this without first re-testing
+live, same as above.
+
 ## Vex security audit (SOP-023) — 2026-10-19
 
 First independent security pass. Verdict was **BLOCKED** pending two HIGH
