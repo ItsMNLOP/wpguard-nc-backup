@@ -69,15 +69,23 @@ T12, T14) for the updated per-threat detail.
 
 **All findings from the 2026-10-19 audit are now fixed** (both HIGHs,
 the one MEDIUM, all four LOWs) — see commits `0310976`, `31068b6`.
-- **Vex's two re-verification conditions are now met** (2026-10-19,
-  same day): `tests/e2e/run-e2e-lock-race.sh` proves the H-01 lock
-  actually excludes a genuinely concurrent second OS process/MySQL
-  connection (the waiter blocks for multiple attempts and only acquires
-  at or after the holder's release — not just a code-review argument);
+- **Vex's two re-verification conditions were met** (2026-10-19, same
+  day): `tests/e2e/run-e2e-lock-race.sh` proves the H-01 lock actually
+  excludes a genuinely concurrent second OS process/MySQL connection
+  (the waiter blocks for multiple attempts and only acquires at or
+  after the holder's release — not just a code-review argument);
   `tests/e2e/run-e2e-const-override.sh` runs a real backup through the
   constant-override credential path specifically and confirms the
   archived `wp-config.php` carries the redaction marker instead of the
-  literal credential, with unrelated content intact. Both PASSED; full
-  baseline E2E drill re-verified green afterward. **Final Vex re-review
-  against these two specific tests is still the last open step before
-  production use** — not yet requested/performed.
+  literal credential, with unrelated content intact. Both PASSED.
+- **Vex's final sign-off (2026-10-19): CLEAR TO SHIP** for
+  testable/controlled deployment, consistent with this document's own
+  standing caveats (CI not yet executing, scheduling/retention/
+  one-click-restore are Phase 2, JOB-05 manual clear is a known
+  limitation). Verified by independent line-by-line code review of
+  commits `0310976`, `4cee50c`, `31068b6` — not taken on Holt's word.
+  Surfaced two non-blocking advisories (LOW-R1: fail-closed check in
+  case the wp-config.php redaction regex ever misses a credential;
+  LOW-R2: document a MySQL `wait_timeout`/lock-reconnect edge case) —
+  both fixed same day, commit `fa12bf5`, 25/25 unit tests and all E2E
+  drills re-verified green.
