@@ -51,6 +51,16 @@ function test_redact_wp_config_strips_credential_constants() {
 	wpguard_assert( false !== strpos( $redacted, "define('DB_NAME', 'wordpress');" ), 'unrelated defines must be preserved verbatim' );
 }
 
+// Vex audit LOW-R1: documents the regex's known limitation (no fix
+// intended here — this is exactly the gap the fail-closed check in
+// Job_Orchestrator::redacted_wp_config_copy() exists to catch at
+// archive time, not something to try to make this regex perfect for).
+function test_redact_wp_config_known_gap_const_syntax_not_caught() {
+	$content = "<?php\nconst WPGUARD_NC_APP_PASSWORD = 'leaks-through-const-syntax';\n";
+	$redacted = Settings::redact_wp_config_contents( $content );
+	wpguard_assert( false !== strpos( $redacted, 'leaks-through-const-syntax' ), 'documents the known gap: const syntax is not matched by the define()-shaped regex' );
+}
+
 // Defines a real PHP constant — must run last in this file (and this
 // file is last alphabetically among *Test.php), since PHP constants
 // cannot be undefined and would otherwise lock every test after it.
@@ -74,5 +84,6 @@ return array(
 	'test_blank_app_password_keeps_existing_value',
 	'test_rejects_missing_username',
 	'test_redact_wp_config_strips_credential_constants',
+	'test_redact_wp_config_known_gap_const_syntax_not_caught',
 	'test_locked_app_password_purges_stored_wp_options_value',
 );

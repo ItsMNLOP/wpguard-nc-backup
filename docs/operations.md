@@ -49,7 +49,20 @@ build's own E2E testing (a deliberately interrupted job from a failure
 test blocked the next real backup) and is disclosed here rather than
 silently worked around.
 
-## WP-Cron limitation (disclosed, not fixed in MVP)
+**Related advisory (Vex re-audit, 2026-10-19, LOW-R2):** the H-01 fix
+(`Job_Store::try_lock()`/`release_lock()`, a MySQL `GET_LOCK`/
+`RELEASE_LOCK` pair keyed by job_id) is session-scoped — it's
+automatically released if the PHP process's MySQL connection drops.
+On a host configured with an aggressive `wait_timeout` (well under
+MySQL's 8-hour default — seen on some tight shared-hosting plans),
+WordPress's `$wpdb` can silently reconnect mid-request during a long
+upload-with-retries (each `upload_parts` attempt can take up to the
+30s request timeout, times up to 4 retries). A silent reconnect drops
+the advisory lock on the old connection, and a second process could in
+principle acquire it while the first is still mid-step. This is not a
+new condition introduced by the H-01 fix — any session-scoped lock in
+a PHP plugin has the same exposure — but it's worth knowing before
+relying on this plugin under non-default MySQL timeout settings.
 
 The cron fallback relies on WP-Cron, which only fires on a page load on a
 low-traffic site. If no one visits the site and the admin closes the tab

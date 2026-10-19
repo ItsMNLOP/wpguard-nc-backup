@@ -209,7 +209,11 @@ class Job_Orchestrator {
 			unset( $cp['files_remaining'][ $relative ] );
 
 			if ( 'wp-config.php' === $relative ) {
-				$abs = self::redacted_wp_config_copy( $abs, $tmp );
+				$redacted = self::redacted_wp_config_copy( $abs, $tmp );
+				if ( is_wp_error( $redacted ) ) {
+					return self::fail( $job_id, 'export_files', $redacted->get_error_message() );
+				}
+				$abs = $redacted;
 			}
 
 			$size = @filesize( $abs );
@@ -253,8 +257,23 @@ class Job_Orchestrator {
 	 * currently active (so a backup taken while it's off can't later be
 	 * "upgraded" into leaking a value that gets set afterward).
 	 */
-	private static function redacted_wp_config_copy( string $original_abs, string $tmp ): string {
+	/** @return string|\WP_Error Path to the redacted copy, or a WP_Error if the credential survived redaction. */
+	private static function redacted_wp_config_copy( string $original_abs, string $tmp ) {
 		$redacted = Settings::redact_wp_config_contents( file_get_contents( $original_abs ) );
+
+		// Vex audit LOW-R1 (fail-closed hardening, post H-02 re-review):
+		// the redaction regex can't cover every conceivable define()
+		// syntax (multi-line, `const`, mixed-case DEFINE) — none appear
+		// in any real wp-config.php, but if the currently-active
+		// credential literal somehow survives redaction, fail the job
+		// rather than silently archive a leaked credential.
+		if ( Settings::is_app_password_locked() ) {
+			$secret = Settings::get_app_password();
+			if ( '' !== $secret && false !== strpos( $redacted, $secret ) ) {
+				return new \WP_Error( 'wpguard_nc_wp_config_redaction_failed', 'wp-config.php redaction did not remove the active credential; refusing to archive it.' );
+			}
+		}
+
 		$redacted_path = $tmp . 'wp-config.redacted.php';
 		file_put_contents( $redacted_path, $redacted );
 		return $redacted_path;
