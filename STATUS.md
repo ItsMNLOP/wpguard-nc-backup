@@ -40,6 +40,29 @@ assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
 - **Stale-job-lock recovery** (JOB-05, [H]): found live — an interrupted job blocks all future backups until an admin manually clears its row. Disclosed in `docs/operations.md`.
 - CI actually executing — written, not run.
 
+## Real bottleneck found and fixed: zip handle reopened per file — 2026-10-20
+
+The diagnostic `job-log.json` feature (above) immediately paid for
+itself: a real backup's per-step timestamps showed `export_db` took ~3
+seconds, `upload_parts` (52MB up, plus a full re-download to verify) took
+~3-4 seconds, and **`export_files` took ~16 minutes 37 seconds** — nearly
+the entire ~17-minute runtime. Counting the actual archived entries
+confirmed why: **8,559 files** across both parts for only ~50MB of
+content (mostly small plugin/theme assets, ~6KB average). `Archive_Writer::add_file()`
+opened, wrote one file, and closed the ZIP — rewriting its whole central
+directory — on *every single file*, which gets slower as the directory
+grows. With 8,559 files this dominated the entire runtime; the upload
+stage I'd originally suspected was never the bottleneck.
+
+**Fixed**: `Archive_Writer` now exposes `open_part()`/`add_file_to()`/
+`close_part()`; `step_export_files()` opens the archive once per batch
+(same `STEP_TIME_BUDGET_SECONDS` batching from the earlier perf fix),
+reopening only on the rare 64MB part-rollover boundary, and closes once
+before returning to the AJAX/cron caller — still no handle held open
+*across* separate requests (ADR 0003's actual requirement), just not
+reopened needlessly within one. Per-file checkpoint persistence is
+unchanged. 25/25 unit tests and the full E2E drill green.
+
 ## Vex delta re-audit (commits 93052f3..c9a30bc) — 2026-10-19
 
 Vex reviewed all four commits since the last sign-off (ZIP packaging fix,

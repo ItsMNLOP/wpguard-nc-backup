@@ -291,6 +291,11 @@ class Job_Orchestrator {
 
 		if ( ! empty( $cp['files_remaining'] ) ) {
 			$deadline = microtime( true ) + self::STEP_TIME_BUDGET_SECONDS;
+			$part_path = self::part_path( $tmp, $cp['current_part_index'] );
+			$zip = Archive_Writer::open_part( $part_path );
+			if ( is_wp_error( $zip ) ) {
+				return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $zip->get_error_message() );
+			}
 			do {
 				$relative = array_key_first( $cp['files_remaining'] );
 				$abs = $cp['files_remaining'][ $relative ];
@@ -299,6 +304,7 @@ class Job_Orchestrator {
 				if ( 'wp-config.php' === $relative ) {
 					$redacted = self::redacted_wp_config_copy( $abs, $tmp );
 					if ( is_wp_error( $redacted ) ) {
+						Archive_Writer::close_part( $zip );
 						return self::fail( $job_id, 'export_files', $redacted->get_error_message() );
 					}
 					$abs = $redacted;
@@ -308,19 +314,26 @@ class Job_Orchestrator {
 				$size = false === $size ? 0 : $size;
 
 				if ( $cp['current_part_bytes'] > 0 && ( $cp['current_part_bytes'] + $size ) > self::PART_SIZE_BYTES ) {
+					Archive_Writer::close_part( $zip );
 					$cp['parts_meta'][] = self::finalize_files_part( $cp, $tmp );
 					$cp['current_part_index']++;
 					$cp['current_part_bytes'] = 0;
+					$part_path = self::part_path( $tmp, $cp['current_part_index'] );
+					$zip = Archive_Writer::open_part( $part_path );
+					if ( is_wp_error( $zip ) ) {
+						return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $zip->get_error_message() );
+					}
 				}
 
-				$part_path = self::part_path( $tmp, $cp['current_part_index'] );
-				$result = Archive_Writer::add_file( $part_path, $abs, $relative );
+				$result = Archive_Writer::add_file_to( $zip, $abs, $relative );
 				if ( is_wp_error( $result ) ) {
+					Archive_Writer::close_part( $zip );
 					return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $result->get_error_message() );
 				}
 				$cp['current_part_bytes'] += $size;
 				Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
 			} while ( ! empty( $cp['files_remaining'] ) && microtime( true ) < $deadline );
+			Archive_Writer::close_part( $zip );
 			return Job_Store::get( $job_id );
 		}
 
