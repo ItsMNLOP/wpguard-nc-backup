@@ -11,6 +11,7 @@ tests/e2e/artifacts/
 .e2e-scratch/
 .e2e-const-override-scratch/
 .e2e-lock-race-scratch/
+.restore-scratch/
 *.sql
 *.zip
 !docs/**/*.zip
