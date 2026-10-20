@@ -40,6 +40,24 @@ assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
 - **Stale-job-lock recovery** (JOB-05, [H]): found live — an interrupted job blocks all future backups until an admin manually clears its row. Disclosed in `docs/operations.md`.
 - CI actually executing — written, not run.
 
+## Correction: the second backup did not actually stall — 2026-10-19
+
+Reassessed after the owner spotted `files.part-*.zip` had appeared on
+Nextcloud with a recent timestamp. Direct WebDAV check (test account)
+confirmed `COMPLETE.json` present — the job finished and passed its own
+internal verification. Actual timeline: folder created (step_init)
+23:51:35, `COMPLETE.json` written 00:53:53 — **~62 minutes total**, not a
+permanent stall, just ~3x slower than backup #1's ~20 minutes. This ran
+entirely on the pre-batching plugin build with no admin tab open, so
+progress depended solely on WP-Cron's pseudo-cron, which only advances
+when something happens to hit the site — real idle gaps between bursts,
+not a steady 5-second cadence, explaining the elapsed time without
+needing an actual stall. The earlier "genuinely stalled" conclusion was
+asserted before checking Nextcloud for a second time and was wrong; the
+Cancel/Reset feature built in response is still a legitimate, needed fix
+for the case where a job really doesn't resume, but this specific
+instance resolved on its own.
+
 ## Real-production restore drill, performed by Holt — 2026-10-19
 
 Restored the owner's first real backup (`20261019T232522Z-2469c25c`, real
