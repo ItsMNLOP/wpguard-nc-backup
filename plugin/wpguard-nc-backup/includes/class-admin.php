@@ -21,6 +21,7 @@ class Admin {
 		add_action( 'wp_ajax_wpguard_nc_start_backup', array( $this, 'ajax_start_backup' ) );
 		add_action( 'wp_ajax_wpguard_nc_advance_job', array( $this, 'ajax_advance_job' ) );
 		add_action( 'wp_ajax_wpguard_nc_job_status', array( $this, 'ajax_job_status' ) );
+		add_action( 'wp_ajax_wpguard_nc_cancel_job', array( $this, 'ajax_cancel_job' ) );
 	}
 
 	public function add_menu(): void {
@@ -122,6 +123,24 @@ class Admin {
 		wp_send_json_success( $job ? $this->public_job_view( $job ) : array( 'status' => 'none' ) );
 	}
 
+	/** JOB-05 manual recovery: let an admin mark a stuck job failed instead of needing direct DB access. */
+	public function ajax_cancel_job(): void {
+		if ( ! $this->require_capability_and_nonce() ) {
+			return;
+		}
+		$job_id = isset( $_POST['job_id'] ) ? sanitize_text_field( wp_unslash( $_POST['job_id'] ) ) : '';
+		if ( '' === $job_id ) {
+			$latest = Job_Store::get_latest();
+			if ( null === $latest ) {
+				wp_send_json_error( array( 'message' => __( 'No backup job found to cancel.', 'wpguard-nc-backup' ) ) );
+				return;
+			}
+			$job_id = $latest['job_id'];
+		}
+		$job = Job_Orchestrator::cancel( $job_id );
+		wp_send_json_success( $this->public_job_view( $job ) );
+	}
+
 	/** Strips anything that shouldn't reach the browser even redacted-in-principle (defense in depth). */
 	private function public_job_view( array $job ): array {
 		return array(
@@ -190,7 +209,11 @@ class Admin {
 			<div id="wpguard_nc_settings_result" role="status"></div>
 
 			<h2><?php esc_html_e( 'Manual backup', 'wpguard-nc-backup' ); ?></h2>
-			<p><button type="button" class="button button-primary" id="wpguard_nc_backup_now"><?php esc_html_e( 'Back Up Now', 'wpguard-nc-backup' ); ?></button></p>
+			<p>
+				<button type="button" class="button button-primary" id="wpguard_nc_backup_now"><?php esc_html_e( 'Back Up Now', 'wpguard-nc-backup' ); ?></button>
+				<button type="button" class="button" id="wpguard_nc_cancel_job"><?php esc_html_e( 'Cancel / Reset Stuck Job', 'wpguard-nc-backup' ); ?></button>
+			</p>
+			<p class="description"><?php esc_html_e( 'If a backup never completes (e.g. the site had no other traffic to trigger the WP-Cron fallback), use Cancel to mark it failed so a new backup can start. Already-uploaded parts of a cancelled job are left on Nextcloud untouched.', 'wpguard-nc-backup' ); ?></p>
 			<div id="wpguard_nc_job_status" role="status"></div>
 			<pre id="wpguard_nc_job_log" style="max-height:300px;overflow:auto;background:#fff;border:1px solid #ccd0d4;padding:8px;"></pre>
 		</div>
@@ -198,6 +221,7 @@ class Admin {
 		(function(){
 			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 			var nonce = <?php echo wp_json_encode( $nonce ); ?>;
+			var currentJobId = null;
 
 			function post(action, extra) {
 				var body = new URLSearchParams(Object.assign({ action: action, nonce: nonce }, extra || {}));
@@ -225,6 +249,7 @@ class Admin {
 			});
 
 			function renderJob(job) {
+				currentJobId = job.job_id || currentJobId;
 				document.getElementById('wpguard_nc_job_status').textContent = 'Status: ' + job.status + ' (step: ' + job.step + ')' + (job.error ? ' — ' + job.error : '');
 				document.getElementById('wpguard_nc_job_log').textContent = (job.log || []).map(function(e){ return e.time_utc + ' [' + e.severity + '] ' + e.message; }).join('\n');
 			}
@@ -243,6 +268,19 @@ class Admin {
 				post('wpguard_nc_start_backup', {}).then(function(res){
 					if (res.success) {
 						pollJob(res.data.job_id);
+					} else {
+						document.getElementById('wpguard_nc_job_status').textContent = res.data.message;
+					}
+				});
+			});
+
+			document.getElementById('wpguard_nc_cancel_job').addEventListener('click', function(){
+				if (!window.confirm('Cancel the current/stuck backup job? This marks it failed so a new backup can start. Already-uploaded parts on Nextcloud are left untouched. This cannot be undone.')) {
+					return;
+				}
+				post('wpguard_nc_cancel_job', currentJobId ? { job_id: currentJobId } : {}).then(function(res){
+					if (res.success) {
+						renderJob(res.data);
 					} else {
 						document.getElementById('wpguard_nc_job_status').textContent = res.data.message;
 					}

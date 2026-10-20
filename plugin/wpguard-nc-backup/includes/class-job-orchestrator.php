@@ -71,6 +71,41 @@ class Job_Orchestrator {
 		Job_Store::append_log( $job_id, self::logger()->entry( $job_id, $step, $severity, $message, $context ) );
 	}
 
+	/**
+	 * Manual admin override for JOB-05 (no stale-lock recovery in MVP): a
+	 * genuinely interrupted job -- WP-Cron fallback never picked it up
+	 * (operations.md: pseudo-cron only fires on site traffic) -- stays
+	 * `running`/`queued`/`uploaded-unverified` forever and blocks every
+	 * future "Back Up Now" via Job_Store::has_running_job(). This doesn't
+	 * add the deferred Phase 2 lock-leasing/expiry system; it just gives
+	 * an administrator an explicit, auditable way to mark a stuck job
+	 * failed (same cleanup path as any other failure) instead of needing
+	 * direct DB access.
+	 *
+	 * @return array Updated job row, or the job unchanged if it was
+	 *   already terminal, or {status: not_found}.
+	 */
+	public static function cancel( string $job_id ): array {
+		if ( ! Job_Store::try_lock( $job_id ) ) {
+			// Another process (AJAX/cron) is actively advancing it right
+			// now -- don't race a live advance() call.
+			$job = Job_Store::get( $job_id );
+			return $job ?? array( 'status' => 'not_found' );
+		}
+		try {
+			$job = Job_Store::get( $job_id );
+			if ( null === $job ) {
+				return array( 'status' => 'not_found' );
+			}
+			if ( in_array( $job['status'], array( 'verified', 'failed' ), true ) ) {
+				return $job;
+			}
+			return self::fail( $job_id, $job['step'], 'Cancelled by administrator (stuck-job recovery).' );
+		} finally {
+			Job_Store::release_lock( $job_id );
+		}
+	}
+
 	private static function fail( string $job_id, string $step, string $message ): array {
 		$safe = self::logger()->redact( $message );
 		self::log( $job_id, $step, 'error', $safe );

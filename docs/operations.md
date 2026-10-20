@@ -42,16 +42,23 @@ is tested (`tests/unit/LoggerRedactionTest.php`), not just asserted.
 
 JOB-01 requires preventing overlapping backups, implemented via
 `Job_Store::has_running_job()` refusing a new job while one is
-`queued`/`running`. MVP has no corresponding **expiry**: JOB-05 ("lock
-leasing with expiration/recovery") is explicitly Phase 2/[H]. A job that
-is genuinely interrupted (PHP killed, container restarted, browser tab
-closed with WP-Cron also failing to pick it up) stays `running` forever
-and blocks every future "Back Up Now" until an administrator manually
-updates the job row (`wp db query "UPDATE ... SET status='interrupted' ...`)
-or a future version adds lock expiry. This was hit for real during this
-build's own E2E testing (a deliberately interrupted job from a failure
-test blocked the next real backup) and is disclosed here rather than
-silently worked around.
+`queued`/`running`. MVP has no corresponding **automatic expiry**: JOB-05
+("lock leasing with expiration/recovery") is explicitly Phase 2/[H]. A job
+that is genuinely interrupted (PHP killed, container restarted, browser
+tab closed with WP-Cron also failing to pick it up — the real-world case
+this was found through, both during this build's own E2E testing and
+live on a real site) would otherwise stay `running` forever and block
+every future "Back Up Now".
+
+**Fixed 2026-10-19, manual (not automatic) recovery**: the settings page
+has a **Cancel / Reset Stuck Job** button (`Job_Orchestrator::cancel()`),
+capability/nonce-gated like every other admin action, that marks a
+non-terminal job `failed` (same cleanup path as any other failure —
+nothing already uploaded to Nextcloud is touched) so a new backup can
+start, without needing direct DB access. This is not the deferred Phase 2
+automatic lock-leasing/expiry system — it's an explicit, auditable,
+human-triggered override for exactly this situation. Regression test:
+`tests/e2e/run-e2e-cancel-job.sh`.
 
 **Related advisory (Vex re-audit, 2026-10-19, LOW-R2):** the H-01 fix
 (`Job_Store::try_lock()`/`release_lock()`, a MySQL `GET_LOCK`/
