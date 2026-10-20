@@ -57,6 +57,7 @@ production use. See "Vex handoff" at the end.
 | T14 | Public exposure of backup files or temp archives | local temp storage, Nextcloud folder | Local temp files are written under `wp-content/wpguard-nc-backup-tmp/` guarded by a generated `index.php` (empty, prevents directory listing) and a `.htaccess` deny-all (Apache only — no equivalent protection on Nginx). **Vex audit (2026-10-19, L-01) found `cleanup_tmp()` previously ran only on the success path**; a failed job left partial `database.sql.gz`/`files.part-*.zip` under a `backup_id`-named directory indefinitely, directly web-accessible by URL on Nginx hosts (bounded by the 32-bit random suffix in `backup_id`, and the SQL dump already excludes the credential row, so practical exploitability was judged LOW, but the description was wrong). Fixed: `cleanup_tmp()` now also runs on the failure path |
 | T15 | Archive bomb / resource exhaustion from a malicious or corrupted SQL/file component during restore testing | E2E harness | E2E harness runs inside disposable containers with no access to production resources regardless of outcome |
 | T16 | Downgrade: admin accidentally points Nextcloud URL at plain `http://` | settings validation | Save-time validation rejects any scheme other than `https`; no setting exists to override this in MVP |
+| T17 | Unattended WP-Cron-triggered state changes (Phase 2, 2026-10-20): the automatic stale-lock reaper and automatic scheduled backups both run with no request-level nonce/capability check, reachable (in the WP-Cron pseudo-cron sense) by any site visitor's page load | `Job_Orchestrator::reap_stale_lock()`, `run_scheduled_backup()`, both in `wpguard-nc-backup.php`/`class-job-orchestrator.php` | **Vex delta audit, 2026-10-20**: correct as designed, not a gap — neither function accepts any request input of any kind (no `$_POST`/`$_GET` reach either one), so there is nothing for an unauthenticated visitor to inject; a nonce/capability check exists to gate *user-supplied input*, which doesn't apply to a cron callback with none. The reaper's only observable effect (marking a job `failed`) is the same state transition the existing capability-gated Cancel button already performs. `run_scheduled_backup()` only starts a job if `Settings::has_credentials()` and reuses `create_job()` unchanged. LOW-JOB05-1 (same audit): the reaper's hourly cron widens the pre-existing LOW-R2 `wait_timeout`-lock-drop condition's practical surface (a second actor beyond a concurrent `advance()` call could now acquire a dropped lock), but the outcome stays bounded to the job being marked `failed`, never incorrectly `verified` (`advance()`'s terminal-state check prevents any further transition past a job already marked failed out from under it) |
 
 ## Explicitly out of scope for MVP (and why)
 
@@ -66,9 +67,13 @@ production use. See "Vex handoff" at the end.
   account can read the raw backup content (same as TRN transport once
   stored — Nextcloud's own at-rest protections, if any, apply, not the
   plugin's).
-- Scheduling/automation attack surface (no WP-Cron-triggered unattended
-  runs with elevated risk in MVP, since MVP is manual-only).
-- Multi-tenant/multisite isolation (multisite explicitly out of scope).
+- Multi-tenant/multisite isolation (multisite explicitly out of scope —
+  parked in backlog, `STATUS.md` 2026-10-20, no multisite target exists
+  to build or test against).
+
+**No longer out of scope as of 2026-10-20 (Phase 2)**: WP-Cron-triggered
+unattended runs now exist (automatic stale-lock recovery, automatic
+scheduling) — see T17.
 
 ## Residual risks accepted for MVP, with owner-visible documentation
 

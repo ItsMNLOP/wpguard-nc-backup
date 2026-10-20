@@ -52,12 +52,23 @@ real site) would otherwise stay stuck forever and block every future
 **Automatic recovery (Phase 2, 2026-10-20)**: `Job_Orchestrator::reap_stale_lock()`
 marks a job `failed` if its checkpoint hasn't been touched in over
 `STALE_LOCK_SECONDS` (600s default, filterable via
-`wpguard_nc_stale_lock_seconds`) — comfortably above the worst-case
-single `advance()` call (an `upload_parts` retry loop can legitimately
-run up to ~120s). It uses the same `try_lock()`/`release_lock()` pair as
-`cancel()` (Vex audit H-01's primitive), so it can never race a
-genuinely active process: if the lock is held, the job is left alone
-regardless of how stale its timestamp looks. Called from
+`wpguard_nc_stale_lock_seconds`, floored at 60s — Vex delta audit
+LOW-JOB05-3 — so a filtered value can't shrink below the one genuinely
+lock-free moment in a job's life, between `create_job()` returning and
+the first `advance()` call acquiring the lock). It uses the same
+`try_lock()`/`release_lock()` pair as `cancel()` (Vex audit H-01's
+primitive), so it can never race a genuinely active process: if the
+lock is held, the job is left alone regardless of how stale its
+timestamp looks. **The lock is the actual protection here, not the
+600s margin** (Vex delta audit LOW-JOB05-2, 2026-10-20) — a single
+`step_upload_parts()` iteration can legitimately run on the order of
+1800s once every per-attempt timeout and retry in
+`class-nextcloud-client.php` is counted (`put_bytes`: up to 120s x 4;
+`propfind_size`: up to 30s x 4; `download_to_file`: up to 300s x 4),
+far longer than 600s — but the lock stays held for that entire
+duration, so `try_lock()` correctly fails and the job is never touched.
+`STALE_LOCK_SECONDS` only governs how long a job with no active
+process at all (lock already free) sits before being reaped. Called from
 `create_job()` — so the fix applies the instant anyone next tries to
 back up, no admin action and no real server-cron (JOB-02, separate
 item) required — and from a recurring hourly WP-Cron event
@@ -93,6 +104,16 @@ principle acquire it while the first is still mid-step. This is not a
 new condition introduced by the H-01 fix — any session-scoped lock in
 a PHP plugin has the same exposure — but it's worth knowing before
 relying on this plugin under non-default MySQL timeout settings.
+
+**Vex delta audit, 2026-10-20 (LOW-JOB05-1):** the automatic stale-lock
+reaper (above) widens this same condition's practical surface — the
+hourly safety-net cron now provides a second actor that could acquire
+a dropped lock, not only a second concurrent `advance()` call. The
+outcome stays bounded exactly as before: the job gets marked `failed`,
+never incorrectly `verified` — `advance()`'s terminal-state check
+means the original in-flight call can't continue past a job that's
+already been marked `failed` out from under it. Still a LOW, still
+requires non-default MySQL `wait_timeout` configuration.
 
 The cron fallback relies on WP-Cron, which only fires on a page load on a
 low-traffic site. If no one visits the site and the admin closes the tab
