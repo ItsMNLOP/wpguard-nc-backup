@@ -32,6 +32,18 @@ All notable changes to this project are documented here.
   `Retention` class, verified against a real Nextcloud account via
   `tests/e2e/run-e2e-retention.sh`. Defaults to keep-all since pruning
   is destructive and must be an explicit admin opt-in.
+- Self-hosted update feed: `Update_Checker` polls the now-public
+  `github.com/ItsMNLOP/wpguard-nc-backup` Releases (no credentials
+  needed) through WP's normal `pre_set_site_transient_update_plugins`/
+  `plugins_api` filters, so "Update now" on the Plugins page works like
+  any WordPress.org-hosted plugin despite this one not being listed
+  there. Only ever offers an update when the release carries an
+  explicit `.zip` asset — never falls back to GitHub's own
+  auto-generated zipball, which contains the whole repo rather than
+  just the plugin folder. See `docs/releasing.md` for the (currently
+  manual, pending the CI bash port) release process and
+  `docs/threat-model.md` T18 for the trust-boundary discussion. Pending
+  Vex sign-off before this is considered shippable.
 
 ### Fixed
 - Corrected two Vex delta-audit documentation findings on the JOB-05

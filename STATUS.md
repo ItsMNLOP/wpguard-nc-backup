@@ -1,5 +1,29 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — update feed built, awaiting Vex sign-off, 2026-10-20
+
+Fourth Phase 2 item: self-hosted update feed, built as GitHub Releases
+on the now-public repo (decided with Mike earlier — public repo, no
+credentials needed). New `Update_Checker` class hooks WP's normal
+`pre_set_site_transient_update_plugins`/`plugins_api` filters. Design
+is fail-closed: never offers an update unless the release has an
+explicit `.zip` asset attached, specifically because GitHub's own
+auto-generated zipball contains the whole repo (docs/tests/CI config),
+not just the plugin folder, and would be wrong to install even absent
+any attacker. 9 new unit tests (pure logic: version comparison, asset
+selection, release-JSON parsing) and a new E2E test
+(`tests/e2e/run-e2e-update-checker.sh`) covering a real call against
+the live public GitHub API (no release exists yet — confirmed that's
+handled as a clean no-op, not an error) plus the offer/no-offer logic
+through WP's real transient filter chain. 43/43 unit tests green.
+Documented in `docs/operations.md` ("Updates"), a new
+`docs/releasing.md` (manual release process until the CI bash port can
+automate it), and `docs/threat-model.md` T18 — this is a
+higher-blast-radius feature than the other three shipped so far (an
+update source is, by nature, a path to full code execution on every
+site running the plugin), so it's being sent to Vex before being
+considered shippable, per standing practice, rather than self-certified.
+
 ## Phase 2 progress — retention re-verified, CLEAR TO SHIP, 2026-10-20
 
 Vex's independent re-verification of the retention fixes below: all

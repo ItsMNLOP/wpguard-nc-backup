@@ -15,6 +15,9 @@ if ( ! defined( 'WPGUARD_NC_FORMAT_VERSION' ) ) {
 if ( ! defined( 'WPGUARD_NC_VERSION' ) ) {
 	define( 'WPGUARD_NC_VERSION', '1.0.0' );
 }
+if ( ! defined( 'HOUR_IN_SECONDS' ) ) {
+	define( 'HOUR_IN_SECONDS', 3600 );
+}
 
 $GLOBALS['__wpguard_test_options'] = array();
 

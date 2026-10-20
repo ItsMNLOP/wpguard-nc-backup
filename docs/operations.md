@@ -194,6 +194,30 @@ rely on this as the only safety net: a server configured with trashbin
 disabled, or one whose retention window has already passed, has none
 of this protection.
 
+## Updates (Phase 2, 2026-10-20)
+
+This plugin isn't on the WordPress.org directory, so wp-admin's normal
+"update available" nag is instead driven by `Update_Checker`, which
+polls `github.com/ItsMNLOP/wpguard-nc-backup`'s Releases (public repo,
+read-only, no credentials needed) through WP's own
+`pre_set_site_transient_update_plugins`/`plugins_api` filters — the
+same mechanism WordPress.org-hosted plugins use, so "Update now" on
+the Plugins page works exactly as it would for any other plugin.
+
+An update is only ever offered when the release has an explicit
+`.zip` asset attached (name starting with `wpguard-nc-backup`) — never
+GitHub's own auto-generated zipball, which contains the whole repo
+(docs, tests, CI config), not just the plugin folder, and would get
+installed as-is if used. No qualifying asset means no update offered,
+full stop — see `docs/releasing.md` for how a release gets that asset
+attached. Checked at most every 12h (cached in a transient); a
+failed/missing-release check caches for 1h so a flaky GitHub or a
+release-less period (true today — no release has been cut yet) doesn't
+trigger a real outbound request on every admin page load. Regression
+test: `tests/e2e/run-e2e-update-checker.sh` (runs against the real
+public GitHub API for the no-release-yet case, and against a seeded
+transient for the offer/no-offer logic itself).
+
 ## Disk space
 
 No preflight disk-space check ships in MVP (NFR-10 mentions it; deferred).

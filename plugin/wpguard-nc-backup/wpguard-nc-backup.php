@@ -145,6 +145,15 @@ function boot() {
 		( new Admin() )->register();
 	}
 
+	// Phase 2 (self-hosted update feed, item 4): registered unconditionally,
+	// not just is_admin() -- WP's own update-check cron
+	// (`wp_update_plugins`, hooked to pre_set_site_transient_update_plugins)
+	// runs outside admin context too. The GitHub API call itself only
+	// happens when that transient is actually being rebuilt, and is
+	// transient-cached for 12h beyond that -- this registration alone adds
+	// no new outbound requests or cron events.
+	( new Update_Checker( plugin_basename( __FILE__ ) ) )->register();
+
 	add_action( 'wpguard_nc_cron_advance', __NAMESPACE__ . '\\cron_advance' );
 
 	// JOB-05 (Phase 2) safety net: Job_Orchestrator::create_job() already
