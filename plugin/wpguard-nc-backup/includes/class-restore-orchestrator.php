@@ -996,8 +996,18 @@ class Restore_Orchestrator {
 			// restore_swap's own wp_options row takes over) means no
 			// OTHER plugin's code runs during any of the intermediate,
 			// possibly-inconsistent bootstraps this phase spans.
-			$cp['captured_active_plugins'] = get_option( 'active_plugins', array() );
+			$captured = get_option( 'active_plugins', array() );
+			$cp['captured_active_plugins'] = $captured;
 			update_option( 'active_plugins', array( plugin_basename( WPGUARD_NC_DIR . 'wpguard-nc-backup.php' ) ) );
+			// Vex re-verification NEW-LOW-1: persist captured_active_plugins
+			// before entering either loop below. If this specific write
+			// fails, fail()'s own DB-reload won't see it (the checkpoint on
+			// disk still lacks it), so restore directly here rather than
+			// leave every other plugin deactivated with no recorded way back.
+			if ( ! Job_Store::update( $job_id, array( 'checkpoint' => $cp ) ) ) {
+				update_option( 'active_plugins', $captured );
+				return self::fail( $job_id, 'restore_apply_files', 'Could not persist the restriction of active plugins before starting the file-apply phase. Restored the original plugin list and stopped.' );
+			}
 		}
 
 		$quarantine_candidates = self::read_blob( $job_id, 'quarantine_candidates' ) ?? array();

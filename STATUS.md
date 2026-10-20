@@ -1,5 +1,22 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — one-click restore: Vex re-verification CLEAR TO SHIP, 2026-10-20
+
+Vex independently re-verified every HIGH/MEDIUM/LOW finding from the
+audit below against commit `cd816a1`, re-ran the full unit suite
+(86/86) themselves, and judged the new AJAX-safety E2E test adequate.
+**Verdict: CLEAR TO SHIP.** One new LOW found during re-verification —
+not security-impacting, user-recoverable: if the single checkpoint
+write that persists `captured_active_plugins` (right after capturing
+and restricting `active_plugins` at the start of the file-apply phase)
+itself failed, `fail()`'s own DB-reload wouldn't see that value yet,
+so a failure at that exact moment would leave every other plugin
+deactivated with no recorded way back. Fixed immediately — that write
+is now itself checked, restoring `active_plugins` directly and
+failing the job if it can't persist, rather than proceeding with an
+unrecorded restriction. Unit suite re-run clean (86/86) after this
+fix. One-click restore is now shippable.
+
 ## Phase 2 progress — one-click restore: Vex audit findings fixed, awaiting re-verification, 2026-10-20
 
 Vex's full audit of the first build (commit `6a652d2`, see the entry
