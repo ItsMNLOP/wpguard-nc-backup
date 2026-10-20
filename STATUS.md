@@ -40,6 +40,45 @@ assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
 - **Stale-job-lock recovery** (JOB-05, [H]): found live — an interrupted job blocks all future backups until an admin manually clears its row. Disclosed in `docs/operations.md`.
 - CI actually executing — written, not run.
 
+## Vex delta re-audit (commits 93052f3..c9a30bc) — 2026-10-19
+
+Vex reviewed all four commits since the last sign-off (ZIP packaging fix,
+batching, resume-on-load UI, and especially the new Cancel/Reset job
+capability). **Verdict: CLEAR TO SHIP.** No HIGH/MEDIUM findings. Two
+LOWs:
+
+- **LOW-C1**: `cancel()` reported success to the admin even when
+  `advance()` held the H-01 lock and nothing actually changed. **Fixed
+  same day** (commit `e1ba495`): `cancel()` now tags its outcome
+  explicitly, and the AJAX handler sends an error response on
+  `lock_contended` instead of a silent no-op success. Verified live via a
+  new regression test, `run-e2e-cancel-lock-contention.sh` (genuine
+  concurrent holder + canceller processes).
+- **LOW-C2** (operator hygiene, not a code finding): the dedicated
+  Nextcloud test account's standing read-share on the real backup folder
+  should be revoked once no longer needed for testing. Flagged to the owner
+  directly.
+
+Vex confirmed by direct code trace: `cancel()` cannot be triggered by a
+non-admin/no-nonce request, cannot corrupt a job genuinely mid-advance
+(respects the H-01 lock), never touches anything already uploaded to
+Nextcloud, and `public_job_view()`'s response shape is unchanged (no new
+disclosure).
+
+## New: diagnostic job-log.json uploaded alongside every backup — 2026-10-19
+
+the owner's request, for the ongoing performance investigation — the admin UI
+only ever showed the last 10 log entries, and WP-CLI's `status` command
+doesn't print the log at all, so there was no way to see real per-step
+timestamps after the fact. `Job_Orchestrator` now uploads the full
+per-step log as `job-log.json` next to every backup (both the success and
+failure paths), best-effort — upload failure here never affects job
+status. Every entry already passes through `Logger::redact()` at write
+time, same exposure as what's already visible in the admin UI. Not part
+of `manifest.json`'s `components[]`, not part of the restorable backup
+set — pure diagnostics. Verified live: 21 real timestamped entries
+confirmed present and correct after an E2E run. Commit `e1ba495`.
+
 ## Correction: the second backup did not actually stall — 2026-10-19
 
 Reassessed after the owner spotted `files.part-*.zip` had appeared on
