@@ -4,7 +4,11 @@
 
 Admin UI: Settings > Nextcloud Backup > "Back Up Now". Progress polls via
 AJAX every 500ms; a WP-Cron fallback (`wpguard_nc_cron_advance`) keeps the
-job moving even if the admin tab is closed (ADR 0003).
+job moving even if the admin tab is closed (ADR 0003). Reloading or
+reopening the settings page while a job is in progress resumes reporting
+it automatically (fixed 2026-10-19 — previously the status box went blank
+on reload with no way to tell a still-running backup from a stalled one
+without checking Nextcloud or the DB directly).
 
 CLI (used by the E2E harness, also usable by an admin with shell access):
 ```

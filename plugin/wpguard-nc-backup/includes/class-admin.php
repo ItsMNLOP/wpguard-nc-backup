@@ -224,11 +224,15 @@ class Admin {
 				});
 			});
 
+			function renderJob(job) {
+				document.getElementById('wpguard_nc_job_status').textContent = 'Status: ' + job.status + ' (step: ' + job.step + ')' + (job.error ? ' — ' + job.error : '');
+				document.getElementById('wpguard_nc_job_log').textContent = (job.log || []).map(function(e){ return e.time_utc + ' [' + e.severity + '] ' + e.message; }).join('\n');
+			}
+
 			function pollJob(jobId) {
 				post('wpguard_nc_advance_job', { job_id: jobId }).then(function(res){
 					var job = res.data;
-					document.getElementById('wpguard_nc_job_status').textContent = 'Status: ' + job.status + ' (step: ' + job.step + ')' + (job.error ? ' — ' + job.error : '');
-					document.getElementById('wpguard_nc_job_log').textContent = (job.log || []).map(function(e){ return e.time_utc + ' [' + e.severity + '] ' + e.message; }).join('\n');
+					renderJob(job);
 					if (job.status !== 'verified' && job.status !== 'failed') {
 						setTimeout(function(){ pollJob(jobId); }, 500);
 					}
@@ -243,6 +247,22 @@ class Admin {
 						document.getElementById('wpguard_nc_job_status').textContent = res.data.message;
 					}
 				});
+			});
+
+			// Resume reporting an in-progress job on page load -- previously
+			// the status box stayed blank after navigating away and back,
+			// even though the job itself (advanced by the WP-Cron fallback)
+			// was likely still running; this looked identical to a crashed
+			// backup with no way to tell the difference without checking
+			// Nextcloud or the DB directly.
+			post('wpguard_nc_job_status', {}).then(function(res){
+				var job = res.data;
+				if (job.status && job.status !== 'none') {
+					renderJob(job);
+					if (job.status !== 'verified' && job.status !== 'failed') {
+						pollJob(job.job_id);
+					}
+				}
 			});
 		})();
 		</script>
