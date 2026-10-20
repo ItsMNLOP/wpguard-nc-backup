@@ -28,9 +28,13 @@ class Job_Orchestrator {
 	// through additional tables/files until this budget is spent, while
 	// still persisting the checkpoint after every single item (same
 	// durability as before — a crash mid-batch can re-run at most the one
-	// item in flight, not the whole batch). Conservative relative to
-	// typical shared-hosting max_execution_time.
-	const STEP_TIME_BUDGET_SECONDS = 2.0;
+	// item in flight, not the whole batch). Raised from 2.0 to 5.0
+	// (2026-10-20) after a real 8,559-file backup showed the per-batch
+	// archive open/close (see Archive_Writer) was still a measurable share
+	// of export_files time even after batching -- fewer, bigger batches
+	// amortize that further. Still well inside typical shared-hosting
+	// max_execution_time.
+	const STEP_TIME_BUDGET_SECONDS = 5.0;
 
 	public static function tmp_dir_for( string $backup_id ): string {
 		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/' . $backup_id . '/';

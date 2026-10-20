@@ -40,6 +40,32 @@ assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
 - **Stale-job-lock recovery** (JOB-05, [H]): found live — an interrupted job blocks all future backups until an admin manually clears its row. Disclosed in `docs/operations.md`.
 - CI actually executing — written, not run.
 
+## Second optimization round, delegated — 2026-10-20
+
+the owner delegated choosing and implementing the next round directly (3m17s
+total, down from ~17 min, after the zip-handle fix below). Picked two
+safe, no-new-attack-surface changes:
+
+- **Skip DEFLATE for already-incompressible extensions** (jpg/jpeg/png/
+  gif/webp/avif/ico/bmp/mp4/mov/avi/webm/mkv/mp3/ogg/wav/flac/zip/gz/bz2/
+  rar/7z/pdf/woff/woff2) via `ZipArchive::CM_STORE` — real CPU savings
+  for near-zero size cost on those files; text-ish assets (css/js/svg/
+  etc.) are deliberately left DEFLATEd since they're small, compress
+  fast, and actually shrink. New unit test
+  `tests/unit/ArchiveWriterCompressionTest.php` proves both the right
+  compression method gets applied *and* -- more importantly -- that
+  stored and deflated entries both extract byte-identical (a correctness
+  bug here would corrupt every JPEG/video/PDF in every backup).
+- **`STEP_TIME_BUDGET_SECONDS` raised 2.0 → 5.0** — the real per-step log
+  showed the per-batch archive open/close was still a measurable share of
+  `export_files` time even after the previous fix; fewer, bigger batches
+  amortize it further. Still well inside shared-hosting execution limits.
+
+Neither touches security-relevant surface (no new external calls, same
+lock/checkpoint discipline as already Vex-reviewed) — no re-audit
+dispatched for this round. 28/28 unit tests (3 new), full E2E drill
+green.
+
 ## Real bottleneck found and fixed: zip handle reopened per file — 2026-10-20
 
 The diagnostic `job-log.json` feature (above) immediately paid for

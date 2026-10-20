@@ -16,6 +16,21 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Archive_Writer {
 
+	/**
+	 * Extensions that are already near-entropy (compressed binary formats)
+	 * -- DEFLATE on these spends real CPU for close to zero size benefit.
+	 * Text-ish assets (css/js/svg/json/php/etc.) are deliberately left out:
+	 * they're small, compress fast, and actually shrink.
+	 */
+	const STORE_ONLY_EXTENSIONS = array(
+		'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'ico', 'bmp',
+		'mp4', 'mov', 'avi', 'webm', 'mkv',
+		'mp3', 'ogg', 'oga', 'wav', 'flac',
+		'zip', 'gz', 'bz2', 'rar', '7z',
+		'pdf',
+		'woff', 'woff2',
+	);
+
 	public static function is_path_safe( string $relative_name ): bool {
 		if ( '' === $relative_name ) {
 			return false;
@@ -62,6 +77,13 @@ class Archive_Writer {
 		}
 		if ( ! $zip->addFile( $abs_source, $relative_name ) ) {
 			return new \WP_Error( 'wpguard_nc_zip_add_failed', "Could not add file to archive: {$relative_name}" );
+		}
+		$ext = strtolower( pathinfo( $relative_name, PATHINFO_EXTENSION ) );
+		if ( in_array( $ext, self::STORE_ONLY_EXTENSIONS, true ) ) {
+			// Best-effort: if this fails, the file is still archived
+			// correctly, just DEFLATE-compressed instead of stored --
+			// never a correctness issue, only a missed CPU saving.
+			$zip->setCompressionName( $relative_name, \ZipArchive::CM_STORE );
 		}
 		return true;
 	}
