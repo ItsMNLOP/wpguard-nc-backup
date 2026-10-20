@@ -1,5 +1,37 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — incremental backups CLEAR TO SHIP (final), 2026-10-20
+
+Third Vex re-verification: **CLEAR TO SHIP**, no new findings. Traced
+every commit point in `step_export_files()` line by line (the skip
+path and the archive path both now flush into `resolved_files` only
+at the same two confirmed-successful-close points; no path persists
+`files_remaining` while anything sits uncommitted), confirmed
+`restore-manual.md` step 1a's `wp-config.php` exclusions are
+syntactically correct in both the extraction and verification loops
+and that step 6's reconciliation procedure makes sense entered via
+1a's new item 4a, confirmed the size-check and the two-phase test
+fix, independently re-ran the full 62-test unit suite and the
+incremental E2E suite (both green), and did a dedicated adversarial
+pass specifically hunting for a THIRD instance of the
+"persist-before-durable" bug class across `step_export_files()`,
+`step_package_manifest()`, and `step_finalize()` — found none.
+
+**Incremental file backups (Phase 2 item 5) is done** — three full
+audit/fix rounds (HIGH-ZIP-1/MEDIUM-ZIP-2/MEDIUM-RESTORE-1
+BLOCKED→fixed; re-verification found NEW-HIGH-1 in the fix itself
+plus MEDIUM-RESTORE-2→fixed; final re-verification CLEAR TO SHIP with
+an explicit adversarial hunt for a repeat). The most heavily audited
+item in Phase 2 so far, proportionate to being the one feature where
+getting it wrong means a "verified" backup that silently can't be
+restored.
+
+**Phase 2 status: five items fully shipped and Vex-cleared** — JOB-05
+automatic stale-lock recovery, automatic scheduling, retention
+pruning, the self-hosted update feed, and incremental file backups.
+Remaining, not yet started: one-click restore, WebDAV v2 chunking,
+the CI bash port. Multisite remains parked (2026-10-20 decision).
+
 ## Phase 2 progress — incremental backups Vex re-verification: NEW-HIGH-1 found, fixed, 2026-10-20
 
 Vex's re-verification of the HIGH-ZIP-1 fix found the fix itself had
