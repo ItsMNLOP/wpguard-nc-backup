@@ -25,7 +25,7 @@ TEST_PARENT="wpguard-nc-backup-retention-test-$(date +%s)"
 echo "=== Isolated test folder: $TEST_PARENT (not the real backups path) ==="
 
 echo
-echo "=== Setup: create 5 real-shaped VERIFIED backup folders (backup_id format + COMPLETE.json, matching what step_finalize() actually leaves behind) ==="
+echo "=== Setup: create 5 real-shaped VERIFIED backup folders (backup_id format + manifest.json + COMPLETE.json, matching what step_finalize() actually leaves behind) ==="
 for n in 1 2 3 4 5; do
   NAME=$(printf '2026010%dT000000Z-aaaa000%d' "$n" "$n")
   wp_source eval "
@@ -33,8 +33,16 @@ for n in 1 2 3 4 5; do
     \$parent = \$client->relative_path( '$TEST_PARENT' );
     \$mk = \$client->mkcol_recursive( \$parent . '/$NAME' );
     \$put = \$client->put_bytes( \$parent . '/$NAME/marker.txt', 'test' );
+    // Phase 2 (incremental backups): a real verified backup always has a
+    // manifest.json -- step_package_manifest() uploads it before
+    // COMPLETE.json can ever be written -- so Retention::prune()'s
+    // chain-aware must-keep computation (reads each kept backup's own
+    // manifest.json) now expects one too. This fixture's files:[] marks
+    // it self-contained (no cross-backup references), matching every
+    // real backup taken with incremental backups off (the default).
+    \$manifest = \$client->put_bytes( \$parent . '/$NAME/manifest.json', '{\"format_version\":2,\"backup_mode\":\"full\",\"files\":[]}' );
     \$complete = \$client->put_bytes( \$parent . '/$NAME/COMPLETE.json', '{\"ok\":true}' );
-    echo (is_wp_error(\$mk) ? 'MK_FAIL:' . \$mk->get_error_message() : '') . (is_wp_error(\$put) ? 'PUT_FAIL:' . \$put->get_error_message() : '') . (is_wp_error(\$complete) ? 'COMPLETE_FAIL:' . \$complete->get_error_message() : 'ok');
+    echo (is_wp_error(\$mk) ? 'MK_FAIL:' . \$mk->get_error_message() : '') . (is_wp_error(\$put) ? 'PUT_FAIL:' . \$put->get_error_message() : '') . (is_wp_error(\$manifest) ? 'MANIFEST_FAIL:' . \$manifest->get_error_message() : '') . (is_wp_error(\$complete) ? 'COMPLETE_FAIL:' . \$complete->get_error_message() : 'ok');
   " > "$SCRATCH/setup_$n.log" 2>&1
   RESULT=$(cat "$SCRATCH/setup_$n.log")
   [[ "$RESULT" == *"ok"* ]] || { echo "FAIL: could not create fixture folder $NAME: $RESULT"; exit 1; }
@@ -156,6 +164,7 @@ for n in 1 2; do
     \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) ) );
     \$parent = \$client->relative_path( '$SITE_ID/backups' );
     \$client->mkcol_recursive( \$parent . '/$FIXTURE_NAME' );
+    \$client->put_bytes( \$parent . '/$FIXTURE_NAME/manifest.json', '{\"format_version\":2,\"backup_mode\":\"full\",\"files\":[]}' );
     \$client->put_bytes( \$parent . '/$FIXTURE_NAME/COMPLETE.json', '{\"ok\":true}' );
   " > /dev/null
 done

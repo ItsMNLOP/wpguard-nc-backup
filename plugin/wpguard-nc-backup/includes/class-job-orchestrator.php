@@ -307,8 +307,27 @@ class Job_Orchestrator {
 		if ( is_wp_error( $mk ) ) {
 			return self::fail( $job_id, 'init', 'Could not prepare remote destination folder: ' . $mk->get_error_message() );
 		}
+
+		// Phase 2 (incremental backups): decided once, up front, so a
+		// decision to attempt incremental is made before any file is
+		// skipped -- never discovered to be unsafe partway through
+		// export_files, by which point unchanged files would already
+		// have been skipped past recovery for this run. See
+		// class-backup-chain.php for the fail-closed validation this
+		// performs against the real server before trusting a parent.
+		$parent_rel = $client->relative_path( Settings::get_site_id() . '/backups' );
+		$chain = Backup_Chain::plan( $client, $parent_rel );
+		self::log(
+			$job_id,
+			'init',
+			'info',
+			'incremental' === $chain['mode']
+				? sprintf( 'Incremental backup (chain depth %d), based on %s.', $chain['depth'], $chain['parent_backup_id'] )
+				: 'Full backup.'
+		);
+
 		self::log( $job_id, 'init', 'info', 'Remote destination folder ready.' );
-		Job_Store::update( $job_id, array( 'step' => 'export_db', 'checkpoint' => array() ) );
+		Job_Store::update( $job_id, array( 'step' => 'export_db', 'checkpoint' => array( 'chain' => $chain ) ) );
 		return Job_Store::get( $job_id );
 	}
 
@@ -372,6 +391,8 @@ class Job_Orchestrator {
 		$job_id = $job['job_id'];
 		$cp = $job['checkpoint'];
 		$tmp = self::tmp_dir_for( $job['backup_id'] );
+		$chain = $cp['chain'] ?? array( 'mode' => 'full', 'prior_files_index' => array() );
+		$prior_index = $chain['prior_files_index'] ?? array();
 
 		if ( ! isset( $cp['files_remaining'] ) ) {
 			$inventory = Inventory::enumerate();
@@ -380,24 +401,56 @@ class Job_Orchestrator {
 			$cp['current_part_index'] = 1;
 			$cp['current_part_bytes'] = 0;
 			$cp['parts_meta'] = array();
+			$cp['resolved_files'] = array();
 		}
 
 		if ( ! empty( $cp['files_remaining'] ) ) {
 			$deadline = microtime( true ) + self::STEP_TIME_BUDGET_SECONDS;
-			$part_path = self::part_path( $tmp, $cp['current_part_index'] );
-			$zip = Archive_Writer::open_part( $part_path );
-			if ( is_wp_error( $zip ) ) {
-				return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $zip->get_error_message() );
-			}
+			// Phase 2 (incremental backups): opened lazily, only once a
+			// file actually needs archiving this batch -- a batch made
+			// entirely of unchanged (skipped) files must never produce
+			// an empty zip part on disk.
+			$zip = null;
 			do {
 				$relative = array_key_first( $cp['files_remaining'] );
 				$abs = $cp['files_remaining'][ $relative ];
 				unset( $cp['files_remaining'][ $relative ] );
 
+				// Checked against the ORIGINAL file (before any
+				// wp-config.php redaction substitution below, whose
+				// freshly-written copy would always have a fresh mtime
+				// and therefore always look "changed").
+				$orig_mtime = @filemtime( $abs );
+				$orig_size = @filesize( $abs );
+				$prior = $prior_index[ $relative ] ?? null;
+
+				if (
+					'incremental' === $chain['mode'] && null !== $prior
+					&& false !== $orig_mtime && false !== $orig_size
+					&& (int) $prior['mtime'] === (int) $orig_mtime
+					&& (int) $prior['size'] === (int) $orig_size
+				) {
+					// Unchanged since the chain parent: carry its pointer
+					// forward verbatim. Nothing is archived or uploaded
+					// for this file this run.
+					$cp['resolved_files'][] = array(
+						'path'             => $relative,
+						'size'             => (int) $prior['size'],
+						'mtime'            => (int) $prior['mtime'],
+						'sha256'           => $prior['sha256'],
+						'source_backup_id' => $prior['source_backup_id'],
+						'source_part'      => $prior['source_part'],
+					);
+					Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+					continue;
+				}
+
 				if ( 'wp-config.php' === $relative ) {
 					$redacted = self::redacted_wp_config_copy( $abs, $tmp );
 					if ( is_wp_error( $redacted ) ) {
-						Archive_Writer::close_part( $zip );
+						if ( null !== $zip ) {
+							Archive_Writer::close_part( $zip );
+						}
 						return self::fail( $job_id, 'export_files', $redacted->get_error_message() );
 					}
 					$abs = $redacted;
@@ -405,6 +458,14 @@ class Job_Orchestrator {
 
 				$size = @filesize( $abs );
 				$size = false === $size ? 0 : $size;
+
+				if ( null === $zip ) {
+					$part_path = self::part_path( $tmp, $cp['current_part_index'] );
+					$zip = Archive_Writer::open_part( $part_path );
+					if ( is_wp_error( $zip ) ) {
+						return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $zip->get_error_message() );
+					}
+				}
 
 				if ( $cp['current_part_bytes'] > 0 && ( $cp['current_part_bytes'] + $size ) > self::PART_SIZE_BYTES ) {
 					Archive_Writer::close_part( $zip );
@@ -423,10 +484,22 @@ class Job_Orchestrator {
 					Archive_Writer::close_part( $zip );
 					return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $result->get_error_message() );
 				}
+
+				$cp['resolved_files'][] = array(
+					'path'             => $relative,
+					'size'             => $size,
+					'mtime'            => false !== $orig_mtime ? (int) $orig_mtime : 0,
+					'sha256'           => hash_file( 'sha256', $abs ),
+					'source_backup_id' => $job['backup_id'],
+					'source_part'      => sprintf( 'files.part-%04d.zip', $cp['current_part_index'] ),
+				);
+
 				$cp['current_part_bytes'] += $size;
 				Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
 			} while ( ! empty( $cp['files_remaining'] ) && microtime( true ) < $deadline );
-			Archive_Writer::close_part( $zip );
+			if ( null !== $zip ) {
+				Archive_Writer::close_part( $zip );
+			}
 			return Job_Store::get( $job_id );
 		}
 
@@ -491,7 +564,8 @@ class Job_Orchestrator {
 		$cp = $job['checkpoint'];
 		$tmp = self::tmp_dir_for( $job['backup_id'] );
 
-		$manifest = Manifest::new_skeleton( $job['backup_id'], Settings::get_site_id() );
+		$chain = $cp['chain'] ?? array( 'mode' => 'full', 'base_backup_id' => null, 'parent_backup_id' => null );
+		$manifest = Manifest::new_skeleton( $job['backup_id'], Settings::get_site_id(), $chain );
 		$manifest['tables_metadata'] = $cp['tables_metadata'];
 		$manifest['scope']['database']['tables'] = array_column( $cp['tables_metadata'], 'name' );
 		$manifest['warnings'] = array_merge( $cp['db_warnings'] ?? array(), $cp['file_warnings'] ?? array() );
@@ -501,6 +575,12 @@ class Job_Orchestrator {
 		foreach ( $cp['parts_meta'] as $i => $part ) {
 			$name = sprintf( 'files.part-%04d.zip', $part['index'] );
 			Manifest::add_component( $manifest, $name, 'files', $part['bytes'], $part['sha256'], $part['index'], $parts_total );
+		}
+		// Phase 2 (incremental backups): the complete resolved file
+		// index -- see class-backup-chain.php's docblock for why this is
+		// never a diff, even on an incremental run.
+		foreach ( $cp['resolved_files'] ?? array() as $f ) {
+			Manifest::add_file_entry( $manifest, $f['path'], $f['size'], $f['mtime'], $f['sha256'], $f['source_backup_id'], $f['source_part'] );
 		}
 
 		$manifest_json = Manifest::to_json( $manifest );
@@ -602,6 +682,13 @@ class Job_Orchestrator {
 		self::cleanup_tmp( $tmp );
 		self::log( $job_id, 'finalize', 'info', 'Backup verified and complete.' );
 		Job_Store::update( $job_id, array( 'status' => 'verified', 'step' => 'done' ) );
+		// Phase 2 (incremental backups): only ever advances/resets local
+		// chain state once a job is already verified -- a failed job
+		// must never affect what the next job decides, same discipline
+		// as retention pruning below only running post-verification.
+		if ( isset( $cp['chain'] ) ) {
+			Backup_Chain::record_result( $cp['chain'], $job['backup_id'] );
+		}
 		self::maybe_prune_old_backups( $job_id, $client );
 		return Job_Store::get( $job_id );
 	}

@@ -306,6 +306,38 @@ class Nextcloud_Client {
 		return $names;
 	}
 
+	/**
+	 * Phase 2 (incremental backups / chain-aware retention): fetches and
+	 * JSON-decodes a small remote object -- a manifest.json, specifically
+	 * -- rather than returning raw bytes, since every current caller
+	 * (Backup_Chain, Retention) only ever wants decoded data. Reuses
+	 * download_to_file()'s existing streamed-download-with-size-cap
+	 * machinery (same archive-bomb defense as any other download here)
+	 * instead of a new unbounded in-memory GET.
+	 *
+	 * @return array|\WP_Error Decoded associative array, or a WP_Error if
+	 *   the object doesn't exist, can't be downloaded, exceeds $max_bytes,
+	 *   or isn't valid JSON that decodes to an array.
+	 */
+	public function get_json( string $relative_path, int $max_bytes ) {
+		$tmp = wp_tempnam( 'wpguard-nc-manifest' );
+		$download = $this->download_to_file( $relative_path, $tmp, $max_bytes );
+		if ( is_wp_error( $download ) ) {
+			@unlink( $tmp );
+			return $download;
+		}
+		$raw = file_get_contents( $tmp );
+		@unlink( $tmp );
+		if ( false === $raw ) {
+			return new \WP_Error( 'wpguard_nc_get_json_read_failed', "Could not read downloaded object: {$relative_path}" );
+		}
+		$decoded = json_decode( $raw, true );
+		if ( ! is_array( $decoded ) ) {
+			return new \WP_Error( 'wpguard_nc_get_json_decode_failed', "Downloaded object is not valid JSON: {$relative_path}" );
+		}
+		return $decoded;
+	}
+
 	public function delete( string $relative_path ) {
 		$response = $this->request( 'DELETE', $this->url_for( $relative_path ) );
 		if ( is_wp_error( $response ) ) {

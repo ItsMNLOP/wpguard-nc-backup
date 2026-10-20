@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }
 if ( ! defined( 'WPGUARD_NC_FORMAT_VERSION' ) ) {
-	define( 'WPGUARD_NC_FORMAT_VERSION', 1 );
+	define( 'WPGUARD_NC_FORMAT_VERSION', 2 );
 }
 if ( ! defined( 'WPGUARD_NC_VERSION' ) ) {
 	define( 'WPGUARD_NC_VERSION', '1.0.0' );

@@ -32,6 +32,29 @@ All notable changes to this project are documented here.
   `Retention` class, verified against a real Nextcloud account via
   `tests/e2e/run-e2e-retention.sh`. Defaults to keep-all since pruning
   is destructive and must be an explicit admin opt-in.
+- Incremental file backups: an opt-in "Incremental file backups"
+  setting (default off) that skips re-archiving/re-uploading a file
+  whose size and modified time match the previous chain backup,
+  referencing it instead. Not a diff/patch chain — every manifest's
+  new `files` field is always the complete, resolved current file
+  index, so a deleted file simply has no entry and can never be
+  resurrected by a restore. Fails closed to a full backup (never
+  guesses, never fails the backup outright) whenever the previous
+  chain backup's manifest or any part it depends on can't be
+  re-verified against the real server, decided once up front before
+  any file is skipped; also forces a full periodically regardless
+  (every 7 backups or 7 days, both filterable). `format_version`
+  bumped 1 -> 2 so older restore tooling refuses a manifest shape it
+  doesn't understand rather than silently restoring a partial file
+  set. `Retention::prune()` is now chain-aware: never deletes a
+  backup any kept backup still depends on, verified live (not just a
+  direct-call test) by the new `tests/e2e/run-e2e-incremental.sh`,
+  which also proves an unchanged file is never re-uploaded at all (not
+  merely logically marked unchanged) and that a full byte-for-byte
+  restore reconstruction from the final manifest alone succeeds
+  across a real 3-backup chain. See `docs/operations.md` ("Incremental
+  file backups"), `docs/threat-model.md` T19, and `docs/restore-manual.md`
+  step 1a. Pending Vex sign-off before this is considered shippable.
 - Self-hosted update feed: `Update_Checker` polls the now-public
   `github.com/ItsMNLOP/wpguard-nc-backup` Releases (no credentials
   needed) through WP's normal `pre_set_site_transient_update_plugins`/

@@ -10,6 +10,23 @@ This is the exact procedure the automated E2E restore test executes — see
 `tests/e2e/`. If you deviate from it, you are no longer testing what was
 verified.
 
+## 0. Check `manifest.json`'s `backup_mode` first (Phase 2, incremental backups)
+
+Before retrieving anything else, fetch just `<backup-id>/manifest.json` and
+read its `backup_mode` field:
+
+- **`"full"`** (or a `format_version: 1` manifest from before this feature
+  existed, which has no `backup_mode` field at all): every file this backup
+  needs is inside its own `files.part-NNNN.zip`. Follow steps 1–8 exactly as
+  written below — nothing else to know.
+- **`"incremental"`**: this backup's own folder does **not** contain every
+  file you need. Skip to **step 1a** instead of step 1.
+
+**Stop if `format_version` is higher than this document's supported value
+(2)** — a newer plugin version wrote this backup, and the shape may have
+changed again; use that version's own copy of this document instead of
+guessing.
+
 ## 1. Retrieve the backup from Nextcloud, independent of WordPress
 
 Using any WebDAV client (Nextcloud web UI, a desktop sync client, `curl`,
@@ -23,6 +40,41 @@ server and download the entire folder, including:
 
 **Stop if `COMPLETE.json` is missing.** A backup folder without it was never
 verified and may be incomplete; pick an earlier `<backup-id>` that has one.
+
+## 1a. Retrieving an INCREMENTAL backup (skip this if step 0 said "full")
+
+An incremental backup's `manifest.json` has a `files` array: one entry per
+file currently on the site, each naming `source_backup_id` and
+`source_part` — the backup folder where that file's actual bytes live
+(its own, or an earlier one in the same chain). Nothing here is a diff to
+"apply" on top of anything; it's a complete, resolved list of exactly what
+the site looked like at backup time.
+
+1. Download this backup's own `manifest.json` and `COMPLETE.json` (same
+   stop-if-missing rule as step 1) and `database.sql.gz` (the database is
+   never incremental — always a full dump in every backup).
+2. For every entry in `files`, note its `source_backup_id` + `source_part`.
+   Collect the **distinct** `(source_backup_id, source_part)` pairs — you
+   almost always need far fewer than one download per file, since many
+   files typically share the same unchanged ancestor part.
+3. For each distinct pair, download that *other* backup's
+   `/<site-id>/backups/<source_backup_id>/<source_part>` — yes, reaching
+   into an earlier backup's folder on purpose. **Do not delete or rotate
+   out an earlier backup a newer one still has live references into** —
+   this plugin's own retention pruning already accounts for this (see
+   `docs/operations.md`), but if you've copied backups elsewhere by hand,
+   the same rule applies there too.
+4. Extract only the files you need from each downloaded part (any zip tool
+   supports extracting a single named entry — e.g. `unzip part.zip
+   'wp-content/path/to/file'`), placing each at the path its manifest
+   `files` entry names, relative to your target WordPress root.
+5. Continue at step 2 below for integrity verification, using this
+   backup's own `manifest.json` — but note `components[]` only covers
+   `database.sql.gz` and whichever `files.part-NNNN.zip` files this
+   specific backup actually produced itself (possibly none, if nothing
+   changed since its chain parent); the per-file `sha256` inside each
+   `files[]` entry is what verifies an individual restored file,
+   regardless of which backup it actually came from.
 
 Example with `curl` against the app-password account (replace placeholders):
 
@@ -49,8 +101,11 @@ Every value must exactly match the corresponding `sha256` field in
 corrupted download or a corrupted stored backup; retry the download first,
 and if it still mismatches, try an earlier `<backup-id>`.
 
-Also check `manifest.json`'s `format_version` is `1` (or a version this
-document still covers — see `docs/backup-format.md`'s compatibility policy).
+Also check `manifest.json`'s `format_version` is `1` or `2` (or a version
+this document still covers — see `docs/backup-format.md`'s compatibility
+policy) — already checked in step 0 above, repeated here as a reminder
+since this is the point where you'd actually notice a mismatch if you
+skipped straight to step 1.
 
 ## 3. Decompress and inspect before extracting
 
@@ -160,7 +215,12 @@ never a plain SQL `UPDATE ... REPLACE()` across tables.
 ## Known limitations (MVP)
 
 - No guided/automated restore tool ships in MVP (RST-04 is Phase 4). This
-  document is the only restore path.
+  document is the only restore path. Step 1a's part-fetching/extraction is
+  entirely manual — it has been exercised by the automated
+  `tests/e2e/run-e2e-incremental.sh` (which performs exactly this
+  reconstruction in code, not just a direct-call test of the chain logic),
+  but not yet wrapped in a one-click admin-UI restore (a separate,
+  not-yet-built Phase 2 item).
 - Files outside the WordPress document root, and symlink targets outside
   the site root, are never captured — restore them from your own records if
   your site depends on any.

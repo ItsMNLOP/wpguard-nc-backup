@@ -1,5 +1,59 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — incremental file backups built, awaiting Vex sign-off, 2026-10-20
+
+Fifth Phase 2 item: incremental file backups, opt-in (default off).
+Before writing any code, measured the real bottleneck first (per
+advisor guidance) rather than assuming the 1.0.0 CHANGELOG's claim
+still held after the `Archive_Writer` fix shipped in the same
+release: ran a real backup against an ~8,500-file/~82MB scaled-up
+fixture and confirmed `export_files` is still ~97% of total runtime,
+upload itself now trivial. Confirmed the lever is real before building
+it.
+
+Design (not a diff/patch chain — every manifest's new `files` field is
+the complete resolved current index every time, so a deleted file has
+no entry and can never be resurrected on restore) and the
+retention/chain interaction (naive oldest-first pruning would delete a
+chain's base first, since it's always oldest — fixed by making
+`Retention::prune()` compute and respect the full transitive
+dependency set of every kept backup) both came out of an advisor
+consult before writing code, specifically flagging that retention-
+breaks-chain is the default outcome of a naive implementation, not an
+edge case, and that a silent partial restore is the worst possible
+failure mode for a backup plugin. `format_version` bumped 1 -> 2
+(global, not per-manifest-flag-only, so old restore tooling fails
+closed on ANY new-shape manifest, full or incremental). New
+`Backup_Chain` class decides full-vs-incremental once up front in
+`step_init()`, re-verifying the previous chain backup's manifest and
+every part it transitively references against the real server before
+trusting any of it — falls back to a full on any gap found, never
+guesses, never fails the backup outright. Forces a full periodically
+regardless (7 backups or 7 days, both filterable) to bound the
+(size, mtime) unchanged-check's known blind spot.
+
+9 new unit tests (Settings' new setting, `format_version` backward-
+compat). New `tests/e2e/run-e2e-incremental.sh` against the real
+Nextcloud test server: builds a real 3-backup chain (full, no-change
+incremental, change+delete+add incremental), confirms on the real
+server that a no-change incremental uploads literally zero
+`files.part-*.zip` objects (not just a logical "unchanged" marking),
+confirms a deleted file is absent from the manifest entirely, performs
+a real byte-for-byte restore reconstruction by walking the final
+manifest alone and pulling each file from whichever backup it actually
+lives in, and confirms chain-aware retention protects a backup a kept
+one still depends on while reclaiming one that's fully superseded.
+51/51 unit tests, the incremental E2E suite, and the existing
+retention/scheduling/stale-lock-recovery/main-backup-restore E2E
+suites all re-verified green (the retention E2E fixtures needed a
+real manifest.json added, since the new chain-aware logic reads one
+for every kept backup — a gap caught during this verification pass,
+not shipped). Sent to Vex before considering this shippable — higher
+integrity stakes than any prior Phase 2 item, since getting backup/
+restore correctness wrong is the worst possible failure for a backup
+plugin. Full detail: `docs/operations.md` ("Incremental file
+backups"), `docs/threat-model.md` T19, `docs/restore-manual.md` step 1a.
+
 ## Phase 2 progress — update feed Vex audit BLOCKED, fixed same-day, 2026-10-20
 
 Vex's audit of the update feed came back **BLOCKED**: a real, externally

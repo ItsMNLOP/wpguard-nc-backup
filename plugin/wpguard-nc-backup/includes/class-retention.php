@@ -43,6 +43,23 @@ class Retention {
 	 * ever fail again -- RETENTION-1) is likewise just ignored, never
 	 * a deletion candidate, as defense in depth.
 	 *
+	 * Phase 2 (incremental backups): a kept backup's manifest may
+	 * reference bytes that physically live in an EARLIER backup's
+	 * folder (see class-backup-chain.php) -- an incremental's own
+	 * folder can look like an independently prunable "old" backup by
+	 * name alone, while still being load-bearing for every newer
+	 * backup kept in the same chain. The naive oldest-first scheme
+	 * below would delete exactly the chain's base first, since it's
+	 * always the oldest, breaking every incremental built on it. Before
+	 * computing what's prunable, every one of the `$keep` most recent
+	 * verified backups' manifests is read to find the full set of
+	 * backup_ids any of them transitively depends on; that set is
+	 * never deleted regardless of its own age. For a site that never
+	 * uses incremental backups, every manifest's files only ever
+	 * reference themselves, so this set is just the `$keep` newest
+	 * backups and behaves identically to before (RETENTION-2-era
+	 * tests still cover that case).
+	 *
 	 * @return array{deleted:array<string>, kept:int}|\WP_Error
 	 */
 	public static function prune( Nextcloud_Client $client, string $parent_rel, int $keep ): array|\WP_Error {
@@ -73,7 +90,25 @@ class Retention {
 			return array( 'deleted' => array(), 'kept' => count( $verified ) );
 		}
 
-		$to_delete = array_slice( $verified, 0, $excess );
+		$must_keep = array();
+		foreach ( array_slice( $verified, -$keep ) as $backup_id ) {
+			$must_keep[ $backup_id ] = true;
+			$refs = self::referenced_source_backups( $client, $parent_rel, $backup_id );
+			if ( is_wp_error( $refs ) ) {
+				// Fail-closed: if a kept backup's own manifest can't be
+				// read to determine what it depends on, nothing is
+				// deleted this run rather than risk breaking it.
+				return $refs;
+			}
+			foreach ( $refs as $ref ) {
+				$must_keep[ $ref ] = true;
+			}
+		}
+
+		$to_delete = array_values( array_diff( $verified, array_keys( $must_keep ) ) );
+		if ( empty( $to_delete ) ) {
+			return array( 'deleted' => array(), 'kept' => count( $verified ) );
+		}
 		$deleted = array();
 		foreach ( $to_delete as $name ) {
 			$result = $client->delete( $parent_rel . '/' . $name );
@@ -91,5 +126,30 @@ class Retention {
 		}
 
 		return array( 'deleted' => $deleted, 'kept' => count( $verified ) - count( $deleted ) );
+	}
+
+	// Generous relative to realistic file counts; matches
+	// Backup_Chain::MAX_MANIFEST_BYTES.
+	const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
+
+	/**
+	 * @return array<string>|\WP_Error Distinct backup_ids (excluding
+	 *   $backup_id itself) that $backup_id's own manifest.json's `files`
+	 *   list points at. Empty for a full backup -- every entry there
+	 *   points at itself.
+	 */
+	private static function referenced_source_backups( Nextcloud_Client $client, string $parent_rel, string $backup_id ) {
+		$manifest = $client->get_json( $parent_rel . '/' . $backup_id . '/manifest.json', self::MAX_MANIFEST_BYTES );
+		if ( is_wp_error( $manifest ) ) {
+			return $manifest;
+		}
+		$sources = array();
+		foreach ( (array) ( $manifest['files'] ?? array() ) as $entry ) {
+			$source = $entry['source_backup_id'] ?? '';
+			if ( is_string( $source ) && '' !== $source && $source !== $backup_id ) {
+				$sources[ $source ] = true;
+			}
+		}
+		return array_keys( $sources );
 	}
 }

@@ -59,6 +59,7 @@ class Admin {
 			'ca_bundle_path' => isset( $_POST['ca_bundle_path'] ) ? wp_unslash( $_POST['ca_bundle_path'] ) : '',
 			'schedule'       => isset( $_POST['schedule'] ) ? sanitize_text_field( wp_unslash( $_POST['schedule'] ) ) : 'disabled',
 			'retention_count' => isset( $_POST['retention_count'] ) ? (int) $_POST['retention_count'] : 0,
+			'incremental_enabled' => isset( $_POST['incremental_enabled'] ) ? ! empty( $_POST['incremental_enabled'] ) : false,
 		);
 		$result = Settings::save( $input );
 		if ( $result['ok'] ) {
@@ -236,6 +237,13 @@ class Admin {
 						<p class="description"><?php esc_html_e( '0 = keep every backup forever (default). A positive number deletes the oldest backup folder(s) on Nextcloud right after each new backup verifies successfully, once more than that many exist. This permanently deletes data — only increase from 0 once you are comfortable with the number chosen.', 'wpguard-nc-backup' ); ?></p>
 					</td>
 				</tr>
+				<tr>
+					<th><label for="wpguard_nc_incremental"><?php esc_html_e( 'Incremental file backups', 'wpguard-nc-backup' ); ?></label></th>
+					<td>
+						<label><input type="checkbox" id="wpguard_nc_incremental" <?php checked( $settings['incremental_enabled'] ); ?>> <?php esc_html_e( 'Skip re-uploading files unchanged since the last backup', 'wpguard-nc-backup' ); ?></label>
+						<p class="description"><?php esc_html_e( 'Off by default. When on, a file whose size and modified time match the previous backup is referenced instead of re-archived and re-uploaded — the usual speed-up on a site with many files. A full backup is still taken periodically (every 7 backups or 7 days, whichever comes first) regardless of this setting. Every individual backup remains independently verified before being marked complete; see Operations docs for how restore works with this on.', 'wpguard-nc-backup' ); ?></p>
+					</td>
+				</tr>
 			</table>
 			<p>
 				<button type="button" class="button button-primary" id="wpguard_nc_save"><?php esc_html_e( 'Save Settings', 'wpguard-nc-backup' ); ?></button>
@@ -272,7 +280,8 @@ class Admin {
 					remote_folder: document.getElementById('wpguard_nc_folder').value,
 					ca_bundle_path: document.getElementById('wpguard_nc_ca').value,
 					schedule: document.getElementById('wpguard_nc_schedule').value,
-					retention_count: document.getElementById('wpguard_nc_retention').value
+					retention_count: document.getElementById('wpguard_nc_retention').value,
+					incremental_enabled: document.getElementById('wpguard_nc_incremental').checked ? '1' : ''
 				}).then(function(res){
 					document.getElementById('wpguard_nc_settings_result').textContent = res.data.message;
 				});

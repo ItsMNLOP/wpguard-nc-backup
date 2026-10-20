@@ -194,6 +194,70 @@ rely on this as the only safety net: a server configured with trashbin
 disabled, or one whose retention window has already passed, has none
 of this protection.
 
+## Incremental file backups (Phase 2, 2026-10-20)
+
+Off by default ("Incremental file backups" checkbox on the settings
+page). When on, a file whose size and modified time exactly match the
+immediately-previous chain backup is referenced rather than
+re-archived and re-uploaded — real speed-up on a site with many
+mostly-unchanged files (measured: on this project's own ~8,500-file,
+~82MB test fixture, file archiving/export alone was ~97% of total
+backup time even after the Phase 1 `Archive_Writer` fix, confirming
+this stayed the single biggest remaining lever before building it).
+The database is **never** incremental — always a full `mysqldump`-style
+export every single run, full or incremental file mode alike.
+
+**Not a diff/patch chain.** Every backup's `manifest.json` has a
+`files` array that is always a *complete, resolved* index of every
+current file — not a delta relative to its parent — each entry naming
+`source_backup_id`/`source_part`: wherever that file's actual bytes
+physically live, whether that's this backup's own freshly archived
+part or an earlier chain member's part carried forward verbatim. A
+deleted file simply has no entry (it won't be in that run's
+filesystem walk), so restoring from the latest manifest alone can
+never resurrect it — no separate deletion-tracking needed. See
+`class-backup-chain.php`'s docblock for the full design rationale;
+`docs/restore-manual.md` step 1a covers the manual restore procedure
+this implies (fetch each distinct referenced source part once,
+extract only the needed entries).
+
+**Fails closed to a full backup, never guesses or fails the backup.**
+Before trusting any chain state, `Backup_Chain::plan()` re-verifies
+against the real server: the previous chain backup's `manifest.json`
+must still be fetchable, and every part it transitively references
+must still exist (a PROPFIND per distinct referenced part). Any
+failure anywhere in that check — local chain-state option missing
+(fresh install, migration), the chain's own max depth or max age
+exceeded, the parent manifest gone or unreadable, a referenced
+ancestor part deleted — falls back to doing a full backup for that
+run instead, decided once up front in `step_init()` before any file
+is skipped (never discovered to be unsafe partway through
+`export_files`, by which point skipped files would be unrecoverable
+for that run). A full backup is also forced periodically regardless of
+any failure: every `wpguard_nc_incremental_max_chain` backups (7,
+filterable) or `wpguard_nc_incremental_max_chain_days` days (7,
+filterable), whichever comes first — this bounds the (size, mtime)
+unchanged-check's known blind spot (a file whose content changed but
+whose modified time was preserved, deliberately or incidentally, by
+whatever wrote it) to at most one chain's worth of exposure.
+
+**Chain-aware retention.** `Retention::prune()` (above) now computes,
+for every backup within the keep-N window, the full set of
+`source_backup_id`s its own `manifest.json` depends on, and never
+deletes any backup in that set — regardless of how old it is by name.
+A backup that's fully superseded (nothing newer still references it)
+remains freely prunable even if it sits between two protected backups
+in the chain. Regression test: `tests/e2e/run-e2e-incremental.sh`
+proves, against the real Nextcloud test server, that an unchanged file
+is never re-uploaded at all (not merely logically marked unchanged —
+checked by confirming zero `files.part-*.zip` objects exist for a
+no-change incremental run), a changed/new/deleted file is handled
+correctly across a 3-backup chain, a real byte-for-byte restore
+reconstruction from the final manifest alone succeeds by pulling from
+whichever backup each file's bytes actually live in, and chain-aware
+retention protects a backup a kept one still depends on while
+reclaiming one that's fully superseded.
+
 ## Updates (Phase 2, 2026-10-20)
 
 This plugin isn't on the WordPress.org directory, so wp-admin's normal

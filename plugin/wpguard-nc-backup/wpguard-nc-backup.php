@@ -20,7 +20,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'WPGUARD_NC_VERSION', '1.0.0' );
-define( 'WPGUARD_NC_FORMAT_VERSION', 1 );
+// Phase 2 (incremental backups): bumped 1 -> 2. Every manifest this
+// plugin writes from here on -- full or incremental alike -- carries
+// new backup_mode/base_backup_id/parent_backup_id/files fields.
+// validate_format_version() rejects anything newer than what's running,
+// so this forces any older restore tooling (written against the
+// format_version 1 docs) to refuse touching a backup it doesn't fully
+// understand, rather than silently restoring a partial file set.
+// Restoring an OLDER format_version 1 backup is unaffected -- only
+// forward-compatibility is the thing being deliberately broken here.
+define( 'WPGUARD_NC_FORMAT_VERSION', 2 );
 define( 'WPGUARD_NC_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WPGUARD_NC_URL', plugin_dir_url( __FILE__ ) );
 define( 'WPGUARD_NC_DB_SCHEMA_VERSION', 1 );

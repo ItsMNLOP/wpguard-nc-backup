@@ -42,8 +42,22 @@ class Settings {
 			'ca_bundle_path' => '',
 			'schedule'       => 'disabled',
 			'retention_count' => 0,
+			'incremental_enabled' => false,
 		);
 		return array_merge( $defaults, $stored );
+	}
+
+	/**
+	 * Phase 2 (incremental backups), default false: an unchanged file
+	 * (matched against the previous chain backup's manifest by size and
+	 * mtime -- see Backup_Chain) is referenced rather than re-archived
+	 * and re-uploaded. Defaults off for the same reason schedule
+	 * defaults to 'disabled' and retention_count to 0 -- nothing about
+	 * an existing site's backup/restore story changes unless an admin
+	 * explicitly opts in.
+	 */
+	public static function get_incremental_enabled(): bool {
+		return (bool) self::get_all()['incremental_enabled'];
 	}
 
 	public static function get_schedule(): string {
@@ -183,6 +197,13 @@ class Settings {
 		// min=0> in the admin UI, not free text.
 		$retention_raw = isset( $input['retention_count'] ) ? $input['retention_count'] : 0;
 		$clean['retention_count'] = is_numeric( $retention_raw ) ? max( 0, (int) $retention_raw ) : 0;
+
+		// Incremental backups: a plain checkbox, so any truthy submission
+		// means "on" and an absent field (checkbox unchecked -- browsers
+		// never submit an unchecked checkbox at all) means "off". There is
+		// no "unrecognized value" case to clamp here, unlike schedule/
+		// retention_count above.
+		$clean['incremental_enabled'] = ! empty( $input['incremental_enabled'] );
 
 		if ( ! empty( $errors ) ) {
 			return array( 'ok' => false, 'errors' => $errors );

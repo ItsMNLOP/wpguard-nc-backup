@@ -88,6 +88,24 @@ function test_rejects_negative_retention_count() {
 	wpguard_assert_equals( 0, Settings::get_retention_count(), 'a negative retention_count must clamp to 0, not be stored as negative' );
 }
 
+// Phase 2 (incremental backups). A plain checkbox: must default to off
+// (never silently start skipping files on an existing site after an
+// update), accept an explicit on, and never hard-fail the save either
+// way.
+function test_incremental_defaults_to_disabled_when_missing() {
+	$GLOBALS['__wpguard_test_options'] = array();
+	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'pw' ) );
+	wpguard_assert( true === $result['ok'], 'save without an incremental_enabled field must still succeed' );
+	wpguard_assert( false === Settings::get_incremental_enabled(), 'an omitted incremental_enabled field must default to disabled' );
+}
+
+function test_incremental_accepts_enabled() {
+	$GLOBALS['__wpguard_test_options'] = array();
+	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'pw', 'incremental_enabled' => '1' ) );
+	wpguard_assert( true === $result['ok'], 'a truthy incremental_enabled must be accepted' );
+	wpguard_assert( true === Settings::get_incremental_enabled(), 'incremental_enabled must be stored and read back as enabled' );
+}
+
 // Vex audit H-02 regression coverage. redact_wp_config_contents() is a
 // pure string transform (no WP functions), safe to test directly.
 function test_redact_wp_config_strips_credential_constants() {
@@ -141,6 +159,8 @@ return array(
 	'test_retention_defaults_to_zero_when_missing',
 	'test_accepts_valid_retention_count',
 	'test_rejects_negative_retention_count',
+	'test_incremental_defaults_to_disabled_when_missing',
+	'test_incremental_accepts_enabled',
 	'test_redact_wp_config_strips_credential_constants',
 	'test_redact_wp_config_known_gap_const_syntax_not_caught',
 	'test_locked_app_password_purges_stored_wp_options_value',
