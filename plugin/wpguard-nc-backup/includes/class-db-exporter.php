@@ -165,4 +165,77 @@ class DB_Exporter {
 	public static function write_footer( $fh ): void {
 		fwrite( $fh, "SET FOREIGN_KEY_CHECKS=1;\n" );
 	}
+
+	/**
+	 * Pure. Phase 2 (one-click restore): splits a dump this exporter
+	 * produced back into individual executable statements. $wpdb->query()
+	 * runs exactly one statement per call (no multi-statement support),
+	 * and shelling out to a `mysql` CLI binary to let IT handle splitting
+	 * was rejected specifically because it isn't available on a lot of
+	 * the "conventional shared WordPress hosting" this plugin targets
+	 * (exec()/proc_open() are commonly disabled there) -- so this has to
+	 * be done correctly in PHP.
+	 *
+	 * Splits on `;` only when not inside a single-quoted string literal,
+	 * correctly tracking backslash-escaping (`\\` and `\'`) the exact way
+	 * write_inserts() above produces it via esc_sql(). A naive line/regex
+	 * split would corrupt the first INSERT containing a value with a
+	 * literal `;` followed by a newline inside a string (plausible real
+	 * content: post text, a multi-line value with a semicolon).
+	 *
+	 * Deliberately narrow: this only ever needs to parse output THIS
+	 * class wrote, not arbitrary/adversarial SQL, and that output's only
+	 * quoting construct is single-quoted string literals (binary columns
+	 * are hex-encoded as 0x..., never quoted; identifiers are backtick-
+	 * quoted and never contain a semicolon or an unescaped single quote).
+	 *
+	 * @return string[] Statements, each already including its ';'.
+	 */
+	public static function split_statements( string $sql ): array {
+		$statements = array();
+		$buffer = '';
+		$in_string = false;
+		$len = strlen( $sql );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$char = $sql[ $i ];
+			$buffer .= $char;
+			if ( $in_string ) {
+				if ( '\\' === $char && $i + 1 < $len ) {
+					// Escaped character: consume the next byte verbatim
+					// without reinterpreting it, so \' doesn't end the
+					// string and \\ doesn't leave a dangling escape.
+					$buffer .= $sql[ ++$i ];
+					continue;
+				}
+				if ( "'" === $char ) {
+					$in_string = false;
+				}
+				continue;
+			}
+			if ( "'" === $char ) {
+				$in_string = true;
+				continue;
+			}
+			if ( ';' === $char ) {
+				$trimmed = trim( $buffer );
+				// A statement is only "empty" once its own trailing ';'
+				// (already included in $buffer/$trimmed at this point)
+				// is also stripped -- trim() alone leaves a bare ";" as
+				// non-empty, which would otherwise be sent to the DB as
+				// an invalid lone-semicolon statement.
+				if ( '' !== trim( rtrim( $trimmed, ';' ) ) ) {
+					$statements[] = $trimmed;
+				}
+				$buffer = '';
+			}
+		}
+		$trimmed = trim( $buffer );
+		if ( '' !== $trimmed ) {
+			// A trailing statement with no final ';' (shouldn't happen
+			// with this exporter's own output, but don't silently drop
+			// real content if it does).
+			$statements[] = $trimmed;
+		}
+		return $statements;
+	}
 }

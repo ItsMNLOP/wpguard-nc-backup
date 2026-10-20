@@ -1,5 +1,76 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — one-click restore built, two self-caught bugs fixed, awaiting Vex, 2026-10-20
+
+Sixth Phase 2 item, and the highest-stakes one in the whole project:
+one-click, in-place restore (RST-04). The original brief treats this
+differently from the rest of Phase 2 — explicitly listed as an MVP
+non-goal and gated on "threat review and explicit owner approval"
+before any build work, separate from the general autonomy already
+granted. Flagged this distinction to Mike before starting rather than
+building on an assumed scope; his answer: build it, test with real
+backup copies already accessible on cloud.tomcat.casa, restored onto
+the local disposable stack — never against a live DB until proven
+there first. That's exactly how this was built and tested.
+
+Design came out of an advisor consult: two-phase (verify-and-stage,
+entirely read-only, before the point of no return; then apply —
+shadow-prefixed DB import, atomic multi-table `RENAME TABLE` swap,
+quarantine/rollback directories instead of deletion), because an
+in-place restore's tightest constraint is that it can destroy its own
+runtime.
+
+Tested against a REAL backup from the owner's own production site
+(mikelautner.com, via the dedicated Nextcloud test account on
+cloud.tomcat.casa — confirmed it holds real backup folders from
+earlier real-world testing), restored onto a disposable,
+freshly-provisioned WordPress install with the plugin genuinely
+active and running on it (never onto wp-source, the stable fixture
+other E2E scripts depend on). This surfaced two real, previously-
+undetected self-destruction risks that synthetic test fixtures would
+never have caught:
+
+1. Restoring an older backup quarantined the plugin's OWN
+   currently-running files (ones added since that backup was taken,
+   like `class-update-checker.php`) — the ordinary "live but not in
+   the backup" quarantine rule applied to the plugin's own source
+   broke its autoloader mid-restore.
+2. The backup's own `wp-config.php` silently overwrote the target's
+   DB credentials with the source site's.
+
+Both fixed as hard exclusions (`Restore_Orchestrator::is_never_restored_path()`)
+— the plugin's own directory and `wp-config.php` are never touched by
+a restore, checked at both planning time and again at the actual
+write site. Also found and fixed two real test/environment gaps along
+the way: `Inventory`'s exclusion patterns didn't cover the restore's
+own tmp/upload staging directories (same self-reference class of bug,
+one step earlier); and the docker-compose `wpcli` service was missing
+a plugin bind-mount for its `html-restore` path entirely, so an
+emptied test volume made every plugin class simply vanish for that
+service. One apparent third bug (`wp-config.php` changing within the
+full test script's own run) turned out not to be a bug at all after
+careful isolation: the real backup's own content includes the active
+"WP 2FA" plugin, which legitimately writes its own encryption key
+into `wp-config.php` the first time it runs genuinely active again
+after restore — normal third-party plugin behavior, nothing to do
+with the restore mechanism, which never touches that file. The test
+now checks the hash immediately after the restore completes,
+specifically to keep that distinction clean.
+
+62/70 -> 70/70 unit tests (new `SplitStatementsTest.php` for the
+SQL-dump statement splitter the DB-apply step needs, since `$wpdb->query()`
+only ever runs one statement and shelling out to the `mysql` CLI was
+rejected as unavailable on a lot of real shared hosting), the full
+`tests/e2e/run-e2e-restore.sh` suite (plugin settings/site_id/jobs-row
+preserved, wp-config.php untouched by the restore itself, pre-existing
+non-backup file quarantined not deleted, rollback tables preserved,
+no leftover shadow tables, real content restored and queryable), and
+the complete existing E2E suite (main drill, incremental, retention,
+scheduling, stale-lock, update-checker) all green with no regression.
+Sent to Vex before this is considered shippable — not self-certified,
+and given the stakes, reviewed more heavily than anything else in
+this project so far, not less.
+
 ## Phase 2 progress — incremental backups CLEAR TO SHIP (final), 2026-10-20
 
 Third Vex re-verification: **CLEAR TO SHIP**, no new findings. Traced

@@ -258,6 +258,85 @@ whichever backup each file's bytes actually live in, and chain-aware
 retention protects a backup a kept one still depends on while
 reclaiming one that's fully superseded.
 
+## One-click restore (Phase 2, 2026-10-20)
+
+**RST-04.** Built with Mike's explicit approval given the original
+brief's own gate on this specific feature ("no one-click destructive
+restore" at MVP, requiring "threat review and explicit owner approval"
+before any build work) — see STATUS.md for that decision. Restores
+this site, **in place**, from a chosen backup — either picked from the
+configured Nextcloud destination, or a single uploaded `.zip` bundle
+(a self-contained/full backup only; an incremental chain needs the
+Nextcloud source to reach its ancestor backups). Reuses the exact same
+job-state-machine shape backups use (same table, same status
+vocabulary, same `try_lock()`/`release_lock()` mutual exclusion via
+`Job_Store`), so a restore in progress blocks a new backup from
+starting and vice versa automatically.
+
+**Two-phase design** (the only way this was judged safe to build at
+all): `restore_acquire` and `restore_preflight` are entirely
+read-only with respect to the live site — fetches and integrity-
+verifies everything (part-level sha256 for this backup's own parts,
+per-file sha256 where available, size-bound checks on ancestor parts)
+into a staging area before anything live is touched, and runs every
+check that can fail safely (home_url mismatch, WordPress version
+newer than this core, disk space) before the point of no return.
+`restore_apply_db` onward is that point of no return: the database
+import goes into **shadow-prefixed tables** (never the live ones
+directly), file changes are staged then applied with anything they'd
+replace moved into a timestamped rollback directory first (nothing
+ever deleted outright), and the final `restore_swap` step is a single
+atomic multi-table `RENAME TABLE` — live tables preserved under a
+`wpgbak…` prefix, shadow tables promoted to live. A failure at or
+after this point leaves clearly-labeled recovery artifacts rather
+than attempting automatic rollback, which would be its own large
+source of new bugs — the job log names the exact rollback table
+prefix and rollback files directory.
+
+**Hard exclusions, never touched under any circumstance** — found
+live, during this feature's own E2E testing against a real production
+backup:
+- **This plugin's own directory.** An older backup predates files
+  this plugin has added since (a real, demonstrated failure: an older
+  backup's file list simply doesn't mention `class-update-checker.php`,
+  so the ordinary "live but not in the backup -> quarantine" rule
+  would otherwise move the plugin's own currently-running code out
+  of place mid-restore, breaking its autoloader). Plugin code updates
+  are a separate, independent mechanism (`Update_Checker`).
+- **`wp-config.php`.** RST-04's own explicit directive. The backup's
+  copy carries the *source* site's DB credentials (redacted only of
+  the plugin's own constant-override credential, nothing else) —
+  restoring onto the same site, these are already correct and must
+  never be replaced.
+
+**Known, expected, and not a bug:** a real backup's restored content
+can include active third-party plugins that write to `wp-config.php`
+themselves as part of their own normal operation (confirmed live: a
+security plugin — WP 2FA — legitimately writes its own random
+encryption key into `wp-config.php` the first time it runs genuinely
+active again after restore). This has nothing to do with the restore
+mechanism, which never touches that file itself — it's the same thing
+that plugin would do on any WordPress site. The regression test
+checks the hash immediately after the restore completes, before any
+later, unrelated page load can trigger this, specifically to keep
+this distinction clean.
+
+**Quarantine, not deletion.** A live file not part of the backup
+being restored is moved into the rollback directory, never deleted.
+
+**Settings preserved across the restore.** The plugin's own Nextcloud
+connection settings, `site_id`, incremental-chain state, and the
+retention-error notice option are captured before `restore_swap` and
+re-applied via `update_option()` immediately after — otherwise the
+dump's own `wp_options` table (which only ever excludes the single
+`Settings::OPTION_KEY` row, nothing else plugin-related) would
+silently replace them wholesale.
+
+Regression test: `tests/e2e/run-e2e-restore.sh`, run against a real
+backup from the owner's own production site (not a synthetic
+fixture), restored in place onto a disposable WordPress install with
+the plugin genuinely active and running on it.
+
 ## Updates (Phase 2, 2026-10-20)
 
 This plugin isn't on the WordPress.org directory, so wp-admin's normal

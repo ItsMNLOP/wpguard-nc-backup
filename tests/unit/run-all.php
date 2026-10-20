@@ -12,7 +12,7 @@ require __DIR__ . '/wp-shim.php';
 require __DIR__ . '/assert.php';
 
 $plugin_includes = dirname( __DIR__, 2 ) . '/plugin/wpguard-nc-backup/includes/';
-foreach ( array( 'class-archive-writer.php', 'class-logger.php', 'class-manifest.php', 'class-ca-bundle.php', 'class-settings.php', 'class-update-checker.php', 'class-job-orchestrator.php' ) as $f ) {
+foreach ( array( 'class-archive-writer.php', 'class-logger.php', 'class-manifest.php', 'class-ca-bundle.php', 'class-settings.php', 'class-update-checker.php', 'class-job-orchestrator.php', 'class-db-exporter.php' ) as $f ) {
 	require $plugin_includes . $f;
 }
 

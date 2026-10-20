@@ -32,6 +32,29 @@ All notable changes to this project are documented here.
   `Retention` class, verified against a real Nextcloud account via
   `tests/e2e/run-e2e-retention.sh`. Defaults to keep-all since pruning
   is destructive and must be an explicit admin opt-in.
+- One-click restore (RST-04): built with Mike's explicit approval given
+  the brief's own gate on this specific feature. Restores this site,
+  in place, from a backup chosen either from the configured Nextcloud
+  destination or a single uploaded `.zip` bundle. Two-phase design:
+  `restore_acquire`/`restore_preflight` are entirely read-only
+  (fetches, integrity-verifies, and runs every failable check before
+  anything live is touched); `restore_apply_db` onward is the point of
+  no return, importing into shadow-prefixed tables and swapping in via
+  one atomic multi-table `RENAME TABLE`, with the previous live tables
+  renamed aside (never dropped) and any replaced/quarantined files
+  moved into a rollback directory (never deleted). The plugin's own
+  directory and `wp-config.php` are hard exclusions, never touched
+  under any circumstance — both were real, demonstrated self-
+  destruction risks found live during this feature's own testing
+  against a real production backup, now closed. The plugin's own
+  Nextcloud settings/site_id/chain state are captured and re-applied
+  after the swap; its own job-tracking table is never imported at
+  all. See `docs/operations.md` ("One-click restore") and
+  `docs/threat-model.md` T20. New `tests/e2e/run-e2e-restore.sh`,
+  verified against a real backup from the owner's own production
+  site, restored onto disposable infrastructure only. Pending Vex
+  sign-off before this is considered shippable — the highest-stakes
+  feature in this project, reviewed accordingly.
 - Incremental file backups: an opt-in "Incremental file backups"
   setting (default off) that skips re-archiving/re-uploading a file
   whose size and modified time match the previous chain backup,

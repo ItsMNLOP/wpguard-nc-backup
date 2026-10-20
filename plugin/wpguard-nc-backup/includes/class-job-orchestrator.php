@@ -148,6 +148,14 @@ class Job_Orchestrator {
 				// and acquiring the lock.
 				return null;
 			}
+			// Phase 2 (one-click restore): a restore job uses this exact
+			// same stale-lock mechanism (same table, same try_lock()), but
+			// "previous backups are untouched" would be actively wrong --
+			// and dangerous to believe -- for a restore stuck mid-apply.
+			// Dispatched by checkpoint kind, set once at job creation.
+			if ( 'restore' === ( $fresh['checkpoint']['kind'] ?? 'backup' ) ) {
+				return Restore_Orchestrator::reap_stale( $fresh );
+			}
 			return self::fail(
 				$job['job_id'],
 				$fresh['step'],

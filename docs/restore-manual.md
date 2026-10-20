@@ -1,5 +1,15 @@
 # Manual disaster recovery runbook
 
+**If you're restoring this exact site, in place, and the plugin is still
+installed and running on it: use the plugin's own one-click restore
+(Settings > Nextcloud Backup > Restore) instead of this document.** It
+handles every step below automatically, verified against real production
+data (`tests/e2e/run-e2e-restore.sh`, `docs/operations.md`'s "One-click
+restore" section, `docs/threat-model.md` T20). This manual runbook exists
+for the case that tool can't help with: the original WordPress install is
+gone, offline, or unreachable, and you're recovering onto a **different**
+host using only the Nextcloud archive and these instructions.
+
 **Read this before you need it.** This procedure does **not** require the
 WPGuard plugin, or even a WordPress install, to be present on the recovery
 machine for steps 1–3. You need: a WebDAV-capable client (or `curl`), a

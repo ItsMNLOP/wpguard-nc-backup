@@ -22,6 +22,9 @@ class Admin {
 		add_action( 'wp_ajax_wpguard_nc_advance_job', array( $this, 'ajax_advance_job' ) );
 		add_action( 'wp_ajax_wpguard_nc_job_status', array( $this, 'ajax_job_status' ) );
 		add_action( 'wp_ajax_wpguard_nc_cancel_job', array( $this, 'ajax_cancel_job' ) );
+		add_action( 'wp_ajax_wpguard_nc_list_restorable_backups', array( $this, 'ajax_list_restorable_backups' ) );
+		add_action( 'wp_ajax_wpguard_nc_upload_restore_bundle', array( $this, 'ajax_upload_restore_bundle' ) );
+		add_action( 'wp_ajax_wpguard_nc_start_restore', array( $this, 'ajax_start_restore' ) );
 	}
 
 	public function add_menu(): void {
@@ -107,6 +110,11 @@ class Admin {
 		wp_send_json_success( array( 'job_id' => $job_id ) );
 	}
 
+	/** Phase 2 (one-click restore): a job_id may belong to either orchestrator; dispatched by checkpoint kind. */
+	private function is_restore_job( ?array $job ): bool {
+		return null !== $job && 'restore' === ( $job['checkpoint']['kind'] ?? 'backup' );
+	}
+
 	public function ajax_advance_job(): void {
 		if ( ! $this->require_capability_and_nonce() ) {
 			return;
@@ -116,7 +124,7 @@ class Admin {
 			wp_send_json_error( array( 'message' => 'Missing job_id.' ) );
 			return;
 		}
-		$job = Job_Orchestrator::advance( $job_id );
+		$job = $this->is_restore_job( Job_Store::get( $job_id ) ) ? Restore_Orchestrator::advance( $job_id ) : Job_Orchestrator::advance( $job_id );
 		wp_send_json_success( $this->public_job_view( $job ) );
 	}
 
@@ -143,7 +151,7 @@ class Admin {
 			}
 			$job_id = $latest['job_id'];
 		}
-		$job = Job_Orchestrator::cancel( $job_id );
+		$job = $this->is_restore_job( Job_Store::get( $job_id ) ) ? Restore_Orchestrator::cancel( $job_id ) : Job_Orchestrator::cancel( $job_id );
 
 		// Vex audit LOW-C1: a lock-contended cancel (advance() is actively
 		// running right now) changes nothing, and must not be reported as
@@ -159,6 +167,140 @@ class Admin {
 		wp_send_json_success( $this->public_job_view( $job ) );
 	}
 
+	/** Phase 2 (one-click restore): populates the "restore from Nextcloud" dropdown. */
+	public function ajax_list_restorable_backups(): void {
+		if ( ! $this->require_capability_and_nonce() ) {
+			return;
+		}
+		if ( ! Settings::has_credentials() ) {
+			wp_send_json_error( array( 'message' => __( 'Configure and save Nextcloud settings first.', 'wpguard-nc-backup' ) ) );
+			return;
+		}
+		$client = Nextcloud_Client::from_settings( new Logger( array( Settings::get_app_password() ) ) );
+		$parent_rel = $client->relative_path( Settings::get_site_id() . '/backups' );
+		$list = Retention::list_verified( $client, $parent_rel );
+		if ( is_wp_error( $list ) ) {
+			wp_send_json_error( array( 'message' => $list->get_error_message() ) );
+			return;
+		}
+		// Newest first for the dropdown; list_verified() returns oldest first.
+		wp_send_json_success( array( 'backups' => array_reverse( $list ) ) );
+	}
+
+	/**
+	 * Phase 2 (one-click restore): accepts a single uploaded .zip bundle
+	 * (manifest.json + COMPLETE.json + database.sql.gz + files.part-*.zip
+	 * at its root -- a full/self-contained backup only; an incremental
+	 * chain needs the Nextcloud source to reach its ancestor backups).
+	 * Extracted once, into a freshly wiped, guarded holding directory --
+	 * has_running_job() already prevents two restores (and therefore two
+	 * uploads) from being prepared concurrently.
+	 */
+	public function ajax_upload_restore_bundle(): void {
+		if ( ! $this->require_capability_and_nonce() ) {
+			return;
+		}
+		if ( Job_Store::has_running_job() ) {
+			wp_send_json_error( array( 'message' => __( 'A backup or restore is already running.', 'wpguard-nc-backup' ) ) );
+			return;
+		}
+		if ( empty( $_FILES['bundle'] ) || UPLOAD_ERR_OK !== ( $_FILES['bundle']['error'] ?? UPLOAD_ERR_NO_FILE ) ) {
+			wp_send_json_error( array( 'message' => __( 'No file was uploaded, or the upload failed.', 'wpguard-nc-backup' ) ) );
+			return;
+		}
+		$tmp_upload = $_FILES['bundle']['tmp_name'];
+		if ( ! is_uploaded_file( $tmp_upload ) ) {
+			wp_send_json_error( array( 'message' => __( 'Invalid upload.', 'wpguard-nc-backup' ) ) );
+			return;
+		}
+
+		$holding = Restore_Orchestrator::upload_dir();
+		if ( is_dir( $holding ) ) {
+			$this->rrmdir( $holding );
+		}
+		wp_mkdir_p( $holding );
+		$index = $holding . 'index.php';
+		file_put_contents( $index, "<?php\n// Silence is golden.\n" );
+		file_put_contents( $holding . '.htaccess', "Require all denied\n" );
+
+		$zip = new \ZipArchive();
+		if ( true !== $zip->open( $tmp_upload ) ) {
+			wp_send_json_error( array( 'message' => __( 'Uploaded file is not a valid .zip archive.', 'wpguard-nc-backup' ) ) );
+			return;
+		}
+		for ( $i = 0; $i < $zip->numFiles; $i++ ) {
+			$name = $zip->getNameIndex( $i );
+			if ( false === $name || '/' === substr( $name, -1 ) ) {
+				continue;
+			}
+			if ( ! Archive_Writer::is_path_safe( $name ) || false !== strpos( $name, '/' ) ) {
+				// Flat bundle only -- a backup_id folder's own contents,
+				// not a nested structure. Refusing anything with a
+				// directory separator at all is simpler and safer than
+				// trying to validate an arbitrary nested layout.
+				$zip->close();
+				wp_send_json_error( array( 'message' => sprintf( __( 'Refusing to extract unexpected nested path in uploaded bundle: %s', 'wpguard-nc-backup' ), $name ) ) );
+				return;
+			}
+			$content = $zip->getFromName( $name );
+			if ( false === $content ) {
+				continue;
+			}
+			file_put_contents( $holding . $name, $content );
+		}
+		$zip->close();
+
+		wp_send_json_success( array( 'message' => __( 'Bundle uploaded and extracted; ready to verify.', 'wpguard-nc-backup' ) ) );
+	}
+
+	private function rrmdir( string $dir ): void {
+		if ( ! is_dir( $dir ) ) {
+			return;
+		}
+		$items = new \RecursiveIteratorIterator( new \RecursiveDirectoryIterator( $dir, \FilesystemIterator::SKIP_DOTS ), \RecursiveIteratorIterator::CHILD_FIRST );
+		foreach ( $items as $item ) {
+			$item->isDir() ? @rmdir( $item->getPathname() ) : @unlink( $item->getPathname() );
+		}
+		@rmdir( $dir );
+	}
+
+	/** Phase 2 (one-click restore): starts the restore job itself; everything before this was read-only prep. */
+	public function ajax_start_restore(): void {
+		if ( ! $this->require_capability_and_nonce() ) {
+			return;
+		}
+		$source_type = isset( $_POST['source'] ) ? sanitize_text_field( wp_unslash( $_POST['source'] ) ) : '';
+		$confirm = ! empty( $_POST['confirm_url_mismatch'] );
+
+		if ( 'upload' === $source_type ) {
+			if ( ! file_exists( Restore_Orchestrator::upload_dir() . 'manifest.json' ) ) {
+				wp_send_json_error( array( 'message' => __( 'Upload a backup bundle first.', 'wpguard-nc-backup' ) ) );
+				return;
+			}
+			$manifest = json_decode( (string) file_get_contents( Restore_Orchestrator::upload_dir() . 'manifest.json' ), true );
+			$backup_id = is_array( $manifest ) ? (string) ( $manifest['backup_id'] ?? '' ) : '';
+			if ( '' === $backup_id ) {
+				wp_send_json_error( array( 'message' => __( 'Uploaded bundle\'s manifest.json has no backup_id.', 'wpguard-nc-backup' ) ) );
+				return;
+			}
+			$source = array( 'type' => 'upload', 'upload_dir' => Restore_Orchestrator::upload_dir() );
+		} else {
+			$backup_id = isset( $_POST['backup_id'] ) ? sanitize_text_field( wp_unslash( $_POST['backup_id'] ) ) : '';
+			if ( '' === $backup_id ) {
+				wp_send_json_error( array( 'message' => __( 'Choose a backup to restore.', 'wpguard-nc-backup' ) ) );
+				return;
+			}
+			$source = array( 'type' => 'nextcloud' );
+		}
+
+		$job_id = Restore_Orchestrator::create_restore_job( $source, $backup_id, $confirm );
+		if ( '' === $job_id ) {
+			wp_send_json_error( array( 'message' => __( 'A backup or restore is already running.', 'wpguard-nc-backup' ) ) );
+			return;
+		}
+		wp_send_json_success( array( 'job_id' => $job_id ) );
+	}
+
 	/** Strips anything that shouldn't reach the browser even redacted-in-principle (defense in depth). */
 	private function public_job_view( array $job ): array {
 		return array(
@@ -168,6 +310,7 @@ class Admin {
 			'step'       => $job['step'] ?? '',
 			'error'      => $job['error'] ?? '',
 			'log'        => array_slice( $job['log'] ?? array(), -10 ),
+			'kind'       => 'restore' === ( $job['checkpoint']['kind'] ?? 'backup' ) ? 'restore' : 'backup',
 		);
 	}
 
@@ -274,12 +417,45 @@ class Admin {
 			<p class="description"><?php esc_html_e( 'If a backup never completes (e.g. the site had no other traffic to trigger the WP-Cron fallback), use Cancel to mark it failed so a new backup can start. Already-uploaded parts of a cancelled job are left on Nextcloud untouched.', 'wpguard-nc-backup' ); ?></p>
 			<div id="wpguard_nc_job_status" role="status"></div>
 			<pre id="wpguard_nc_job_log" style="max-height:300px;overflow:auto;background:#fff;border:1px solid #ccd0d4;padding:8px;"></pre>
+
+			<h2><?php esc_html_e( 'Restore', 'wpguard-nc-backup' ); ?></h2>
+			<p class="description"><strong><?php esc_html_e( 'This overwrites this site\'s current content and database with a chosen backup, in place.', 'wpguard-nc-backup' ); ?></strong>
+			<?php esc_html_e( 'Nothing is ever permanently deleted by it — anything it replaces is renamed aside (database tables under a "wpgbak…" prefix, files into a timestamped rollback folder) for manual recovery, never dropped outright. Still: back up anything you cannot afford to lose before using this on a site that matters.', 'wpguard-nc-backup' ); ?></p>
+			<table class="form-table" role="presentation">
+				<tr>
+					<th><?php esc_html_e( 'Source', 'wpguard-nc-backup' ); ?></th>
+					<td>
+						<label><input type="radio" name="wpguard_nc_restore_source" value="nextcloud" checked> <?php esc_html_e( 'Choose from Nextcloud', 'wpguard-nc-backup' ); ?></label>
+						<select id="wpguard_nc_restore_backup_list" style="margin-left:8px;"><option value=""><?php esc_html_e( '— loading —', 'wpguard-nc-backup' ); ?></option></select>
+						<br><br>
+						<label><input type="radio" name="wpguard_nc_restore_source" value="upload"> <?php esc_html_e( 'Upload a backup bundle', 'wpguard-nc-backup' ); ?></label>
+						<input type="file" id="wpguard_nc_restore_upload_file" accept=".zip" style="margin-left:8px;">
+						<button type="button" class="button" id="wpguard_nc_restore_upload_btn"><?php esc_html_e( 'Upload', 'wpguard-nc-backup' ); ?></button>
+						<span id="wpguard_nc_restore_upload_result"></span>
+						<p class="description"><?php esc_html_e( 'A single .zip containing manifest.json, COMPLETE.json, database.sql.gz, and files.part-*.zip at its root. Only supports a self-contained (full) backup — an incremental backup\'s ancestor parts can only be reached via the Nextcloud source.', 'wpguard-nc-backup' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="wpguard_nc_restore_confirm_text"><?php esc_html_e( 'Confirm', 'wpguard-nc-backup' ); ?></label></th>
+					<td>
+						<input type="text" id="wpguard_nc_restore_confirm_text" class="regular-text" placeholder="RESTORE">
+						<p class="description"><?php esc_html_e( 'Type RESTORE to enable the button below.', 'wpguard-nc-backup' ); ?></p>
+						<label><input type="checkbox" id="wpguard_nc_restore_confirm_url"> <?php esc_html_e( 'This backup is from a different site than this one, and I am deliberately restoring it here anyway', 'wpguard-nc-backup' ); ?></label>
+					</td>
+				</tr>
+			</table>
+			<p>
+				<button type="button" class="button button-primary" id="wpguard_nc_restore_start" disabled><?php esc_html_e( 'Restore Now', 'wpguard-nc-backup' ); ?></button>
+			</p>
+			<div id="wpguard_nc_restore_status" role="status"></div>
+			<pre id="wpguard_nc_restore_log" style="max-height:300px;overflow:auto;background:#fff;border:1px solid #ccd0d4;padding:8px;"></pre>
 		</div>
 		<script>
 		(function(){
 			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 			var nonce = <?php echo wp_json_encode( $nonce ); ?>;
 			var currentJobId = null;
+			var currentRestoreJobId = null;
 
 			function post(action, extra) {
 				var body = new URLSearchParams(Object.assign({ action: action, nonce: nonce }, extra || {}));
@@ -309,10 +485,14 @@ class Admin {
 				});
 			});
 
+			function renderJobInto(statusId, logId, job) {
+				document.getElementById(statusId).textContent = 'Status: ' + job.status + ' (step: ' + job.step + ')' + (job.error ? ' — ' + job.error : '');
+				document.getElementById(logId).textContent = (job.log || []).map(function(e){ return e.time_utc + ' [' + e.severity + '] ' + e.message; }).join('\n');
+			}
+
 			function renderJob(job) {
 				currentJobId = job.job_id || currentJobId;
-				document.getElementById('wpguard_nc_job_status').textContent = 'Status: ' + job.status + ' (step: ' + job.step + ')' + (job.error ? ' — ' + job.error : '');
-				document.getElementById('wpguard_nc_job_log').textContent = (job.log || []).map(function(e){ return e.time_utc + ' [' + e.severity + '] ' + e.message; }).join('\n');
+				renderJobInto('wpguard_nc_job_status', 'wpguard_nc_job_log', job);
 			}
 
 			function pollJob(jobId) {
@@ -321,6 +501,21 @@ class Admin {
 					renderJob(job);
 					if (job.status !== 'verified' && job.status !== 'failed') {
 						setTimeout(function(){ pollJob(jobId); }, 500);
+					}
+				});
+			}
+
+			function renderRestoreJob(job) {
+				currentRestoreJobId = job.job_id || currentRestoreJobId;
+				renderJobInto('wpguard_nc_restore_status', 'wpguard_nc_restore_log', job);
+			}
+
+			function pollRestoreJob(jobId) {
+				post('wpguard_nc_advance_job', { job_id: jobId }).then(function(res){
+					var job = res.data;
+					renderRestoreJob(job);
+					if (job.status !== 'verified' && job.status !== 'failed') {
+						setTimeout(function(){ pollRestoreJob(jobId); }, 500);
 					}
 				});
 			}
@@ -353,15 +548,107 @@ class Admin {
 			// even though the job itself (advanced by the WP-Cron fallback)
 			// was likely still running; this looked identical to a crashed
 			// backup with no way to tell the difference without checking
-			// Nextcloud or the DB directly.
+			// Nextcloud or the DB directly. The latest job may be a
+			// backup OR a restore (Job_Store::get_latest() doesn't
+			// distinguish) -- routed to the matching UI section by kind.
 			post('wpguard_nc_job_status', {}).then(function(res){
 				var job = res.data;
 				if (job.status && job.status !== 'none') {
-					renderJob(job);
-					if (job.status !== 'verified' && job.status !== 'failed') {
-						pollJob(job.job_id);
+					if (job.kind === 'restore') {
+						renderRestoreJob(job);
+						if (job.status !== 'verified' && job.status !== 'failed') {
+							pollRestoreJob(job.job_id);
+						}
+					} else {
+						renderJob(job);
+						if (job.status !== 'verified' && job.status !== 'failed') {
+							pollJob(job.job_id);
+						}
 					}
 				}
+			});
+
+			// --- Restore ---
+
+			function selectedRestoreSource() {
+				var checked = document.querySelector('input[name="wpguard_nc_restore_source"]:checked');
+				return checked ? checked.value : 'nextcloud';
+			}
+
+			function loadRestorableBackups() {
+				var select = document.getElementById('wpguard_nc_restore_backup_list');
+				post('wpguard_nc_list_restorable_backups', {}).then(function(res){
+					select.innerHTML = '';
+					if (!res.success) {
+						var opt = document.createElement('option');
+						opt.textContent = res.data.message || 'Could not list backups';
+						select.appendChild(opt);
+						return;
+					}
+					if (!res.data.backups.length) {
+						var none = document.createElement('option');
+						none.textContent = '— no backups found —';
+						select.appendChild(none);
+						return;
+					}
+					res.data.backups.forEach(function(id){
+						var opt = document.createElement('option');
+						opt.value = id;
+						opt.textContent = id;
+						select.appendChild(opt);
+					});
+				});
+			}
+			loadRestorableBackups();
+
+			document.getElementById('wpguard_nc_restore_upload_btn').addEventListener('click', function(){
+				var fileInput = document.getElementById('wpguard_nc_restore_upload_file');
+				if (!fileInput.files.length) {
+					document.getElementById('wpguard_nc_restore_upload_result').textContent = 'Choose a .zip file first.';
+					return;
+				}
+				var body = new FormData();
+				body.append('action', 'wpguard_nc_upload_restore_bundle');
+				body.append('nonce', nonce);
+				body.append('bundle', fileInput.files[0]);
+				document.getElementById('wpguard_nc_restore_upload_result').textContent = 'Uploading...';
+				fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body })
+					.then(function(r){ return r.json(); })
+					.then(function(res){
+						document.getElementById('wpguard_nc_restore_upload_result').textContent = res.data.message;
+					});
+			});
+
+			function updateRestoreButtonState() {
+				var confirmed = document.getElementById('wpguard_nc_restore_confirm_text').value.trim() === 'RESTORE';
+				document.getElementById('wpguard_nc_restore_start').disabled = !confirmed;
+			}
+			document.getElementById('wpguard_nc_restore_confirm_text').addEventListener('input', updateRestoreButtonState);
+
+			document.getElementById('wpguard_nc_restore_start').addEventListener('click', function(){
+				var source = selectedRestoreSource();
+				var payload = {
+					source: source,
+					confirm_url_mismatch: document.getElementById('wpguard_nc_restore_confirm_url').checked ? '1' : ''
+				};
+				if (source === 'nextcloud') {
+					var backupId = document.getElementById('wpguard_nc_restore_backup_list').value;
+					if (!backupId) {
+						document.getElementById('wpguard_nc_restore_status').textContent = 'Choose a backup first.';
+						return;
+					}
+					payload.backup_id = backupId;
+				}
+				if (!window.confirm('This will overwrite this site\'s current content and database with the chosen backup, in place. Continue?')) {
+					return;
+				}
+				post('wpguard_nc_start_restore', payload).then(function(res){
+					if (res.success) {
+						pollRestoreJob(res.data.job_id);
+					} else {
+						document.getElementById('wpguard_nc_restore_status').textContent = res.data.message;
+					}
+				});
 			});
 		})();
 		</script>

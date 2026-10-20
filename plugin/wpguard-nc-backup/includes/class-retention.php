@@ -17,6 +17,36 @@ class Retention {
 	const BACKUP_ID_PATTERN = '/^\d{8}T\d{6}Z-[0-9a-f]{8}$/';
 
 	/**
+	 * Lists genuinely verified backup_ids under $parent_rel, oldest
+	 * first (same lexicographic/chronological order as prune()'s own
+	 * sort). Shared with the one-click restore feature's backup picker
+	 * (Phase 2) -- both need exactly the same "what counts as a real,
+	 * restorable/prunable backup" definition: name matches the real
+	 * backup_id format AND a COMPLETE.json exists.
+	 *
+	 * @return array<string>|\WP_Error
+	 */
+	public static function list_verified( Nextcloud_Client $client, string $parent_rel ) {
+		$children = $client->list_children( $parent_rel );
+		if ( is_wp_error( $children ) ) {
+			return $children;
+		}
+		$verified = array();
+		foreach ( $children as $name ) {
+			if ( ! preg_match( self::BACKUP_ID_PATTERN, $name ) ) {
+				continue;
+			}
+			$complete = $client->propfind_size( $parent_rel . '/' . $name . '/COMPLETE.json' );
+			if ( is_wp_error( $complete ) || empty( $complete['exists'] ) ) {
+				continue; // Failed/interrupted job's folder -- not a real backup.
+			}
+			$verified[] = $name;
+		}
+		sort( $verified );
+		return $verified;
+	}
+
+	/**
 	 * Deletes every genuinely verified backup folder under $parent_rel
 	 * except the $keep most recent (by lexicographic/chronological name
 	 * order). A no-op if $keep is 0 (keep-all, the default) or there
@@ -67,24 +97,11 @@ class Retention {
 			return array( 'deleted' => array(), 'kept' => -1 );
 		}
 
-		$children = $client->list_children( $parent_rel );
-		if ( is_wp_error( $children ) ) {
-			return $children;
+		$verified = self::list_verified( $client, $parent_rel );
+		if ( is_wp_error( $verified ) ) {
+			return $verified;
 		}
 
-		$verified = array();
-		foreach ( $children as $name ) {
-			if ( ! preg_match( self::BACKUP_ID_PATTERN, $name ) ) {
-				continue;
-			}
-			$complete = $client->propfind_size( $parent_rel . '/' . $name . '/COMPLETE.json' );
-			if ( is_wp_error( $complete ) || empty( $complete['exists'] ) ) {
-				continue; // Failed/interrupted job's folder -- not a real backup.
-			}
-			$verified[] = $name;
-		}
-
-		sort( $verified );
 		$excess = count( $verified ) - $keep;
 		if ( $excess <= 0 ) {
 			return array( 'deleted' => array(), 'kept' => count( $verified ) );
