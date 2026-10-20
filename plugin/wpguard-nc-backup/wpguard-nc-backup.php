@@ -2,6 +2,7 @@
 /**
  * Plugin Name:       WPGuard Nextcloud Backup
  * Plugin URI:        https://github.com/ItsMNLOP/wpguard-nc-backup
+ * Update URI:        https://github.com/ItsMNLOP/wpguard-nc-backup
  * Description:       Creates recoverable backups of this WordPress site (files + database) and transfers them to a user-controlled Nextcloud server over authenticated HTTPS WebDAV. Manual backups only in this release; see docs/restore-manual.md for disaster recovery.
  * Version:           1.0.0
  * Requires at least: 6.4
@@ -151,7 +152,9 @@ function boot() {
 	// runs outside admin context too. The GitHub API call itself only
 	// happens when that transient is actually being rebuilt, and is
 	// transient-cached for 12h beyond that -- this registration alone adds
-	// no new outbound requests or cron events.
+	// no new outbound requests or cron events. No request input of any
+	// kind (Vex audit, 2026-10-20) reaches either hooked method -- the
+	// only data path in is the TLS-authenticated GitHub API response.
 	( new Update_Checker( plugin_basename( __FILE__ ) ) )->register();
 
 	add_action( 'wpguard_nc_cron_advance', __NAMESPACE__ . '\\cron_advance' );

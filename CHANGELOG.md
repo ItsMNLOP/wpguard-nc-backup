@@ -46,6 +46,19 @@ All notable changes to this project are documented here.
   Vex sign-off before this is considered shippable.
 
 ### Fixed
+- Update feed, Vex audit (2026-10-20): **BLOCKED, then fixed same-day.**
+  H-001 (HIGH, proven exploitable): no `Update URI:` header meant
+  WordPress core still queried `api.wordpress.org` for this plugin's
+  unclaimed slug; a squatter registering it there could have had a
+  malicious package offered as a legitimate update to every installed
+  site. Added the header; `check_for_update()` now strips any
+  pre-existing transient entry for this plugin before deciding whether
+  to replace it; `plugin_info()` now returns an error instead of
+  passing through a prior filter's data when no release is found.
+  L-001 (LOW): a cached/API-sourced package URL wasn't checked against
+  this repo's own release path — added
+  `Update_Checker::is_trusted_package_url()`, applied at cache-read and
+  both emission points.
 - Corrected two Vex delta-audit documentation findings on the JOB-05
   stale-lock reaper (LOW-JOB05-1/2): `STALE_LOCK_SECONDS`'s "comfortably
   above worst-case" comment understated the real worst case by roughly

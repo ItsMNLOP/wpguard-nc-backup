@@ -1,5 +1,31 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — update feed Vex audit BLOCKED, fixed same-day, 2026-10-20
+
+Vex's audit of the update feed came back **BLOCKED**: a real, externally
+exploitable HIGH (H-001) — the plugin had no `Update URI:` header, so
+WordPress core would still query `api.wordpress.org` for the unclaimed
+`wpguard-nc-backup` slug; a squatter registering that slug there could
+have had their malicious package offered as a legitimate update to
+every site running this plugin, with no GitHub or database access
+needed. Proven exploitable as written, not theoretical. Plus one LOW
+(L-001): a cached/API-sourced package URL wasn't checked against this
+repo's own release path before being trusted. Both fixed same-day per
+standing instruction: added the `Update URI:` header; `check_for_update()`
+now strips any pre-existing transient entry under this plugin's
+basename before deciding whether to replace it; `plugin_info()` returns
+a `WP_Error` instead of passing through a prior filter's (potentially
+WP.org's) data when no release is found; added
+`Update_Checker::is_trusted_package_url()` (prefix match against this
+exact repo's release-download path), applied at cache-read and both
+emission points. 5 new unit tests, 2 new E2E cases (E: simulated
+pre-existing WP.org entry correctly stripped; F: cached different-repo
+package URL correctly never offered). 48/48 unit tests, the full
+update-checker E2E suite (6 cases), and the full backup/restore E2E
+drill all re-verified green. Re-sent to Vex for re-verification before
+considering this shippable — not self-certified. Full detail:
+`docs/threat-model.md` T18.
+
 ## Phase 2 progress — update feed built, awaiting Vex sign-off, 2026-10-20
 
 Fourth Phase 2 item: self-hosted update feed, built as GitHub Releases

@@ -81,10 +81,37 @@ class Update_Checker {
 		return '' !== $candidate_version && version_compare( $candidate_version, $current_version, '>' );
 	}
 
+	/**
+	 * Pure. Vex audit L-001: a cached/API-sourced package URL must be
+	 * confirmed to actually point at THIS repo's own release assets
+	 * before it's ever handed to WP core's installer -- a host-only
+	 * check (e.g. "is this github.com?") isn't enough, since any other
+	 * public repo's release asset also lives on github.com. An empty
+	 * string (no asset selected) is explicitly allowed through; callers
+	 * already treat that as "nothing to offer."
+	 */
+	public static function is_trusted_package_url( string $url ): bool {
+		if ( '' === $url ) {
+			return true;
+		}
+		$prefix = 'https://github.com/' . self::GITHUB_REPO . '/releases/download/';
+		return 0 === strncasecmp( $url, $prefix, strlen( $prefix ) );
+	}
+
 	private function fetch_latest_release(): ?array {
 		$cached = get_transient( self::CACHE_KEY );
 		if ( is_array( $cached ) ) {
-			return empty( $cached ) ? null : $cached;
+			if ( empty( $cached ) ) {
+				return null;
+			}
+			if ( ! self::is_trusted_package_url( $cached['package'] ?? '' ) ) {
+				// Cache poisoned (direct DB write) or stale/malformed --
+				// discard rather than trust it, and fall through to a
+				// fresh API fetch below.
+				delete_transient( self::CACHE_KEY );
+			} else {
+				return $cached;
+			}
 		}
 
 		$response = wp_remote_get(
@@ -124,8 +151,20 @@ class Update_Checker {
 			return $transient;
 		}
 
+		// Vex audit H-001: this plugin isn't listed on WordPress.org and
+		// (until an `Update URI:` header existed) WP core would still
+		// query api.wordpress.org for this slug and could populate this
+		// same transient key with a WP.org-sourced entry -- including
+		// from an attacker who registers the still-unclaimed
+		// `wpguard-nc-backup` slug there. Unconditionally clearing any
+		// existing entry here, before deciding whether to replace it
+		// with our own GitHub-sourced one, means no other update source
+		// can ever survive under our basename regardless of whether a
+		// given WP version/host honors the header.
+		unset( $transient->response[ $this->plugin_basename ] );
+
 		$release = $this->fetch_latest_release();
-		if ( ! $release || empty( $release['package'] ) ) {
+		if ( ! $release || empty( $release['package'] ) || ! self::is_trusted_package_url( $release['package'] ) ) {
 			return $transient;
 		}
 		if ( ! self::is_newer_version( $release['version'], WPGUARD_NC_VERSION ) ) {
@@ -151,7 +190,15 @@ class Update_Checker {
 
 		$release = $this->fetch_latest_release();
 		if ( ! $release ) {
-			return $result;
+			// Vex audit H-001: $result here is whatever a prior filter
+			// (potentially WP.org's own plugin_information lookup for
+			// this same slug) already produced. Returning it when the
+			// slug matched ours but we have no real release data would
+			// let a WP.org squatter's info -- including their own
+			// download link -- populate the "View details" popup.
+			// Returning our own error instead means this slug's details
+			// are owned by this feed, full stop, never by a fallback.
+			return new \WP_Error( 'wpguard_nc_no_release', __( 'No published release found. Check github.com/ItsMNLOP/wpguard-nc-backup.', 'wpguard-nc-backup' ) );
 		}
 
 		$info                = new \stdClass();
@@ -162,7 +209,7 @@ class Update_Checker {
 		$info->homepage      = $release['html_url'];
 		$info->requires      = '6.4';
 		$info->requires_php  = '8.1';
-		$info->download_link = $release['package'];
+		$info->download_link = self::is_trusted_package_url( $release['package'] ) ? $release['package'] : '';
 		$info->sections      = array(
 			'description' => 'Backs up this WordPress site (files + database) to a user-controlled Nextcloud server over authenticated HTTPS WebDAV.',
 			// Release body is attacker-controllable only by whoever can push

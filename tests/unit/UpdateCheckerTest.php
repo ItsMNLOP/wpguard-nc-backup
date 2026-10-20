@@ -54,6 +54,29 @@ function test_is_newer_version_false_for_older_or_blank() {
 	wpguard_assert( false === Update_Checker::is_newer_version( '', '1.0.0' ), 'an empty version string (no usable release found) must never be offered as an update' );
 }
 
+// Vex audit L-001: a package URL must be confirmed to point at this
+// specific repo's own release assets, not just any github.com URL,
+// before it's trusted enough to hand to WP core's installer.
+function test_is_trusted_package_url_accepts_this_repos_release_asset() {
+	wpguard_assert( true === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.1.0/wpguard-nc-backup.zip' ), 'a release asset URL from this exact repo must be trusted' );
+}
+
+function test_is_trusted_package_url_rejects_different_repo_same_host() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/someone-else/other-repo/releases/download/v1/wpguard-nc-backup.zip' ), 'a release asset from a different repo must never be trusted just because it is also on github.com' );
+}
+
+function test_is_trusted_package_url_rejects_bare_host_url() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/evil' ), 'a URL that is merely on github.com, with no matching repo release-download path, must be rejected' );
+}
+
+function test_is_trusted_package_url_rejects_non_https() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'http://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1/wpguard-nc-backup.zip' ), 'a plain http:// URL must never be trusted, even with an otherwise-matching path' );
+}
+
+function test_is_trusted_package_url_accepts_empty_string() {
+	wpguard_assert( true === Update_Checker::is_trusted_package_url( '' ), 'an empty package URL (no asset selected) must be allowed through -- callers already treat "" as nothing to offer' );
+}
+
 return array(
 	'test_select_package_asset_picks_matching_zip',
 	'test_select_package_asset_ignores_non_matching_assets',
@@ -64,4 +87,9 @@ return array(
 	'test_is_newer_version_true_for_real_upgrade',
 	'test_is_newer_version_false_for_same_version',
 	'test_is_newer_version_false_for_older_or_blank',
+	'test_is_trusted_package_url_accepts_this_repos_release_asset',
+	'test_is_trusted_package_url_rejects_different_repo_same_host',
+	'test_is_trusted_package_url_rejects_bare_host_url',
+	'test_is_trusted_package_url_rejects_non_https',
+	'test_is_trusted_package_url_accepts_empty_string',
 );
