@@ -400,6 +400,7 @@ class Job_Orchestrator {
 			$cp['file_warnings'] = $inventory['warnings'];
 			$cp['current_part_index'] = 1;
 			$cp['current_part_bytes'] = 0;
+			$cp['current_part_file_count'] = 0;
 			$cp['parts_meta'] = array();
 			$cp['resolved_files'] = array();
 		}
@@ -411,10 +412,26 @@ class Job_Orchestrator {
 			// entirely of unchanged (skipped) files must never produce
 			// an empty zip part on disk.
 			$zip = null;
+			// Vex audit HIGH-ZIP-1: ZipArchive::close() failing rolls
+			// back the ENTIRE batch since the last successful close --
+			// not just the file that triggered it -- so a file is only
+			// ever recorded into $cp['resolved_files'] / removed from
+			// $cp['files_remaining'] (the two the checkpoint persists)
+			// once the close() that actually makes it durable on disk
+			// has already succeeded. $pending holds this batch's
+			// not-yet-durable archive entries; $remaining is the
+			// in-progress working copy of files_remaining, only ever
+			// copied into $cp (and therefore persisted) at the same
+			// moment $pending is flushed. Anywhere this function
+			// returns self::fail() without reaching one of those
+			// flush points, nothing beyond the last successful commit
+			// was ever persisted -- safe by construction, not by
+			// care taken at each individual return site.
+			$pending = array();
+			$remaining = $cp['files_remaining'];
 			do {
-				$relative = array_key_first( $cp['files_remaining'] );
-				$abs = $cp['files_remaining'][ $relative ];
-				unset( $cp['files_remaining'][ $relative ] );
+				$relative = array_key_first( $remaining );
+				$abs = $remaining[ $relative ];
 
 				// Checked against the ORIGINAL file (before any
 				// wp-config.php redaction substitution below, whose
@@ -432,7 +449,9 @@ class Job_Orchestrator {
 				) {
 					// Unchanged since the chain parent: carry its pointer
 					// forward verbatim. Nothing is archived or uploaded
-					// for this file this run.
+					// for this file this run -- no zip/close() involved,
+					// so committing immediately is safe, same as before.
+					unset( $remaining[ $relative ] );
 					$cp['resolved_files'][] = array(
 						'path'             => $relative,
 						'size'             => (int) $prior['size'],
@@ -441,10 +460,12 @@ class Job_Orchestrator {
 						'source_backup_id' => $prior['source_backup_id'],
 						'source_part'      => $prior['source_part'],
 					);
+					$cp['files_remaining'] = $remaining;
 					Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
 					continue;
 				}
 
+				$archive_abs = $abs;
 				if ( 'wp-config.php' === $relative ) {
 					$redacted = self::redacted_wp_config_copy( $abs, $tmp );
 					if ( is_wp_error( $redacted ) ) {
@@ -453,10 +474,10 @@ class Job_Orchestrator {
 						}
 						return self::fail( $job_id, 'export_files', $redacted->get_error_message() );
 					}
-					$abs = $redacted;
+					$archive_abs = $redacted;
 				}
 
-				$size = @filesize( $abs );
+				$size = @filesize( $archive_abs );
 				$size = false === $size ? 0 : $size;
 
 				if ( null === $zip ) {
@@ -468,10 +489,25 @@ class Job_Orchestrator {
 				}
 
 				if ( $cp['current_part_bytes'] > 0 && ( $cp['current_part_bytes'] + $size ) > self::PART_SIZE_BYTES ) {
-					Archive_Writer::close_part( $zip );
+					$closed = Archive_Writer::close_part( $zip );
+					if ( is_wp_error( $closed ) ) {
+						return self::fail( $job_id, 'export_files', $closed->get_error_message() );
+					}
+					// The part is now confirmed durably closed -- safe to
+					// commit everything pending for it, still leaving the
+					// current (not-yet-archived) file correctly listed in
+					// $remaining since it hasn't been decided yet.
 					$cp['parts_meta'][] = self::finalize_files_part( $cp, $tmp );
+					foreach ( $pending as $entry ) {
+						$cp['resolved_files'][] = $entry;
+					}
+					$pending = array();
 					$cp['current_part_index']++;
 					$cp['current_part_bytes'] = 0;
+					$cp['current_part_file_count'] = 0;
+					$cp['files_remaining'] = $remaining;
+					Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+
 					$part_path = self::part_path( $tmp, $cp['current_part_index'] );
 					$zip = Archive_Writer::open_part( $part_path );
 					if ( is_wp_error( $zip ) ) {
@@ -479,31 +515,55 @@ class Job_Orchestrator {
 					}
 				}
 
-				$result = Archive_Writer::add_file_to( $zip, $abs, $relative );
+				$result = Archive_Writer::add_file_to( $zip, $archive_abs, $relative );
 				if ( is_wp_error( $result ) ) {
 					Archive_Writer::close_part( $zip );
 					return self::fail( $job_id, 'export_files', 'Archiving failed: ' . $result->get_error_message() );
 				}
 
-				$cp['resolved_files'][] = array(
+				// Only now -- the file is physically inside the still-open
+				// zip -- is it safe to drop from $remaining. If close()
+				// later fails for this batch, this call returns before
+				// ever copying $remaining into $cp, so the persisted
+				// files_remaining still lists it for a clean retry.
+				unset( $remaining[ $relative ] );
+				$pending[] = array(
 					'path'             => $relative,
 					'size'             => $size,
 					'mtime'            => false !== $orig_mtime ? (int) $orig_mtime : 0,
-					'sha256'           => hash_file( 'sha256', $abs ),
+					'sha256'           => hash_file( 'sha256', $archive_abs ),
 					'source_backup_id' => $job['backup_id'],
 					'source_part'      => sprintf( 'files.part-%04d.zip', $cp['current_part_index'] ),
 				);
-
 				$cp['current_part_bytes'] += $size;
-				Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
-			} while ( ! empty( $cp['files_remaining'] ) && microtime( true ) < $deadline );
+				$cp['current_part_file_count']++;
+			} while ( ! empty( $remaining ) && microtime( true ) < $deadline );
+
 			if ( null !== $zip ) {
-				Archive_Writer::close_part( $zip );
+				$closed = Archive_Writer::close_part( $zip );
+				if ( is_wp_error( $closed ) ) {
+					return self::fail( $job_id, 'export_files', $closed->get_error_message() );
+				}
 			}
+			// Close (if any) succeeded -- now safe to commit this batch's
+			// pending archive entries and the resulting files_remaining.
+			foreach ( $pending as $entry ) {
+				$cp['resolved_files'][] = $entry;
+			}
+			$cp['files_remaining'] = $remaining;
+			Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
 			return Job_Store::get( $job_id );
 		}
 
-		if ( $cp['current_part_bytes'] > 0 || empty( $cp['parts_meta'] ) ) {
+		// Vex audit MEDIUM-ZIP-2: current_part_bytes alone reads 0 even
+		// when the current part genuinely holds content, if every file
+		// added to it since the last rollover happened to be zero bytes
+		// (plausible -- empty .log/.gitkeep/index-guard-style sentinel
+		// files are real) -- current_part_file_count catches that case,
+		// which byte-count alone could not, closing a gap that would
+		// otherwise leave a real uploaded-nothing part referenced by
+		// resolved_files but never finalized, uploaded, or restorable.
+		if ( self::should_finalize_trailing_part( $cp['current_part_bytes'], $cp['current_part_file_count'] ?? 0, count( $cp['parts_meta'] ) ) ) {
 			$part_path = self::part_path( $tmp, $cp['current_part_index'] );
 			if ( file_exists( $part_path ) ) {
 				$cp['parts_meta'][] = self::finalize_files_part( $cp, $tmp );
@@ -547,6 +607,19 @@ class Job_Orchestrator {
 		return $redacted_path;
 	}
 
+	/**
+	 * Pure. Vex audit MEDIUM-ZIP-2: byte count alone can read 0 even when
+	 * the current (not-yet-finalized) part genuinely holds content, if
+	 * every file added to it since the last rollover happened to be
+	 * zero bytes (real: empty .log/.gitkeep/sentinel-style files) --
+	 * without also checking file count, such a part would never get
+	 * finalized, uploaded, or become restorable, while still being
+	 * referenced by a resolved_files entry pointing at it.
+	 */
+	public static function should_finalize_trailing_part( int $current_part_bytes, int $current_part_file_count, int $parts_meta_count ): bool {
+		return $current_part_bytes > 0 || $current_part_file_count > 0 || 0 === $parts_meta_count;
+	}
+
 	private static function part_path( string $tmp, int $index ): string {
 		return $tmp . sprintf( 'files.part-%04d.zip', $index );
 	}
@@ -559,10 +632,53 @@ class Job_Orchestrator {
 		return $meta;
 	}
 
+	/**
+	 * Vex audit HIGH-ZIP-1 (defense in depth, called once before any
+	 * upload begins): confirms every file this job itself claims to
+	 * have archived (source_backup_id === this job's own backup_id) is
+	 * actually present inside the local zip part it claims to live in.
+	 * step_upload_parts()'s sha256 read-back later only ever proves the
+	 * ZIP FILE round-tripped intact -- that was never able to catch a
+	 * part that round-trips perfectly but is missing entries a batch
+	 * silently dropped (the exact HIGH-ZIP-1 failure mode, now also
+	 * fixed at the source in step_export_files() -- this is the backstop
+	 * that verifies the manifest's per-file claims against reality
+	 * rather than trusting them).
+	 *
+	 * @return true|\WP_Error
+	 */
+	private static function verify_own_parts_contain_claimed_files( array $resolved_files, string $backup_id, string $tmp ) {
+		$by_part = array();
+		foreach ( $resolved_files as $entry ) {
+			if ( $entry['source_backup_id'] === $backup_id ) {
+				$by_part[ $entry['source_part'] ][] = $entry['path'];
+			}
+		}
+		foreach ( $by_part as $part_name => $paths ) {
+			$zip = new \ZipArchive();
+			if ( true !== $zip->open( $tmp . $part_name ) ) {
+				return new \WP_Error( 'wpguard_nc_part_unreadable', "Archive part {$part_name} could not be opened for pre-upload verification." );
+			}
+			foreach ( $paths as $path ) {
+				if ( false === $zip->locateName( $path ) ) {
+					$zip->close();
+					return new \WP_Error( 'wpguard_nc_file_missing_from_part', "File \"{$path}\" is missing from its own archive part ({$part_name}) -- the backup cannot be trusted as complete." );
+				}
+			}
+			$zip->close();
+		}
+		return true;
+	}
+
 	private static function step_package_manifest( array $job ): array {
 		$job_id = $job['job_id'];
 		$cp = $job['checkpoint'];
 		$tmp = self::tmp_dir_for( $job['backup_id'] );
+
+		$verify = self::verify_own_parts_contain_claimed_files( $cp['resolved_files'] ?? array(), $job['backup_id'], $tmp );
+		if ( is_wp_error( $verify ) ) {
+			return self::fail( $job_id, 'package_manifest', $verify->get_error_message() );
+		}
 
 		$chain = $cp['chain'] ?? array( 'mode' => 'full', 'base_backup_id' => null, 'parent_backup_id' => null );
 		$manifest = Manifest::new_skeleton( $job['backup_id'], Settings::get_site_id(), $chain );
@@ -701,6 +817,19 @@ class Job_Orchestrator {
 	 * Reuses the $client already built for this job's upload instead of
 	 * constructing a second one.
 	 */
+	const RETENTION_ERROR_OPTION = 'wpguard_nc_retention_last_error';
+
+	/**
+	 * Vex audit LOW-RETAIN-1: Retention::prune()'s fail-closed abort (if
+	 * any kept backup's manifest can't be read, nothing is deleted) is
+	 * the correct behavior, but a per-job log warning alone means an
+	 * admin who isn't reading every job's log line by line has no way
+	 * to notice retention has quietly stopped working at all -- storage
+	 * grows unboundedly with no visible symptom until it's a problem.
+	 * This stores the last pruning error (empty string = none) so the
+	 * admin settings page can surface it as a persistent notice, and
+	 * clears it the moment pruning next succeeds.
+	 */
 	private static function maybe_prune_old_backups( string $job_id, Nextcloud_Client $client ): void {
 		$keep = Settings::get_retention_count();
 		if ( $keep <= 0 ) {
@@ -710,14 +839,19 @@ class Job_Orchestrator {
 			$parent_rel = $client->relative_path( Settings::get_site_id() . '/backups' );
 			$result = Retention::prune( $client, $parent_rel, $keep );
 			if ( is_wp_error( $result ) ) {
-				self::log( $job_id, 'finalize', 'warning', 'Retention pruning did not fully complete: ' . self::logger()->redact( $result->get_error_message() ) );
+				$message = self::logger()->redact( $result->get_error_message() );
+				self::log( $job_id, 'finalize', 'warning', 'Retention pruning did not fully complete: ' . $message );
+				update_option( self::RETENTION_ERROR_OPTION, $message, false );
 				return;
 			}
+			update_option( self::RETENTION_ERROR_OPTION, '', false );
 			if ( ! empty( $result['deleted'] ) ) {
 				self::log( $job_id, 'finalize', 'info', sprintf( 'Retention: removed %d old backup(s), kept %d.', count( $result['deleted'] ), $result['kept'] ) );
 			}
 		} catch ( \Throwable $e ) {
-			self::log( $job_id, 'finalize', 'warning', 'Retention pruning threw an unexpected error: ' . self::logger()->redact( $e->getMessage() ) );
+			$message = self::logger()->redact( $e->getMessage() );
+			self::log( $job_id, 'finalize', 'warning', 'Retention pruning threw an unexpected error: ' . $message );
+			update_option( self::RETENTION_ERROR_OPTION, $message, false );
 		}
 	}
 

@@ -66,3 +66,34 @@ if ( ! function_exists( 'home_url' ) ) {
 		return 'https://unit-test.example.test';
 	}
 }
+if ( ! class_exists( 'WP_Error' ) ) {
+	class WP_Error {
+		private array $errors = array();
+		private array $error_data = array();
+		public function __construct( $code = '', $message = '', $data = '' ) {
+			if ( '' !== $code ) {
+				$this->errors[ $code ][] = $message;
+				if ( '' !== $data ) {
+					$this->error_data[ $code ] = $data;
+				}
+			}
+		}
+		public function get_error_message( $code = '' ) {
+			if ( '' === $code ) {
+				$code = array_key_first( $this->errors );
+			}
+			return $this->errors[ $code ][0] ?? '';
+		}
+		public function get_error_data( $code = '' ) {
+			if ( '' === $code ) {
+				$code = array_key_first( $this->errors );
+			}
+			return $this->error_data[ $code ] ?? null;
+		}
+	}
+}
+if ( ! function_exists( 'is_wp_error' ) ) {
+	function is_wp_error( $thing ) {
+		return $thing instanceof WP_Error;
+	}
+}

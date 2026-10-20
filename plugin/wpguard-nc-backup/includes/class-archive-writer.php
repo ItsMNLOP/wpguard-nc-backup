@@ -62,8 +62,13 @@ class Archive_Writer {
 	 */
 	public static function open_part( string $zip_path ) {
 		$zip = new \ZipArchive();
-		$flags = file_exists( $zip_path ) ? 0 : \ZipArchive::CREATE;
-		$open = $zip->open( $zip_path, $flags ?: \ZipArchive::CREATE );
+		// Vex audit LOW-ARCH-1: `0 ?: ZipArchive::CREATE` always evaluates
+		// to CREATE (0 is falsy), so the file_exists() ternary never
+		// actually influenced the flag passed to open() -- harmless in
+		// practice (ZipArchive::open() with CREATE on an existing file
+		// opens it for appending, not overwriting, so behavior was
+		// correct by accident) but misleading to read. Written directly.
+		$open = $zip->open( $zip_path, file_exists( $zip_path ) ? 0 : \ZipArchive::CREATE );
 		if ( true !== $open ) {
 			return new \WP_Error( 'wpguard_nc_zip_open_failed', "Could not open archive part (code {$open})." );
 		}
@@ -88,8 +93,30 @@ class Archive_Writer {
 		return true;
 	}
 
-	public static function close_part( \ZipArchive $zip ): void {
-		$zip->close();
+	/**
+	 * Vex audit HIGH-ZIP-1: ZipArchive::close()'s return value was
+	 * previously discarded entirely. libzip rolls back the ENTIRE
+	 * pending batch -- every addFile() since the last successful
+	 * close(), not just the one that triggered the failure -- if any
+	 * added file's source disappears or becomes unreadable before
+	 * close() runs (confirmed live: a file deleted between addFile()
+	 * and close() causes close() to return false and the archive to
+	 * end up with zero of the batch's entries, even ones whose source
+	 * was never touched). The caller must know this failed -- a
+	 * checkpoint that already believes those files are safely archived
+	 * would otherwise let the job reach 'verified' with files silently
+	 * missing from the uploaded part.
+	 *
+	 * @return true|\WP_Error
+	 */
+	public static function close_part( \ZipArchive $zip ) {
+		if ( ! $zip->close() ) {
+			return new \WP_Error(
+				'wpguard_nc_zip_close_failed',
+				'Archive part failed to finalize -- a source file likely disappeared or became unreadable mid-batch. The affected files will be re-archived on the next backup attempt.'
+			);
+		}
+		return true;
 	}
 
 	/** @return array{bytes:int, sha256:string} */

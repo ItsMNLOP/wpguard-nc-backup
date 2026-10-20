@@ -1,5 +1,40 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — incremental backups Vex audit BLOCKED, fixed same-day, 2026-10-20
+
+Vex's first audit of incremental backups came back **BLOCKED** with a
+real HIGH and MEDIUM, both proven (not theoretical): **HIGH-ZIP-1** —
+`ZipArchive::close()`'s return value was discarded entirely, and
+proven live that libzip rolls back the *entire* pending batch (every
+file since the last successful close, not just the one that
+triggered it) if any one added file's source disappears or becomes
+unreadable before `close()` runs — the checkpoint had already
+recorded those files as archived, so a job could reach `verified`
+with files silently missing. This is exactly the "looks complete,
+isn't" failure mode called out as the worst case for a backup plugin.
+**MEDIUM-ZIP-2** — a part holding only zero-byte files after a
+size-rollover could never get finalized/uploaded/restored.
+**MEDIUM-RESTORE-1** — the manual restore procedure for incremental
+chains had a filename-collision risk and no warning against the one
+mistake that would resurrect deleted files. Plus 3 LOWs.
+
+All fixed same-day per standing instruction: `close_part()` now
+returns `true|WP_Error`, checked everywhere; `step_export_files()`
+restructured so nothing is committed to the checkpoint until the
+`close()` backing it is confirmed successful; a new pre-upload
+invariant check (`verify_own_parts_contain_claimed_files()`) verifies
+every claimed file is actually inside its claimed part before any
+upload begins; zero-byte-only parts now correctly finalize (tracked
+via a new pure, directly unit-tested `should_finalize_trailing_part()`
+rather than a filesystem-iteration-order-dependent e2e repro);
+`docs/restore-manual.md` step 1a rewritten with collision-safe
+naming, an explicit resurrection warning, and a per-file sha256
+verification step. 62/62 unit tests (including a new test that
+reproduces HIGH-ZIP-1's exact libzip rollback behavior live, not
+assumed) and the full incremental/retention/scheduling/stale-lock/
+main-restore E2E suites all re-verified green. Sent back to Vex for
+re-verification before this is considered shippable.
+
 ## Phase 2 progress — update feed CLEAR TO SHIP (final), 2026-10-20
 
 Second Vex re-verification of the L-001 regex fix: **CLEAR TO SHIP**,

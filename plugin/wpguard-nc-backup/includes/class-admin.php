@@ -180,9 +180,24 @@ class Admin {
 		$locked_pw = Settings::is_app_password_locked();
 		$locked_ca = Settings::is_ca_bundle_locked();
 		$latest_verified = Job_Store::get_latest_verified();
+		// Vex audit LOW-RETAIN-1: a chain-aware retention prune that
+		// keeps failing (e.g. a kept backup's manifest.json went
+		// missing) fails closed -- correctly deletes nothing -- but
+		// that's invisible unless someone reads job logs line by line.
+		// Surfaced here instead; cleared automatically the next time
+		// pruning succeeds (Job_Orchestrator::maybe_prune_old_backups()).
+		$retention_error = get_option( Job_Orchestrator::RETENTION_ERROR_OPTION, '' );
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'WPGuard Nextcloud Backup', 'wpguard-nc-backup' ); ?></h1>
+
+			<?php if ( $retention_error ) : ?>
+				<div class="notice notice-warning">
+					<p><strong><?php esc_html_e( 'Retention pruning is not completing.', 'wpguard-nc-backup' ); ?></strong>
+					<?php esc_html_e( 'Old backups are NOT being deleted (nothing was deleted either, by design) until this is resolved:', 'wpguard-nc-backup' ); ?>
+					<?php echo esc_html( $retention_error ); ?></p>
+				</div>
+			<?php endif; ?>
 
 			<?php if ( $latest_verified ) : ?>
 				<p><strong><?php esc_html_e( 'Last verified backup:', 'wpguard-nc-backup' ); ?></strong>

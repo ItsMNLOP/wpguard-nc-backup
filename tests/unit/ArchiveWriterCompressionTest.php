@@ -88,8 +88,46 @@ function test_stored_and_deflated_entries_both_extract_byte_identical() {
 	exec( 'rm -rf ' . escapeshellarg( $dir ) );
 }
 
+// Vex audit HIGH-ZIP-1: ZipArchive::close() failing rolls back the
+// ENTIRE pending batch (every addFile() since the last successful
+// close()), not just the entry whose source actually disappeared --
+// proven here directly against the real libzip behavior, not assumed.
+// This is the exact condition close_part() must now detect and
+// propagate instead of silently discarding close()'s return value.
+function test_close_part_reports_failure_when_a_source_file_disappears_mid_batch() {
+	$dir = rtrim( sys_get_temp_dir(), '/\\' ) . '/wpguard_awtest_' . bin2hex( random_bytes( 4 ) ) . '/';
+	mkdir( $dir );
+
+	$survives_src = $dir . 'survives.txt';
+	file_put_contents( $survives_src, 'intact source, never touched again' );
+	$vanishes_src = $dir . 'vanishes.txt';
+	file_put_contents( $vanishes_src, 'source about to disappear before close()' );
+
+	$zip_path = $dir . 'test.zip';
+	$zip = Archive_Writer::open_part( $zip_path );
+	Archive_Writer::add_file_to( $zip, $survives_src, 'survives.txt' );
+	Archive_Writer::add_file_to( $zip, $vanishes_src, 'vanishes.txt' );
+
+	unlink( $vanishes_src ); // Disappears before close() actually reads it.
+
+	$result = Archive_Writer::close_part( $zip );
+	wpguard_assert( is_wp_error( $result ), 'close_part() must report failure (not silently succeed) when a batched source file disappears before close()' );
+
+	$check = new \ZipArchive();
+	$opened = $check->open( $zip_path );
+	if ( true === $opened ) {
+		// Confirms the real libzip rollback behavior this fix exists for:
+		// the INTACT file's entry is also gone, not just the vanished one.
+		wpguard_assert( false === $check->locateName( 'survives.txt' ), 'a close() failure must be detected even though it silently dropped an entry whose own source was never touched -- this is why a half-trusted per-file commit (addFile() succeeding) is not sufficient' );
+		$check->close();
+	}
+
+	exec( 'rm -rf ' . escapeshellarg( $dir ) );
+}
+
 return array(
 	'test_incompressible_extension_is_stored_not_deflated',
 	'test_compressible_extension_still_deflates',
 	'test_stored_and_deflated_entries_both_extract_byte_identical',
+	'test_close_part_reports_failure_when_a_source_file_disappears_mid_batch',
 );

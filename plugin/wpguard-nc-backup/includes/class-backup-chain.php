@@ -63,6 +63,7 @@ class Backup_Chain {
 			'base_backup_id'     => null,
 			'parent_backup_id'   => null,
 			'depth'              => 0,
+			'base_created_at'    => null,
 			'prior_files_index'  => array(),
 		);
 	}
@@ -133,6 +134,7 @@ class Backup_Chain {
 			'base_backup_id'    => $state['base_backup_id'],
 			'parent_backup_id'  => $state['parent_backup_id'],
 			'depth'             => (int) $state['depth'] + 1,
+			'base_created_at'   => (int) $state['base_created_at'],
 			'prior_files_index' => $prior_index,
 		);
 	}
@@ -142,6 +144,16 @@ class Backup_Chain {
 	 * marked verified -- a failed job must never advance (or reset)
 	 * local chain state, same discipline as retention pruning only ever
 	 * running post-verification.
+	 *
+	 * Vex audit LOW-CHAIN-1: previously re-read the option here for
+	 * base_created_at instead of using the value already captured in
+	 * $chain_plan at plan() time (step_init(), earlier in this same
+	 * job) -- if the option were lost in between (an aggressive
+	 * object-cache flush, an options-table restore mid-job), the
+	 * `?? time()` fallback would silently reset the chain's age clock
+	 * rather than surfacing anything wrong. Using the plan's own
+	 * snapshot removes the redundant re-read and the failure mode
+	 * along with it -- not just a cosmetic change.
 	 */
 	public static function record_result( array $chain_plan, string $backup_id ): void {
 		if ( 'incremental' === $chain_plan['mode'] ) {
@@ -149,7 +161,7 @@ class Backup_Chain {
 				'base_backup_id'   => $chain_plan['base_backup_id'],
 				'parent_backup_id' => $backup_id,
 				'depth'            => $chain_plan['depth'],
-				'base_created_at'  => self::get_state()['base_created_at'] ?? time(),
+				'base_created_at'  => $chain_plan['base_created_at'],
 			), false );
 			return;
 		}

@@ -50,31 +50,76 @@ file currently on the site, each naming `source_backup_id` and
 "apply" on top of anything; it's a complete, resolved list of exactly what
 the site looked like at backup time.
 
+**Vex audit, 2026-10-20 (MEDIUM-RESTORE-1): every `source_part` is named
+`files.part-NNNN.zip` the same way in every backup** — two different
+ancestor backups' parts both named `files.part-0001.zip` will silently
+overwrite each other if downloaded to that bare filename. Step 3 below
+now names each download by its full `(source_backup_id, source_part)`
+pair specifically to prevent this. The same audit also found this
+section gave no instruction to verify extracted files' integrity, and no
+warning against the natural mistake of applying step 6's whole-archive
+`unzip` to an ancestor part here — doing that would **resurrect deleted
+files**, the exact risk this feature's design otherwise eliminates (see
+`docs/threat-model.md` T19). Both are fixed below. `jq` is assumed
+available; any tool that can read JSON works identically.
+
 1. Download this backup's own `manifest.json` and `COMPLETE.json` (same
    stop-if-missing rule as step 1) and `database.sql.gz` (the database is
    never incremental — always a full dump in every backup).
-2. For every entry in `files`, note its `source_backup_id` + `source_part`.
-   Collect the **distinct** `(source_backup_id, source_part)` pairs — you
-   almost always need far fewer than one download per file, since many
-   files typically share the same unchanged ancestor part.
+2. List the **distinct** `(source_backup_id, source_part)` pairs referenced
+   anywhere in `files` — you almost always need far fewer than one
+   download per file, since many files typically share the same
+   unchanged ancestor part:
+   ```bash
+   jq -r '.files[] | "\(.source_backup_id)/\(.source_part)"' manifest.json | sort -u
+   ```
 3. For each distinct pair, download that *other* backup's
    `/<site-id>/backups/<source_backup_id>/<source_part>` — yes, reaching
-   into an earlier backup's folder on purpose. **Do not delete or rotate
-   out an earlier backup a newer one still has live references into** —
-   this plugin's own retention pruning already accounts for this (see
-   `docs/operations.md`), but if you've copied backups elsewhere by hand,
-   the same rule applies there too.
-4. Extract only the files you need from each downloaded part (any zip tool
-   supports extracting a single named entry — e.g. `unzip part.zip
-   'wp-content/path/to/file'`), placing each at the path its manifest
-   `files` entry names, relative to your target WordPress root.
-5. Continue at step 2 below for integrity verification, using this
-   backup's own `manifest.json` — but note `components[]` only covers
-   `database.sql.gz` and whichever `files.part-NNNN.zip` files this
-   specific backup actually produced itself (possibly none, if nothing
-   changed since its chain parent); the per-file `sha256` inside each
-   `files[]` entry is what verifies an individual restored file,
-   regardless of which backup it actually came from.
+   into an earlier backup's folder on purpose — **naming the local file
+   after the full pair, never the bare part name**, so two ancestors'
+   same-named parts can never collide:
+   ```bash
+   # source_backup_id=20261019T120000Z-ab12cd34, source_part=files.part-0001.zip
+   curl -u "<nextcloud-user>:<app-password>" \
+     "https://<nextcloud-host>/remote.php/dav/files/<nextcloud-user>/<folder>/<site-id>/backups/20261019T120000Z-ab12cd34/files.part-0001.zip" \
+     -o "20261019T120000Z-ab12cd34__files.part-0001.zip"
+   ```
+   **Do not delete or rotate out an earlier backup a newer one still has
+   live references into** — this plugin's own retention pruning already
+   accounts for this (see `docs/operations.md`), but if you've copied
+   backups elsewhere by hand, the same rule applies there too.
+4. **Extract only the individual named files you need — never the whole
+   contents of an ancestor part.** Step 6's `unzip files.part-NNNN.zip -d
+   /target/` does **not** apply here: an ancestor part is itself a complete
+   snapshot of whatever existed when *it* was taken, including files this
+   backup's own `manifest.json` no longer lists as current (already
+   deleted by backup time) — extracting it wholesale would restore those
+   deleted files right back. Extract by exact path instead, one entry at a
+   time, into your target WordPress root:
+   ```bash
+   jq -r '.files[] | "\(.source_backup_id)__\(.source_part) \(.path)"' manifest.json \
+     | while read -r partfile path; do
+         mkdir -p "/path/to/target/wordpress/$(dirname "$path")"
+         unzip -p "$partfile" "$path" > "/path/to/target/wordpress/$path"
+       done
+   ```
+5. **Verify every extracted file against its manifest `sha256` before
+   trusting it** — this is the per-file equivalent of step 2 below, which
+   only covers `components[]` (this specific backup's own produced
+   artifacts: `database.sql.gz` and whichever `files.part-NNNN.zip` files
+   it actually produced itself, possibly none at all if nothing changed
+   since its chain parent). A file extracted from an ancestor part is
+   never in `components[]`; its own `sha256` field inside its `files[]`
+   entry is the only thing that verifies it, regardless of which backup
+   it actually came from:
+   ```bash
+   cd /path/to/target/wordpress
+   jq -r '.files[] | "\(.sha256)  \(.path)"' /path/to/manifest.json | sha256sum --check
+   ```
+   **Do not proceed past any mismatch** — same rule as step 2.
+6. Continue at step 2 below for the database/manifest-level integrity
+   check, then skip step 6 (file extraction) entirely — already done,
+   correctly, in item 4 above.
 
 Example with `curl` against the app-password account (replace placeholders):
 

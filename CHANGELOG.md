@@ -69,6 +69,36 @@ All notable changes to this project are documented here.
   Vex sign-off before this is considered shippable.
 
 ### Fixed
+- Incremental backups, Vex audit (2026-10-20): **BLOCKED, then fixed
+  same-day. HIGH-ZIP-1**: `ZipArchive::close()`'s return value was
+  discarded entirely; proven live that libzip rolls back the *entire*
+  pending batch (not just the file that triggered it) if any one
+  added file's source disappears or becomes unreadable before
+  `close()` runs, while the checkpoint had already recorded those
+  files as archived -- a job could reach `verified` with files
+  silently missing from the uploaded part. Fixed: `close_part()` now
+  returns `true|WP_Error`, checked at every call site;
+  `step_export_files()` restructured so a file is only ever committed
+  into the persisted checkpoint once the `close()` backing it has
+  already succeeded. Added `verify_own_parts_contain_claimed_files()`,
+  a pre-upload backstop that confirms every file this job claims to
+  have archived is actually present inside its claimed part -- the
+  existing part-level sha256 read-back could never catch this, since a
+  part missing entries still round-trips its own (smaller) bytes
+  perfectly. **MEDIUM-ZIP-2**: a part holding only zero-byte files
+  (real: empty `.log`/`.gitkeep`/sentinel files) after a size-based
+  rollover could read `current_part_bytes === 0` and never get
+  finalized/uploaded/restored. Fixed by also tracking a per-part file
+  count. **MEDIUM-RESTORE-1**: `docs/restore-manual.md` step 1a had a
+  filename collision risk across ancestor parts sharing the same
+  `files.part-NNNN.zip` name, no warning against whole-archive
+  extraction of an ancestor part (which would resurrect deleted
+  files), and no per-file integrity verification instruction. Fixed.
+  Three LOWs also fixed: `Backup_Chain::record_result()` re-read
+  `base_created_at` from storage instead of using `plan()`'s own
+  snapshot; `Retention::prune()`'s fail-closed abort had no visible
+  symptom beyond a per-job log line (added a persistent admin
+  notice); `Archive_Writer::open_part()` had a dead-code ternary.
 - Update feed, Vex re-verification (2026-10-20): L-001 was **still
   BLOCKED** after the first fix — the `strncasecmp()` prefix check on
   the package URL was proven bypassable with a `../` path-traversal
