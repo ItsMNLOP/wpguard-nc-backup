@@ -1,5 +1,29 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 1 MVP: COMPLETE — 2026-10-20
+
+Every original Phase 1 gate below is checked and re-verified multiple
+times, including against real production data (the owner's production site) rather
+than only synthetic fixtures — real install, real connection, repeated
+real backups, a real restore with the owner's own account and 2FA state
+confirmed intact. Two full Vex security audits (SOP-023), both **CLEAR TO
+SHIP**, zero open HIGH/MEDIUM findings. Real-world bugs found via hands-on
+testing (ZIP packaging separators, stuck-job UI visibility, WP-Cron
+reliability, the actual file-count performance bottleneck) were all
+found, fixed, and verified live, not just theorized. 28/28 unit tests,
+full E2E drill, green.
+
+**One remaining operator action, not code**: revoke the dedicated
+Nextcloud test account's standing read-share on the real backup folder
+once no longer needed for testing (Vex LOW-C2).
+
+**Explicitly out of Phase 1, now Phase 2 scope** (not gaps, by design):
+real server-cron trigger (JOB-02), automatic lock-expiry (JOB-05 —
+`cancel()` is a manual stopgap, not the real fix), incremental/delta
+backups (the one lever left for the file-count-bound performance floor
+found 2026-10-20), a self-hosted update feed, scheduling/retention/
+one-click-restore/multisite, CI actually executing (written, never run).
+
 Live gate checklist. Every checked box below was verified by an actual
 command run against the live disposable stack during this build, not
 assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
