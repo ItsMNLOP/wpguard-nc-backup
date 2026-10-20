@@ -69,6 +69,19 @@ All notable changes to this project are documented here.
   Vex sign-off before this is considered shippable.
 
 ### Fixed
+- Incremental backups, Vex re-verification (2026-10-20): the HIGH-ZIP-1
+  fix had introduced **NEW-HIGH-1**, a gap of the same class -- the
+  unchanged-file fast path in `step_export_files()` committed
+  `files_remaining` immediately, which could already be missing an
+  earlier-in-batch changed file still uncommitted in the archive
+  path's pending list. Fixed by routing both paths through the same
+  deferred-commit mechanism. **MEDIUM-RESTORE-2**: `wp-config.php` is
+  a normal `files[]` entry, so step 1a's extraction loop would have
+  blindly overwritten a restore target's `wp-config.php` with the
+  source site's DB credentials, bypassing RST-04 reconciliation
+  entirely on an incremental restore. Fixed. Two LOWs also fixed
+  (size check added to the pre-upload invariant check; a test
+  assertion made unconditional).
 - Incremental backups, Vex audit (2026-10-20): **BLOCKED, then fixed
   same-day. HIGH-ZIP-1**: `ZipArchive::close()`'s return value was
   discarded entirely; proven live that libzip rolls back the *entire*

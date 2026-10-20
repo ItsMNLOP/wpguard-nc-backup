@@ -89,20 +89,34 @@ available; any tool that can read JSON works identically.
    accounts for this (see `docs/operations.md`), but if you've copied
    backups elsewhere by hand, the same rule applies there too.
 4. **Extract only the individual named files you need — never the whole
-   contents of an ancestor part.** Step 6's `unzip files.part-NNNN.zip -d
-   /target/` does **not** apply here: an ancestor part is itself a complete
-   snapshot of whatever existed when *it* was taken, including files this
-   backup's own `manifest.json` no longer lists as current (already
-   deleted by backup time) — extracting it wholesale would restore those
-   deleted files right back. Extract by exact path instead, one entry at a
-   time, into your target WordPress root:
+   contents of an ancestor part — and handle `wp-config.php` separately,
+   never through this generic loop (Vex re-verification, MEDIUM-RESTORE-2).**
+   Step 6's `unzip files.part-NNNN.zip -d /target/` does **not** apply here:
+   an ancestor part is itself a complete snapshot of whatever existed when
+   *it* was taken, including files this backup's own `manifest.json` no
+   longer lists as current (already deleted by backup time) — extracting it
+   wholesale would restore those deleted files right back. Extract by exact
+   path instead, one entry at a time, into your target WordPress root —
+   **excluding `wp-config.php`**, which `Inventory::enumerate()` always
+   includes in `files[]` just like any other file, but which step 6's
+   RST-04 reconciliation exists specifically to handle (it contains the
+   *source* site's DB credentials, which must never blindly overwrite the
+   target's):
    ```bash
-   jq -r '.files[] | "\(.source_backup_id)__\(.source_part) \(.path)"' manifest.json \
+   jq -r '.files[] | select(.path != "wp-config.php") | "\(.source_backup_id)__\(.source_part) \(.path)"' manifest.json \
      | while read -r partfile path; do
          mkdir -p "/path/to/target/wordpress/$(dirname "$path")"
          unzip -p "$partfile" "$path" > "/path/to/target/wordpress/$path"
        done
    ```
+4a. **Extract and reconcile `wp-config.php` through step 6's procedure,
+   not step 1a's loop above.** Find its entry's `(source_backup_id,
+   source_part)` pair (`jq -r '.files[] | select(.path == "wp-config.php")'
+   manifest.json`), download/extract just that one file the same way item 3
+   above downloaded any other distinct pair, then follow step 6's four
+   sub-steps on it exactly as written for a full backup — nothing about
+   RST-04's reconciliation differs for an incremental backup's
+   `wp-config.php`, only where the file physically came from.
 5. **Verify every extracted file against its manifest `sha256` before
    trusting it** — this is the per-file equivalent of step 2 below, which
    only covers `components[]` (this specific backup's own produced
@@ -112,9 +126,14 @@ available; any tool that can read JSON works identically.
    never in `components[]`; its own `sha256` field inside its `files[]`
    entry is the only thing that verifies it, regardless of which backup
    it actually came from:
+   **Excludes `wp-config.php`** — item 4a's reconciled copy is deliberately
+   *not* a verbatim copy of the backup's original (that's the whole point
+   of RST-04's selective-merge procedure), so it will never match the
+   backup's own `sha256` for that path; its own review in step 6 is what
+   stands in for an automated check there.
    ```bash
    cd /path/to/target/wordpress
-   jq -r '.files[] | "\(.sha256)  \(.path)"' /path/to/manifest.json | sha256sum --check
+   jq -r '.files[] | select(.path != "wp-config.php") | "\(.sha256)  \(.path)"' /path/to/manifest.json | sha256sum --check
    ```
    **Do not proceed past any mismatch** — same rule as step 2.
 6. Continue at step 2 below for the database/manifest-level integrity

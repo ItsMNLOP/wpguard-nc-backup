@@ -1,5 +1,30 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — incremental backups Vex re-verification: NEW-HIGH-1 found, fixed, 2026-10-20
+
+Vex's re-verification of the HIGH-ZIP-1 fix found the fix itself had
+introduced a new gap of the exact same class (**NEW-HIGH-1**): the
+unchanged-file fast path in `step_export_files()` committed
+`files_remaining` immediately, which could already be missing an
+earlier-in-batch *changed* file still uncommitted in the archive
+path's pending list — a crash in that window (most plausibly during
+`close()` itself) would persist a checkpoint where that file exists
+in neither list. Fixed by routing the skip path through the same
+deferred-commit mechanism as the archive path. Also found
+**MEDIUM-RESTORE-2**: `wp-config.php` is a normal entry in every
+manifest's `files[]` list, so step 1a's generic extraction loop would
+have blindly overwritten a restore target's `wp-config.php` with the
+*source* site's DB credentials on any incremental restore, bypassing
+step 6's RST-04 reconciliation entirely. Fixed — `wp-config.php` now
+explicitly excluded from step 1a's loops, routed through step 6's
+existing procedure instead. Two LOWs also fixed:
+`verify_own_parts_contain_claimed_files()` now also checks archived
+size, not just presence; the HIGH-ZIP-1 regression test's rollback
+assertion was conditionally skippable, rewritten as an unconditional
+two-phase proof. 62/62 unit tests and the full incremental/retention/
+scheduling/stale-lock/main-restore E2E suites re-verified green.
+Second re-verification sent to Vex.
+
 ## Phase 2 progress — incremental backups Vex audit BLOCKED, fixed same-day, 2026-10-20
 
 Vex's first audit of incremental backups came back **BLOCKED** with a

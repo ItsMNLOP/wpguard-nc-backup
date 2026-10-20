@@ -10,9 +10,15 @@ if ( ! defined( 'ABSPATH' ) ) {
  * (or, for export_db/export_files, as many as fit in
  * STEP_TIME_BUDGET_SECONDS) and persists a checkpoint after every single
  * item regardless of batching (JOB-03) — safe to call repeatedly from
- * AJAX, WP-Cron, or WP-CLI (ADR 0003). Never buffers an entire backup in
- * memory; the largest single in-memory object at any point is one archive
- * part (bounded by PART_SIZE_BYTES, ADR 0004).
+ * AJAX, WP-Cron, or WP-CLI (ADR 0003) -- with one deliberate exception:
+ * step_export_files() only commits a file (to either resolved_files or
+ * files_remaining) once the archive close() that makes the rest of its
+ * batch durable has already succeeded (Vex audit HIGH-ZIP-1 and its
+ * re-verification NEW-HIGH-1), so a crash mid-batch there re-does that
+ * batch's size/mtime checks on retry rather than losing a file outright.
+ * Never buffers an entire backup in memory; the largest single
+ * in-memory object at any point is one archive part (bounded by
+ * PART_SIZE_BYTES, ADR 0004).
  *
  * Steps: init -> export_db -> export_files -> package_manifest ->
  * upload_parts -> finalize -> (verified | failed).
@@ -449,10 +455,20 @@ class Job_Orchestrator {
 				) {
 					// Unchanged since the chain parent: carry its pointer
 					// forward verbatim. Nothing is archived or uploaded
-					// for this file this run -- no zip/close() involved,
-					// so committing immediately is safe, same as before.
+					// for this file this run -- no zip/close() of its own
+					// is involved, but it still must NOT be committed
+					// immediately (Vex re-verification, NEW-HIGH-1): an
+					// earlier file in this SAME batch may already be
+					// sitting in $pending, archived into the zip but not
+					// yet durably closed -- committing $remaining here
+					// would persist a files_remaining that's already
+					// missing that in-flight file while it's still absent
+					// from resolved_files too, the exact "neither list
+					// has it" gap a crash in that window would expose.
+					// Queued into $pending like any archived entry;
+					// flushed only at the same two commit points below.
 					unset( $remaining[ $relative ] );
-					$cp['resolved_files'][] = array(
+					$pending[] = array(
 						'path'             => $relative,
 						'size'             => (int) $prior['size'],
 						'mtime'            => (int) $prior['mtime'],
@@ -460,8 +476,6 @@ class Job_Orchestrator {
 						'source_backup_id' => $prior['source_backup_id'],
 						'source_part'      => $prior['source_part'],
 					);
-					$cp['files_remaining'] = $remaining;
-					Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
 					continue;
 				}
 
@@ -636,14 +650,24 @@ class Job_Orchestrator {
 	 * Vex audit HIGH-ZIP-1 (defense in depth, called once before any
 	 * upload begins): confirms every file this job itself claims to
 	 * have archived (source_backup_id === this job's own backup_id) is
-	 * actually present inside the local zip part it claims to live in.
-	 * step_upload_parts()'s sha256 read-back later only ever proves the
-	 * ZIP FILE round-tripped intact -- that was never able to catch a
-	 * part that round-trips perfectly but is missing entries a batch
-	 * silently dropped (the exact HIGH-ZIP-1 failure mode, now also
-	 * fixed at the source in step_export_files() -- this is the backstop
-	 * that verifies the manifest's per-file claims against reality
-	 * rather than trusting them).
+	 * actually present inside the local zip part it claims to live in,
+	 * AND at the size the manifest claims. step_upload_parts()'s sha256
+	 * read-back later only ever proves the ZIP FILE round-tripped
+	 * intact -- that was never able to catch a part that round-trips
+	 * perfectly but is missing entries a batch silently dropped (the
+	 * exact HIGH-ZIP-1 failure mode, now also fixed at the source in
+	 * step_export_files() -- this is the backstop that verifies the
+	 * manifest's per-file claims against reality rather than trusting
+	 * them). Vex re-verification, LOW-VERIFY-1: presence alone can't
+	 * catch a source file that changed in the narrow window between
+	 * this job's own hash_file() call and ZipArchive::close() actually
+	 * reading it -- comparing the archived entry's uncompressed size
+	 * against the manifest's claimed size closes most of that window
+	 * cheaply, without re-hashing (which would re-introduce the exact
+	 * I/O cost this feature exists to avoid). Not a full re-hash: a
+	 * same-size content change in that same narrow window would still
+	 * only surface at actual restore time via the per-file sha256, same
+	 * as any other undetected ancestor-part corruption (see T19).
 	 *
 	 * @return true|\WP_Error
 	 */
@@ -651,18 +675,23 @@ class Job_Orchestrator {
 		$by_part = array();
 		foreach ( $resolved_files as $entry ) {
 			if ( $entry['source_backup_id'] === $backup_id ) {
-				$by_part[ $entry['source_part'] ][] = $entry['path'];
+				$by_part[ $entry['source_part'] ][] = $entry;
 			}
 		}
-		foreach ( $by_part as $part_name => $paths ) {
+		foreach ( $by_part as $part_name => $entries ) {
 			$zip = new \ZipArchive();
 			if ( true !== $zip->open( $tmp . $part_name ) ) {
 				return new \WP_Error( 'wpguard_nc_part_unreadable', "Archive part {$part_name} could not be opened for pre-upload verification." );
 			}
-			foreach ( $paths as $path ) {
-				if ( false === $zip->locateName( $path ) ) {
+			foreach ( $entries as $entry ) {
+				$stat = $zip->statName( $entry['path'] );
+				if ( false === $stat ) {
 					$zip->close();
-					return new \WP_Error( 'wpguard_nc_file_missing_from_part', "File \"{$path}\" is missing from its own archive part ({$part_name}) -- the backup cannot be trusted as complete." );
+					return new \WP_Error( 'wpguard_nc_file_missing_from_part', "File \"{$entry['path']}\" is missing from its own archive part ({$part_name}) -- the backup cannot be trusted as complete." );
+				}
+				if ( (int) $stat['size'] !== (int) $entry['size'] ) {
+					$zip->close();
+					return new \WP_Error( 'wpguard_nc_file_size_mismatch', "File \"{$entry['path']}\" inside {$part_name} is {$stat['size']} bytes but the manifest claims {$entry['size']} -- the backup cannot be trusted as complete." );
 				}
 			}
 			$zip->close();

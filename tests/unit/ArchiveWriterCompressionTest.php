@@ -94,33 +94,53 @@ function test_stored_and_deflated_entries_both_extract_byte_identical() {
 // proven here directly against the real libzip behavior, not assumed.
 // This is the exact condition close_part() must now detect and
 // propagate instead of silently discarding close()'s return value.
+// Vex re-verification, LOW-TEST-1: the rollback proof below must not
+// depend on whether a later ZipArchive::open() of the (possibly now
+// corrupted-on-disk) zip happens to succeed -- that made the key
+// assertion conditional and silently skippable. Two phases instead:
+// phase 1 commits one entry with a confirmed, independent close();
+// phase 2 is the batch that gets rolled back. A FRESH open() after
+// phase 2 unconditionally proves both halves of the rollback: the
+// phase-1 entry survives (the file itself wasn't destroyed), and the
+// phase-2 entry whose own source was never touched is nonetheless gone
+// (the whole batch rolled back, not just the vanished file).
 function test_close_part_reports_failure_when_a_source_file_disappears_mid_batch() {
 	$dir = rtrim( sys_get_temp_dir(), '/\\' ) . '/wpguard_awtest_' . bin2hex( random_bytes( 4 ) ) . '/';
 	mkdir( $dir );
 
+	$zip_path = $dir . 'test.zip';
+
+	// Phase 1: one entry, committed via its own successful close().
+	$confirmed_src = $dir . 'confirmed.txt';
+	file_put_contents( $confirmed_src, 'committed in an earlier, independent close()' );
+	$zip = Archive_Writer::open_part( $zip_path );
+	Archive_Writer::add_file_to( $zip, $confirmed_src, 'confirmed.txt' );
+	$phase1_result = Archive_Writer::close_part( $zip );
+	wpguard_assert( true === $phase1_result, 'phase 1 close() must succeed on its own (no missing sources yet)' );
+
+	// Phase 2: a batch that will fail to close -- one file whose source
+	// is never touched again, one whose source vanishes before close().
 	$survives_src = $dir . 'survives.txt';
 	file_put_contents( $survives_src, 'intact source, never touched again' );
 	$vanishes_src = $dir . 'vanishes.txt';
 	file_put_contents( $vanishes_src, 'source about to disappear before close()' );
 
-	$zip_path = $dir . 'test.zip';
-	$zip = Archive_Writer::open_part( $zip_path );
+	$zip = Archive_Writer::open_part( $zip_path ); // Reopens in append mode (file already exists).
 	Archive_Writer::add_file_to( $zip, $survives_src, 'survives.txt' );
 	Archive_Writer::add_file_to( $zip, $vanishes_src, 'vanishes.txt' );
-
 	unlink( $vanishes_src ); // Disappears before close() actually reads it.
 
 	$result = Archive_Writer::close_part( $zip );
 	wpguard_assert( is_wp_error( $result ), 'close_part() must report failure (not silently succeed) when a batched source file disappears before close()' );
 
+	// Unconditional -- a fresh open() must succeed (the zip file itself
+	// still exists and is a valid archive; only phase 2's batch failed).
 	$check = new \ZipArchive();
-	$opened = $check->open( $zip_path );
-	if ( true === $opened ) {
-		// Confirms the real libzip rollback behavior this fix exists for:
-		// the INTACT file's entry is also gone, not just the vanished one.
-		wpguard_assert( false === $check->locateName( 'survives.txt' ), 'a close() failure must be detected even though it silently dropped an entry whose own source was never touched -- this is why a half-trusted per-file commit (addFile() succeeding) is not sufficient' );
-		$check->close();
-	}
+	wpguard_assert( true === $check->open( $zip_path ), 'the zip file itself must still be a valid, openable archive after a failed close() -- only the pending batch is lost, not the file' );
+	wpguard_assert( false !== $check->locateName( 'confirmed.txt' ), 'phase 1\'s already-committed entry must survive a later, unrelated close() failure' );
+	wpguard_assert( false === $check->locateName( 'survives.txt' ), 'a close() failure must roll back the WHOLE pending batch, including an entry whose own source was never touched -- this is why a half-trusted per-file commit (addFile() succeeding) is not sufficient' );
+	wpguard_assert( false === $check->locateName( 'vanishes.txt' ), 'the file whose source actually disappeared must also be absent' );
+	$check->close();
 
 	exec( 'rm -rf ' . escapeshellarg( $dir ) );
 }
