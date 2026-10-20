@@ -1,5 +1,23 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — update feed re-verification: H-001 cleared, L-001 still BLOCKED, fixed, 2026-10-20
+
+Vex's re-verification of the H-001/L-001 fixes: **H-001 confirmed
+cleared** (and caught a misstatement in our own commit message along
+the way — the `Update URI:` header doesn't actually stop this
+plugin's slug from being sent to `api.wordpress.org`; `check_for_update()`'s
+`unset()` is the real defense, confirmed live by replaying a mocked
+WP.org squatter response through the real `wp_update_plugins()`).
+**L-001 was still BLOCKED**: the `strncasecmp()` prefix check on the
+package URL was proven bypassable with a `../` path-traversal tag
+segment — confirmed live with a real HTTP 302 to an unrelated public
+repo's release asset. Fixed same-day: replaced the prefix check with a
+full anchored regex (tag segment must start alphanumeric, no
+`%`/`?`/`#`/`@`/`\`/`/` in either segment, `\z` not `$` to block a
+trailing newline). 6 new unit tests, 1 new E2E case (the exact
+proven-live bypass). 57/57 unit tests and the full 7-case update-checker
+E2E suite re-verified green. Full detail: `docs/threat-model.md` T18.
+
 ## Phase 2 progress — incremental file backups built, awaiting Vex sign-off, 2026-10-20
 
 Fifth Phase 2 item: incremental file backups, opt-in (default off).

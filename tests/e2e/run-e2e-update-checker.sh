@@ -39,7 +39,7 @@ RESULT_A=$(wp_source eval "
 echo "OK  no update offered against the real (release-less) repo, no error thrown"
 
 echo
-echo "=== Case B: a newer release WITH a qualifying .zip asset must be offered through the real filter ==="
+echo "=== Case B: a newer release WITH a qualifying .zip asset must be offered by check_for_update() ==="
 wp_source eval "
   set_transient('wpguard_nc_update_check', array(
     'version' => '9.9.9',
@@ -56,7 +56,7 @@ RESULT_B=$(wp_source eval "
   echo \$item ? (\$item->new_version . '|' . \$item->package) : 'none';
 ")
 [ "$RESULT_B" = "9.9.9|https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v9.9.9/wpguard-nc-backup-9.9.9.zip" ] || { echo "FAIL: expected the cached newer release to be offered with its package url, got '$RESULT_B'"; exit 1; }
-echo "OK  newer release with a qualifying asset offered through the real site_transient_update_plugins filter"
+echo "OK  newer release with a qualifying asset offered by check_for_update()"
 
 echo
 echo "=== Case C: a newer release with NO qualifying asset must never be offered (fail-closed) ==="
@@ -139,6 +139,25 @@ RESULT_F=$(wp_source eval "
 ")
 [ "$RESULT_F" = "none" ] || { echo "FAIL: a package URL from a different repo (even on github.com) must never be offered, got '$RESULT_F'"; exit 1; }
 echo "OK  untrusted package URL (wrong repo) correctly never offered, even though cached"
+
+echo
+echo "=== Case G: a cached package URL using path traversal to escape this repo's release path must never be offered (Vex re-verification L-001) ==="
+wp_source eval "
+  set_transient('wpguard_nc_update_check', array(
+    'version' => '9.9.9',
+    'package' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/../../../../attacker/repo/releases/download/v1/wpguard-nc-backup.zip',
+    'body' => '',
+    'html_url' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/tag/v9.9.9',
+  ), 12 * HOUR_IN_SECONDS);
+" > /dev/null
+RESULT_G=$(wp_source eval "
+  \$checker = new \WPGuard\NCBackup\Update_Checker('$PLUGIN_BASENAME');
+  \$transient = (object) array('checked' => array('$PLUGIN_BASENAME' => '1.0.0'));
+  \$transient = \$checker->check_for_update(\$transient);
+  echo isset(\$transient->response['$PLUGIN_BASENAME']) ? 'offered' : 'none';
+")
+[ "$RESULT_G" = "none" ] || { echo "FAIL: a package URL using path traversal to escape this repo's release path must never be offered, got '$RESULT_G'"; exit 1; }
+echo "OK  path-traversal package URL correctly never offered, even though cached"
 
 echo
 echo "=== Cleanup: clear the cached release so the live site is left pointed at reality again ==="

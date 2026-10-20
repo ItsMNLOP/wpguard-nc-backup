@@ -3,9 +3,10 @@ namespace WPGuard\NCBackup\Tests;
 use WPGuard\NCBackup\Update_Checker;
 
 // Phase 2 (update feed). Covers only the pure transforms (parse_release,
-// select_package_asset, is_newer_version) -- the actual GitHub API call
-// and transient caching are network/WP-state concerns, exercised instead
-// by tests/e2e/run-e2e-update-checker.sh against the real public API.
+// select_package_asset, is_newer_version, is_trusted_package_url) -- the
+// actual GitHub API call and transient caching are network/WP-state
+// concerns, exercised instead by tests/e2e/run-e2e-update-checker.sh
+// against the real public API.
 
 function test_select_package_asset_picks_matching_zip() {
 	$assets = array(
@@ -77,6 +78,35 @@ function test_is_trusted_package_url_accepts_empty_string() {
 	wpguard_assert( true === Update_Checker::is_trusted_package_url( '' ), 'an empty package URL (no asset selected) must be allowed through -- callers already treat "" as nothing to offer' );
 }
 
+// Vex re-verification, 2026-10-20: the original strncasecmp()-based
+// prefix check was proven bypassable via path traversal -- a prefix
+// match never inspects what follows it. These cover the exact bypass
+// shapes proven live against the real GitHub CDN, plus adjacent
+// injection vectors the anchored regex must also close.
+function test_is_trusted_package_url_rejects_plain_traversal() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/../../../../attacker/repo/releases/download/v1/x.zip' ), 'a plain ../ path-traversal tag segment must be rejected' );
+}
+
+function test_is_trusted_package_url_rejects_url_encoded_traversal() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/%2e%2e/%2e%2e/attacker/file.zip' ), 'a URL-encoded ../ path-traversal tag segment must be rejected' );
+}
+
+function test_is_trusted_package_url_rejects_mixed_encoded_traversal() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/..%2f..%2fattacker/file.zip' ), 'a mixed literal/encoded traversal tag segment must be rejected' );
+}
+
+function test_is_trusted_package_url_rejects_query_string_injection() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.1.0/wpguard-nc-backup.zip?q=evil' ), 'a trailing query string must be rejected -- the filename must end exactly at .zip' );
+}
+
+function test_is_trusted_package_url_rejects_fragment_injection() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.1.0/wpguard-nc-backup.zip#evil' ), 'a trailing fragment must be rejected -- the filename must end exactly at .zip' );
+}
+
+function test_is_trusted_package_url_rejects_trailing_newline() {
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( "https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.1.0/wpguard-nc-backup.zip\n" ), 'a trailing newline must be rejected -- \\z anchors at the true end of string, not just before a trailing newline the way $ would' );
+}
+
 return array(
 	'test_select_package_asset_picks_matching_zip',
 	'test_select_package_asset_ignores_non_matching_assets',
@@ -92,4 +122,10 @@ return array(
 	'test_is_trusted_package_url_rejects_bare_host_url',
 	'test_is_trusted_package_url_rejects_non_https',
 	'test_is_trusted_package_url_accepts_empty_string',
+	'test_is_trusted_package_url_rejects_plain_traversal',
+	'test_is_trusted_package_url_rejects_url_encoded_traversal',
+	'test_is_trusted_package_url_rejects_mixed_encoded_traversal',
+	'test_is_trusted_package_url_rejects_query_string_injection',
+	'test_is_trusted_package_url_rejects_fragment_injection',
+	'test_is_trusted_package_url_rejects_trailing_newline',
 );

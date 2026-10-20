@@ -131,9 +131,11 @@ function test_redact_wp_config_known_gap_const_syntax_not_caught() {
 	wpguard_assert( false !== strpos( $redacted, 'leaks-through-const-syntax' ), 'documents the known gap: const syntax is not matched by the define()-shaped regex' );
 }
 
-// Defines a real PHP constant — must run last in this file (and this
-// file is last alphabetically among *Test.php), since PHP constants
-// cannot be undefined and would otherwise lock every test after it.
+// Defines a real PHP constant — must run last in this file, since PHP
+// constants cannot be undefined and would otherwise lock every test
+// after it. run-all.php sorts files alphabetically and UpdateCheckerTest.php
+// now sorts after this file, but defines no constants, so the ordering
+// requirement here is still satisfied in practice.
 function test_locked_app_password_purges_stored_wp_options_value() {
 	$GLOBALS['__wpguard_test_options'] = array(
 		Settings::OPTION_KEY => array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'old-option-stored-secret', 'ca_bundle_path' => '' ),

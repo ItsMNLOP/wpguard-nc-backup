@@ -69,6 +69,12 @@ All notable changes to this project are documented here.
   Vex sign-off before this is considered shippable.
 
 ### Fixed
+- Update feed, Vex re-verification (2026-10-20): L-001 was **still
+  BLOCKED** after the first fix — the `strncasecmp()` prefix check on
+  the package URL was proven bypassable with a `../` path-traversal
+  tag segment (confirmed live with a real HTTP 302 to an unrelated
+  repo's release asset). Replaced with a full anchored regex. H-001
+  confirmed cleared on re-verification.
 - Update feed, Vex audit (2026-10-20): **BLOCKED, then fixed same-day.**
   H-001 (HIGH, proven exploitable): no `Update URI:` header meant
   WordPress core still queried `api.wordpress.org` for this plugin's

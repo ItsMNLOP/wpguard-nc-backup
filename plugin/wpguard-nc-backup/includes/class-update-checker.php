@@ -89,13 +89,27 @@ class Update_Checker {
 	 * public repo's release asset also lives on github.com. An empty
 	 * string (no asset selected) is explicitly allowed through; callers
 	 * already treat that as "nothing to offer."
+	 *
+	 * Vex re-verification, 2026-10-20: a plain strncasecmp() PREFIX
+	 * check here was proven bypassable with a path-traversal tag
+	 * segment (".." components that curl/the HTTP client normalize
+	 * away before the request is even sent), since a prefix match
+	 * never inspects what follows it -- confirmed live with a real
+	 * 302 to an unrelated repo's release asset. A full anchored regex
+	 * closes this: the tag segment must start with an alphanumeric
+	 * character (excluding "." and ".."), neither segment may contain
+	 * "%", "?", "#", "@", "\", or "/", and \z (not $) anchors at the
+	 * true end of the string so a trailing newline can't smuggle
+	 * anything past the check either.
 	 */
 	public static function is_trusted_package_url( string $url ): bool {
 		if ( '' === $url ) {
 			return true;
 		}
-		$prefix = 'https://github.com/' . self::GITHUB_REPO . '/releases/download/';
-		return 0 === strncasecmp( $url, $prefix, strlen( $prefix ) );
+		$pattern = '#\Ahttps://github\.com/' . preg_quote( self::GITHUB_REPO, '#' )
+			. '/releases/download/[A-Za-z0-9][A-Za-z0-9._+-]*/'
+			. preg_quote( self::SLUG, '#' ) . '[A-Za-z0-9._-]*\.zip\z#i';
+		return 1 === preg_match( $pattern, $url );
 	}
 
 	private function fetch_latest_release(): ?array {
@@ -190,14 +204,14 @@ class Update_Checker {
 
 		$release = $this->fetch_latest_release();
 		if ( ! $release ) {
-			// Vex audit H-001: $result here is whatever a prior filter
-			// (potentially WP.org's own plugin_information lookup for
-			// this same slug) already produced. Returning it when the
-			// slug matched ours but we have no real release data would
-			// let a WP.org squatter's info -- including their own
-			// download link -- populate the "View details" popup.
-			// Returning our own error instead means this slug's details
-			// are owned by this feed, full stop, never by a fallback.
+			// Vex audit H-001: $result defaults to false and is only
+			// non-false here if some other filter already populated it
+			// for this same slug -- potentially a WP.org plugin_information
+			// lookup, including a squatter's own download link, if WP.org
+			// ever gets queried for this slug before this filter runs.
+			// Returning our own error instead of passing $result through
+			// means this slug's details are owned by this feed, full
+			// stop, never by whatever a prior filter produced.
 			return new \WP_Error( 'wpguard_nc_no_release', __( 'No published release found. Check github.com/ItsMNLOP/wpguard-nc-backup.', 'wpguard-nc-backup' ) );
 		}
 
