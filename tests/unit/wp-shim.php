@@ -13,7 +13,7 @@ if ( ! defined( 'WPGUARD_NC_FORMAT_VERSION' ) ) {
 	define( 'WPGUARD_NC_FORMAT_VERSION', 1 );
 }
 if ( ! defined( 'WPGUARD_NC_VERSION' ) ) {
-	define( 'WPGUARD_NC_VERSION', '0.1.0' );
+	define( 'WPGUARD_NC_VERSION', '1.0.0' );
 }
 
 $GLOBALS['__wpguard_test_options'] = array();
