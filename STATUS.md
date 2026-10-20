@@ -40,6 +40,31 @@ assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
 - **Stale-job-lock recovery** (JOB-05, [H]): found live — an interrupted job blocks all future backups until an admin manually clears its row. Disclosed in `docs/operations.md`.
 - CI actually executing — written, not run.
 
+## Real-production restore drill, performed by Holt — 2026-10-19
+
+Restored the owner's first real backup (`20261019T232522Z-2469c25c`, real
+the owner's production site content — 142 `wp_posts` rows, 3 users, 12 active plugins)
+to the disposable `wp-restore` target, following `docs/restore-manual.md`
+exactly: downloaded all 5 components via the dedicated Nextcloud test
+account (shared read access), SHA-256 verified every one against the
+manifest before trusting anything, path-safety checked both archive parts,
+confirmed `wp-config.php` redaction behavior (no credential present to
+redact — this site uses the `wp_options` credential path, not the
+constant-override one), imported the real DB, extracted real files
+(121MB), ran serialization-safe `search-replace` for the URL.
+
+**Verified**: exact 142/142 row-count match against the manifest's
+per-status breakdown, both real published posts intact (non-empty,
+correct titles), a real media file intact on disk, 3/3 users, correct
+active theme and all 12 active plugins matching the live site.
+
+**the owner's own confirmation, browsing the restored instance himself**: his
+real account logged in correctly, **including his 2FA state** (wp-2fa
+plugin) — full fidelity on a genuinely sensitive, stateful security
+feature, not just static content. Strongest restore validation to date —
+real production data, not synthetic fixtures. `.restore-scratch/` (holds
+the real downloaded backup) added to `.gitignore`, commit `bae95cb`.
+
 ## Performance: time-boxed step batching — 2026-10-19
 
 the owner's hands-on backup against his real site (the owner's production site /
