@@ -1,5 +1,21 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — update feed CLEAR TO SHIP (final), 2026-10-20
+
+Second Vex re-verification of the L-001 regex fix: **CLEAR TO SHIP**,
+no new findings. Independently tried to break the new anchored regex
+(URL-encoded/mixed traversal, query-string/fragment injection, null
+bytes, Unicode lookalike slash characters, ReDOS, case-folding) and
+confirmed each is blocked; confirmed the regex doesn't falsely reject
+a real semver tag or release-candidate shape (`v1.2.3-rc.1`, etc.);
+independently re-ran the full 57-test unit suite and all 7
+update-checker E2E cases, both green. **Update feed (Phase 2 item 4)
+is done** — four full audit/fix rounds (H-001 BLOCKED→fixed,
+re-verification found L-001 still BLOCKED→fixed, final re-verification
+CLEAR TO SHIP), the most heavily audited item so far, proportionate to
+being the first feature in this project to introduce a remote code-
+execution trust boundary.
+
 ## Phase 2 progress — update feed re-verification: H-001 cleared, L-001 still BLOCKED, fixed, 2026-10-20
 
 Vex's re-verification of the H-001/L-001 fixes: **H-001 confirmed
