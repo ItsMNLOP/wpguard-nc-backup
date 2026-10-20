@@ -142,6 +142,27 @@ specifically so activating or updating the plugin never silently starts
 recurring jobs an admin didn't ask for. Regression test:
 `tests/e2e/run-e2e-scheduling.sh`.
 
+## Retention (Phase 2, 2026-10-20)
+
+Settings page has a "Keep last N backups" number field, default **0 =
+keep every backup forever**. A positive value deletes the oldest
+backup folder(s) under `<site-id>/backups/` on Nextcloud once more
+than that many exist, right after each new backup verifies
+successfully (`Job_Orchestrator::maybe_prune_old_backups()`, called
+from `step_finalize()` — only ever after the job above it is already
+`verified`). Deletion is oldest-first by `backup_id` (timestamp-
+prefixed, so lexicographic order is chronological order); the
+just-finished backup is always the newest and therefore always
+survives, by construction. A pruning failure is logged as a warning
+but never flips a verified backup back to failed — same
+never-affects-job-status discipline as the diagnostic job-log upload.
+Default is 0 specifically so no plugin update or activation can ever
+silently start deleting existing backups. Regression test:
+`tests/e2e/run-e2e-retention.sh` (against a real, isolated Nextcloud
+test folder — proves `list_children()` and `Retention::prune()` both
+against the real server, not a mock, including that the real remote
+listing after pruning matches what was asked for).
+
 ## Disk space
 
 No preflight disk-space check ships in MVP (NFR-10 mentions it; deferred).

@@ -62,6 +62,32 @@ function test_rejects_unrecognized_schedule_falls_back_to_disabled() {
 	wpguard_assert_equals( 'disabled', Settings::get_schedule(), 'an unrecognized schedule value must clamp to the safe default, not be stored verbatim' );
 }
 
+// Phase 2 (retention). Pruning is destructive (permanently deletes
+// backups), so these cover: the field is omitted (must default to 0 =
+// keep-all, never silently enable deletion), a valid positive count,
+// and a negative/non-numeric value clamping to 0 rather than erroring
+// or being stored as something that could underflow a count elsewhere.
+function test_retention_defaults_to_zero_when_missing() {
+	$GLOBALS['__wpguard_test_options'] = array();
+	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'pw' ) );
+	wpguard_assert( true === $result['ok'], 'save without a retention_count field must still succeed' );
+	wpguard_assert_equals( 0, Settings::get_retention_count(), 'an omitted retention_count must default to 0 (keep all)' );
+}
+
+function test_accepts_valid_retention_count() {
+	$GLOBALS['__wpguard_test_options'] = array();
+	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'pw', 'retention_count' => 14 ) );
+	wpguard_assert( true === $result['ok'], 'a valid retention_count must be accepted' );
+	wpguard_assert_equals( 14, Settings::get_retention_count(), 'the valid retention_count must be stored and read back' );
+}
+
+function test_rejects_negative_retention_count() {
+	$GLOBALS['__wpguard_test_options'] = array();
+	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'pw', 'retention_count' => -5 ) );
+	wpguard_assert( true === $result['ok'], 'a negative retention_count must not hard-fail the whole save' );
+	wpguard_assert_equals( 0, Settings::get_retention_count(), 'a negative retention_count must clamp to 0, not be stored as negative' );
+}
+
 // Vex audit H-02 regression coverage. redact_wp_config_contents() is a
 // pure string transform (no WP functions), safe to test directly.
 function test_redact_wp_config_strips_credential_constants() {
@@ -112,6 +138,9 @@ return array(
 	'test_schedule_defaults_to_disabled_when_missing',
 	'test_accepts_valid_schedule_value',
 	'test_rejects_unrecognized_schedule_falls_back_to_disabled',
+	'test_retention_defaults_to_zero_when_missing',
+	'test_accepts_valid_retention_count',
+	'test_rejects_negative_retention_count',
 	'test_redact_wp_config_strips_credential_constants',
 	'test_redact_wp_config_known_gap_const_syntax_not_caught',
 	'test_locked_app_password_purges_stored_wp_options_value',

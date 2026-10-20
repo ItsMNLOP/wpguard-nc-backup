@@ -41,6 +41,7 @@ class Settings {
 			'remote_folder'  => '',
 			'ca_bundle_path' => '',
 			'schedule'       => 'disabled',
+			'retention_count' => 0,
 		);
 		return array_merge( $defaults, $stored );
 	}
@@ -48,6 +49,17 @@ class Settings {
 	public static function get_schedule(): string {
 		$value = (string) self::get_all()['schedule'];
 		return in_array( $value, self::SCHEDULE_CHOICES, true ) ? $value : 'disabled';
+	}
+
+	/**
+	 * 0 = keep every backup forever (default -- pruning is destructive,
+	 * so an admin must explicitly opt into a number rather than this
+	 * plugin silently deleting anything on activation/update).
+	 */
+	public static function get_retention_count(): int {
+		$value = self::get_all()['retention_count'];
+		$int = is_numeric( $value ) ? (int) $value : 0;
+		return max( 0, $int );
 	}
 
 	public static function is_app_password_locked(): bool {
@@ -163,6 +175,14 @@ class Settings {
 		// whole save.
 		$schedule = isset( $input['schedule'] ) ? (string) $input['schedule'] : 'disabled';
 		$clean['schedule'] = in_array( $schedule, self::SCHEDULE_CHOICES, true ) ? $schedule : 'disabled';
+
+		// Retention count: 0 or a non-negative integer. Same
+		// non-hard-fail tolerance as schedule above -- clamps to the
+		// safe default (0 = keep all) rather than erroring the save,
+		// since this is also always a constrained <input type=number
+		// min=0> in the admin UI, not free text.
+		$retention_raw = isset( $input['retention_count'] ) ? $input['retention_count'] : 0;
+		$clean['retention_count'] = is_numeric( $retention_raw ) ? max( 0, (int) $retention_raw ) : 0;
 
 		if ( ! empty( $errors ) ) {
 			return array( 'ok' => false, 'errors' => $errors );

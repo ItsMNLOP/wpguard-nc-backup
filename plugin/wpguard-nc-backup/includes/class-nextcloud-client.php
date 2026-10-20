@@ -239,6 +239,64 @@ class Nextcloud_Client {
 		return true;
 	}
 
+	/**
+	 * PROPFIND (Depth: 1) for the immediate child names of a collection.
+	 * Phase 2 retention pruning uses this to enumerate existing
+	 * backup_id folders before deciding what to delete. Returns bare
+	 * names (the collection's own entry is excluded, matched by
+	 * comparing the response href's path against this collection's own
+	 * URL path -- not by position/order, which WebDAV makes no guarantee
+	 * about), URL-decoded, not full paths.
+	 *
+	 * @return array<string>|\WP_Error
+	 */
+	public function list_children( string $relative_path ) {
+		$body = '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>';
+		$response = $this->request(
+			'PROPFIND',
+			$this->url_for( $relative_path ),
+			array(
+				'headers' => array( 'Depth' => '1', 'Content-Type' => 'application/xml' ),
+				'body'    => $body,
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$code = wp_remote_retrieve_response_code( $response );
+		if ( 404 === $code ) {
+			return array();
+		}
+		if ( 207 !== $code ) {
+			return new \WP_Error( 'wpguard_nc_propfind_list_failed', sprintf( 'PROPFIND (list) failed with HTTP %d', $code ), array( 'status' => $code ) );
+		}
+		$xml_text = wp_remote_retrieve_body( $response );
+		$previous = libxml_use_internal_errors( true );
+		// LIBXML_NONET: same defense-in-depth rationale as propfind_size() (Vex audit L-03).
+		$xml = simplexml_load_string( $xml_text, 'SimpleXMLElement', LIBXML_NONET );
+		libxml_use_internal_errors( $previous );
+		if ( false === $xml ) {
+			return new \WP_Error( 'wpguard_nc_propfind_list_parse_failed', 'Could not parse PROPFIND XML response.' );
+		}
+		$xml->registerXPathNamespace( 'd', 'DAV:' );
+		$self_path = rtrim( (string) wp_parse_url( $this->url_for( $relative_path ), PHP_URL_PATH ), '/' );
+		$names = array();
+		foreach ( $xml->xpath( '//d:response' ) as $resp ) {
+			$resp->registerXPathNamespace( 'd', 'DAV:' );
+			$href_nodes = $resp->xpath( 'd:href' );
+			if ( empty( $href_nodes ) ) {
+				continue;
+			}
+			$href_path = rtrim( (string) wp_parse_url( (string) $href_nodes[0], PHP_URL_PATH ), '/' );
+			if ( $href_path === $self_path ) {
+				continue; // Depth:1 includes the collection itself.
+			}
+			$segments = explode( '/', $href_path );
+			$names[] = rawurldecode( end( $segments ) );
+		}
+		return $names;
+	}
+
 	public function delete( string $relative_path ) {
 		$response = $this->request( 'DELETE', $this->url_for( $relative_path ) );
 		if ( is_wp_error( $response ) ) {

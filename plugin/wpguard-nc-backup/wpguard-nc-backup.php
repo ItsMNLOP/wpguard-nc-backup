@@ -47,10 +47,23 @@ const SCHEDULED_BACKUP_HOOK = 'wpguard_nc_scheduled_backup';
 function activate() {
 	Job_Store::install_or_upgrade_schema();
 	Settings::ensure_site_id();
+	sync_stale_lock_check();
+	sync_scheduled_backup();
+}
+
+/**
+ * Vex delta audit, 2026-10-20 (OBS-1): register_activation_hook() only
+ * fires on a fresh activation, not on a plugin update while already
+ * active -- a site upgrading in place would silently lose the hourly
+ * safety-net cron (the create_job()-triggered reap path still works
+ * regardless) until it happened to be deactivated and reactivated.
+ * Idempotent and cheap like sync_scheduled_backup(), so also called
+ * from boot() on every load, not just activate().
+ */
+function sync_stale_lock_check(): void {
 	if ( ! wp_next_scheduled( STALE_LOCK_CHECK_HOOK ) ) {
 		wp_schedule_event( time(), 'hourly', STALE_LOCK_CHECK_HOOK );
 	}
-	sync_scheduled_backup();
 }
 
 function deactivate() {
@@ -143,9 +156,11 @@ function boot() {
 	// fallback) clears it proactively instead of waiting for that.
 	add_action( STALE_LOCK_CHECK_HOOK, __NAMESPACE__ . '\\Job_Orchestrator::reap_stale_lock' );
 
-	// Idempotent reconciliation on every load, in case the schedule
-	// setting was ever changed through a path other than the admin
-	// save handler (e.g. a future WP-CLI command, or direct DB access).
+	// Idempotent reconciliation on every load (OBS-1: covers an
+	// in-place plugin update, which activate() alone would miss), in
+	// case either schedule was ever changed or lost through a path
+	// other than the admin save handler.
+	sync_stale_lock_check();
 	sync_scheduled_backup();
 
 	if ( defined( 'WP_CLI' ) && WP_CLI ) {

@@ -1,5 +1,38 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — retention pruning shipped, 2026-10-20
+
+Third Phase 2 item complete: a "Keep last N backups" setting (default
+0 = keep all) that deletes the oldest backup folder(s) on Nextcloud
+once more than N exist, right after a new backup verifies
+(`Job_Orchestrator::maybe_prune_old_backups()`, called from
+`step_finalize()`, best-effort and never affects job status on
+failure). New `Nextcloud_Client::list_children()` (PROPFIND Depth: 1)
+and a small `Retention` class (`prune()` takes the parent path as a
+parameter rather than hardcoding the site's real backups folder, so
+it's directly testable against an isolated folder). 3 new unit tests
+and a new E2E regression test `tests/e2e/run-e2e-retention.sh` — both
+passed against a real, isolated Nextcloud test folder (not a mock):
+`keep=0` is a true no-op, `keep=N` deletes exactly the oldest excess,
+`keep` higher than what exists is a no-op, and the real remote
+listing after pruning independently confirms the result. 34/34 unit
+tests and the full backup/restore E2E drill re-verified green
+afterward. Full detail: `docs/operations.md` ("Retention").
+
+## Phase 2 progress — JOB-05 Vex delta-audit fixes, 2026-10-20
+
+Vex's delta audit of the stale-lock reaper came back **CLEAR TO SHIP**
+with 3 LOWs and 2 non-blocking observations, all fixed same-day per
+standing instruction: corrected the `STALE_LOCK_SECONDS` comment and
+`docs/operations.md`'s claim that it's "comfortably above" the
+worst-case `advance()` call (it understated the real worst case by
+~10x; the advisory lock, not the timestamp margin, is the actual
+protection), added a 60s floor on the `wpguard_nc_stale_lock_seconds`
+filter, added `docs/threat-model.md` T17 for the new unattended-cron
+surface, and made the hourly safety-net cron reconcile on every
+`boot()` so an in-place plugin update doesn't silently lose it.
+Full findings and fixes: `CHANGELOG.md` "Unreleased" → "Fixed".
+
 ## Phase 2 progress — automatic scheduling shipped, 2026-10-20
 
 Second Phase 2 item complete: a Disabled/Daily/Weekly dropdown on the

@@ -22,6 +22,32 @@ All notable changes to this project are documented here.
   before starting and skips rather than overlaps a healthy one still in
   progress. Defaults to Disabled so no plugin update or activation ever
   silently starts recurring jobs. Pending Vex sign-off.
+- Retention pruning: a "Keep last N backups" setting (default 0 = keep
+  all) that deletes the oldest backup folder(s) on Nextcloud once more
+  than N exist, right after a new backup verifies. Oldest-first by
+  `backup_id` order; the just-finished backup always survives by
+  construction. A pruning failure is logged but never flips a verified
+  backup back to failed. New `Nextcloud_Client::list_children()`
+  (PROPFIND Depth: 1) and `Retention` class, verified against a real
+  Nextcloud account via `tests/e2e/run-e2e-retention.sh`. Defaults to
+  keep-all since pruning is destructive and must be an explicit admin
+  opt-in. Pending Vex sign-off.
+
+### Fixed
+- Corrected two Vex delta-audit documentation findings on the JOB-05
+  stale-lock reaper (LOW-JOB05-1/2): `STALE_LOCK_SECONDS`'s "comfortably
+  above worst-case" comment understated the real worst case by roughly
+  10x once `class-nextcloud-client.php`'s actual per-attempt timeouts
+  and retries are counted -- the advisory lock, not the timestamp
+  margin, is what actually prevents reaping an active job, now stated
+  plainly. Added a `MIN_STALE_LOCK_SECONDS` floor (60s) on the
+  `wpguard_nc_stale_lock_seconds` filter (LOW-JOB05-3). Added `threat-model.md`
+  T17 for the new unattended-cron surface and removed the now-stale
+  "no WP-Cron-triggered unattended runs" out-of-scope line (OBS-2).
+  The hourly stale-lock-check cron is now also reconciled on every
+  `boot()`, not only on fresh plugin activation, so an in-place plugin
+  update doesn't silently lose the safety-net cron until a deactivate/
+  reactivate cycle (OBS-1).
 
 ## [1.0.0] — 2026-10-20 (Phase 1 MVP complete)
 

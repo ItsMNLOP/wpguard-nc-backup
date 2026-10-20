@@ -39,13 +39,34 @@ class Job_Orchestrator {
 	// JOB-05 (Phase 2): a job whose checkpoint hasn't been touched in this
 	// long is treated as abandoned (PHP killed, container restarted, both
 	// the browser tab and the WP-Cron fallback failing to pick it back
-	// up) rather than genuinely in-progress. Set comfortably above the
-	// worst-case single advance() call documented in operations.md (an
-	// upload_parts retry loop can legitimately run up to ~30s x 4 retries
-	// = ~120s before returning), with headroom for a slow shared-hosting
-	// request. Filterable since "worst-case single step" varies by site
-	// size and hosting.
+	// up) rather than genuinely in-progress.
+	//
+	// Vex delta audit, 2026-10-20 (LOW-JOB05-2): this value is NOT the
+	// real protection against reaping an active job -- try_lock() is.
+	// A single step_upload_parts() iteration can legitimately run far
+	// longer than this threshold once every per-attempt timeout and
+	// retry in class-nextcloud-client.php is counted (put_bytes: up to
+	// 120s x 4 attempts; propfind_size: up to 30s x 4; download_to_file:
+	// up to 300s x 4 -- on the order of 1800s combined, not the ~120s
+	// this comment previously claimed). The lock is held for that
+	// entire duration regardless, so try_lock() correctly fails and
+	// reap_stale_lock() leaves the job alone no matter how stale its
+	// clock looks (see docs/operations.md's "Stale-lock recovery" and
+	// LOW-R2 for the one known way the lock itself can be dropped
+	// early -- an aggressive MySQL wait_timeout -- which is a pre-
+	// existing condition, not something this threshold controls).
+	// This value only governs how long a job with NO active process at
+	// all (lock already free) sits before being reaped. Filterable
+	// since "how long is reasonable to wait with no visible progress"
+	// varies by site.
 	const STALE_LOCK_SECONDS = 600;
+
+	// LOW-JOB05-3: a filtered value at or below this is rejected in
+	// favor of this floor, so a misbehaving filter can't shrink the
+	// window below the time it takes create_job() to return and the
+	// first advance() call to actually acquire the lock -- the one
+	// genuinely lock-free moment in a job's life.
+	const MIN_STALE_LOCK_SECONDS = 60;
 
 	public static function tmp_dir_for( string $backup_id ): string {
 		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/' . $backup_id . '/';
@@ -103,7 +124,7 @@ class Job_Orchestrator {
 		if ( null === $job ) {
 			return null;
 		}
-		$threshold = (int) apply_filters( 'wpguard_nc_stale_lock_seconds', self::STALE_LOCK_SECONDS );
+		$threshold = max( self::MIN_STALE_LOCK_SECONDS, (int) apply_filters( 'wpguard_nc_stale_lock_seconds', self::STALE_LOCK_SECONDS ) );
 		$age = time() - strtotime( $job['updated_at'] . ' UTC' );
 		if ( $age < $threshold ) {
 			return null;
@@ -581,7 +602,35 @@ class Job_Orchestrator {
 		self::cleanup_tmp( $tmp );
 		self::log( $job_id, 'finalize', 'info', 'Backup verified and complete.' );
 		Job_Store::update( $job_id, array( 'status' => 'verified', 'step' => 'done' ) );
+		self::maybe_prune_old_backups( $job_id, $client );
 		return Job_Store::get( $job_id );
+	}
+
+	/**
+	 * Phase 2 retention: runs only after the job above is already marked
+	 * verified, so a pruning failure (network blip, permission error)
+	 * can never turn a good backup into a failed one -- same
+	 * never-affects-job-status discipline as upload_diagnostic_log().
+	 * Reuses the $client already built for this job's upload instead of
+	 * constructing a second one.
+	 */
+	private static function maybe_prune_old_backups( string $job_id, Nextcloud_Client $client ): void {
+		$keep = Settings::get_retention_count();
+		if ( $keep <= 0 ) {
+			return;
+		}
+		try {
+			$result = Retention::prune( $client, $keep );
+			if ( is_wp_error( $result ) ) {
+				self::log( $job_id, 'finalize', 'warning', 'Retention pruning did not fully complete: ' . self::logger()->redact( $result->get_error_message() ) );
+				return;
+			}
+			if ( ! empty( $result['deleted'] ) ) {
+				self::log( $job_id, 'finalize', 'info', sprintf( 'Retention: removed %d old backup(s), kept %d.', count( $result['deleted'] ), $result['kept'] ) );
+			}
+		} catch ( \Throwable $e ) {
+			self::log( $job_id, 'finalize', 'warning', 'Retention pruning threw an unexpected error: ' . self::logger()->redact( $e->getMessage() ) );
+		}
 	}
 
 	private static function cleanup_tmp( string $dir ): void {

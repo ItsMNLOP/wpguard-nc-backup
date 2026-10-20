@@ -58,6 +58,7 @@ class Admin {
 			'remote_folder'  => isset( $_POST['remote_folder'] ) ? wp_unslash( $_POST['remote_folder'] ) : '',
 			'ca_bundle_path' => isset( $_POST['ca_bundle_path'] ) ? wp_unslash( $_POST['ca_bundle_path'] ) : '',
 			'schedule'       => isset( $_POST['schedule'] ) ? sanitize_text_field( wp_unslash( $_POST['schedule'] ) ) : 'disabled',
+			'retention_count' => isset( $_POST['retention_count'] ) ? (int) $_POST['retention_count'] : 0,
 		);
 		$result = Settings::save( $input );
 		if ( $result['ok'] ) {
@@ -228,6 +229,13 @@ class Admin {
 						<p class="description"><?php esc_html_e( 'Relies on WP-Cron, same as the manual backup fallback — only fires on site traffic (see Operations docs). Skips a run rather than overlapping if a backup is still genuinely in progress.', 'wpguard-nc-backup' ); ?></p>
 					</td>
 				</tr>
+				<tr>
+					<th><label for="wpguard_nc_retention"><?php esc_html_e( 'Keep last N backups', 'wpguard-nc-backup' ); ?></label></th>
+					<td>
+						<input type="number" id="wpguard_nc_retention" min="0" step="1" value="<?php echo esc_attr( (string) $settings['retention_count'] ); ?>" class="small-text">
+						<p class="description"><?php esc_html_e( '0 = keep every backup forever (default). A positive number deletes the oldest backup folder(s) on Nextcloud right after each new backup verifies successfully, once more than that many exist. This permanently deletes data — only increase from 0 once you are comfortable with the number chosen.', 'wpguard-nc-backup' ); ?></p>
+					</td>
+				</tr>
 			</table>
 			<p>
 				<button type="button" class="button button-primary" id="wpguard_nc_save"><?php esc_html_e( 'Save Settings', 'wpguard-nc-backup' ); ?></button>
@@ -263,7 +271,8 @@ class Admin {
 					app_password: document.getElementById('wpguard_nc_pw').value,
 					remote_folder: document.getElementById('wpguard_nc_folder').value,
 					ca_bundle_path: document.getElementById('wpguard_nc_ca').value,
-					schedule: document.getElementById('wpguard_nc_schedule').value
+					schedule: document.getElementById('wpguard_nc_schedule').value,
+					retention_count: document.getElementById('wpguard_nc_retention').value
 				}).then(function(res){
 					document.getElementById('wpguard_nc_settings_result').textContent = res.data.message;
 				});
