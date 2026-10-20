@@ -1,5 +1,15 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Scope decision — multisite parked, 2026-10-20
+
+Multisite support pulled off the active Phase 2 list and parked in
+backlog. No multisite install exists to build or test against (none of
+the owner's current WordPress sites are multisite), and inventing the
+network-DB/per-site-table/file-scoping behavior without a real target
+to verify against isn't acceptable per this plugin's own
+verify-before-build standard. Revisit only if the owner stands up a
+real multisite target, or a public-repo issue asks for it.
+
 ## Phase 1 MVP: COMPLETE — 2026-10-20
 
 Every original Phase 1 gate below is checked and re-verified multiple
