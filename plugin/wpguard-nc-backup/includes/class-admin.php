@@ -138,6 +138,18 @@ class Admin {
 			$job_id = $latest['job_id'];
 		}
 		$job = Job_Orchestrator::cancel( $job_id );
+
+		// Vex audit LOW-C1: a lock-contended cancel (advance() is actively
+		// running right now) changes nothing, and must not be reported as
+		// success -- the admin would otherwise see "success" from the
+		// fetch call while the job silently stayed running.
+		if ( 'lock_contended' === ( $job['cancel_result'] ?? '' ) ) {
+			wp_send_json_error( array_merge(
+				$this->public_job_view( $job ),
+				array( 'message' => __( 'Job is actively being advanced right now (AJAX or WP-Cron) -- nothing was changed. Wait a moment and try Cancel again.', 'wpguard-nc-backup' ) )
+			) );
+			return;
+		}
 		wp_send_json_success( $this->public_job_view( $job ) );
 	}
 

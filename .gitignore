@@ -17,3 +17,4 @@ tests/e2e/artifacts/
 !docs/**/*.zip
 .DS_Store
 Thumbs.db
+.e2e-cancel-contention-scratch/

@@ -85,22 +85,32 @@ class Job_Orchestrator {
 	 * @return array Updated job row, or the job unchanged if it was
 	 *   already terminal, or {status: not_found}.
 	 */
+	/**
+	 * @return array Job row with an added 'cancel_result' key: 'cancelled',
+	 *   'already_terminal', 'lock_contended' (advance() held the lock right
+	 *   now -- nothing was changed, caller must not report this as success,
+	 *   Vex audit LOW-C1), or 'not_found'.
+	 */
 	public static function cancel( string $job_id ): array {
 		if ( ! Job_Store::try_lock( $job_id ) ) {
 			// Another process (AJAX/cron) is actively advancing it right
-			// now -- don't race a live advance() call.
-			$job = Job_Store::get( $job_id );
-			return $job ?? array( 'status' => 'not_found' );
+			// now -- don't race a live advance() call. Nothing changed.
+			$job = Job_Store::get( $job_id ) ?? array( 'status' => 'not_found' );
+			$job['cancel_result'] = 'lock_contended';
+			return $job;
 		}
 		try {
 			$job = Job_Store::get( $job_id );
 			if ( null === $job ) {
-				return array( 'status' => 'not_found' );
+				return array( 'status' => 'not_found', 'cancel_result' => 'not_found' );
 			}
 			if ( in_array( $job['status'], array( 'verified', 'failed' ), true ) ) {
+				$job['cancel_result'] = 'already_terminal';
 				return $job;
 			}
-			return self::fail( $job_id, $job['step'], 'Cancelled by administrator (stuck-job recovery).' );
+			$job = self::fail( $job_id, $job['step'], 'Cancelled by administrator (stuck-job recovery).' );
+			$job['cancel_result'] = 'cancelled';
+			return $job;
 		} finally {
 			Job_Store::release_lock( $job_id );
 		}
@@ -117,9 +127,34 @@ class Job_Orchestrator {
 		// .htaccess-protected on Apache but directly web-accessible on
 		// Nginx with no equivalent guard.
 		if ( null !== $job && ! empty( $job['backup_id'] ) ) {
+			self::upload_diagnostic_log( $job['backup_id'], $job['log'] ?? array() );
 			self::cleanup_tmp( self::tmp_dir_for( $job['backup_id'] ) );
 		}
 		return $job;
+	}
+
+	/**
+	 * Dev/testing diagnostic artifact (not part of the restorable backup
+	 * set, not listed in manifest.json's components[]): the full per-step
+	 * job log, uploaded alongside the backup as job-log.json so real
+	 * per-step timestamps are visible without needing WP-CLI/SSH access to
+	 * the site. Every entry already passed through Logger::redact() at
+	 * write time (T8), so this carries no more exposure than the log
+	 * already visible in the admin UI. Best-effort and silently swallowed
+	 * on failure -- this must never affect job status, on the success path
+	 * or the failure path that calls it from fail() above.
+	 */
+	private static function upload_diagnostic_log( string $backup_id, array $log ): void {
+		if ( empty( $log ) || ! Settings::has_credentials() ) {
+			return;
+		}
+		try {
+			$client = Nextcloud_Client::from_settings( self::logger() );
+			$remote_rel = $client->relative_path( Settings::get_site_id() . '/backups/' . $backup_id . '/job-log.json' );
+			$client->put_bytes( $remote_rel, wp_json_encode( $log, JSON_PRETTY_PRINT ) );
+		} catch ( \Throwable $e ) {
+			// Diagnostic only; intentionally not surfaced or retried.
+		}
 	}
 
 	/**
@@ -457,6 +492,7 @@ class Job_Orchestrator {
 			return self::fail( $job_id, 'finalize', 'Completion marker did not verify after upload — backup remains uploaded-unverified.' );
 		}
 
+		self::upload_diagnostic_log( $job['backup_id'], $job['log'] ?? array() );
 		self::cleanup_tmp( $tmp );
 		self::log( $job_id, 'finalize', 'info', 'Backup verified and complete.' );
 		Job_Store::update( $job_id, array( 'status' => 'verified', 'step' => 'done' ) );
