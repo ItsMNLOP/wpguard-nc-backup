@@ -279,7 +279,16 @@ class Nextcloud_Client {
 			return new \WP_Error( 'wpguard_nc_propfind_list_parse_failed', 'Could not parse PROPFIND XML response.' );
 		}
 		$xml->registerXPathNamespace( 'd', 'DAV:' );
-		$self_path = rtrim( (string) wp_parse_url( $this->url_for( $relative_path ), PHP_URL_PATH ), '/' );
+		// Vex delta audit, 2026-10-20 (RETENTION-1): compared encoded, this
+		// match silently failed whenever the Nextcloud username contained
+		// a character PHP's rawurlencode() (used by url_for()) escapes but
+		// Nextcloud/Sabre's own href encoder does not (confirmed against
+		// the real server: '@', '(', ')', ':' are left unescaped by
+		// Sabre but escaped by rawurlencode()) -- the self-entry was then
+		// never excluded, and its bare folder name ("backups") leaked
+		// into the result as if it were a real sibling entry. Decoding
+		// both sides before comparing makes the match encoder-agnostic.
+		$self_path = rawurldecode( rtrim( (string) wp_parse_url( $this->url_for( $relative_path ), PHP_URL_PATH ), '/' ) );
 		$names = array();
 		foreach ( $xml->xpath( '//d:response' ) as $resp ) {
 			$resp->registerXPathNamespace( 'd', 'DAV:' );
@@ -287,12 +296,12 @@ class Nextcloud_Client {
 			if ( empty( $href_nodes ) ) {
 				continue;
 			}
-			$href_path = rtrim( (string) wp_parse_url( (string) $href_nodes[0], PHP_URL_PATH ), '/' );
+			$href_path = rawurldecode( rtrim( (string) wp_parse_url( (string) $href_nodes[0], PHP_URL_PATH ), '/' ) );
 			if ( $href_path === $self_path ) {
 				continue; // Depth:1 includes the collection itself.
 			}
 			$segments = explode( '/', $href_path );
-			$names[] = rawurldecode( end( $segments ) );
+			$names[] = end( $segments );
 		}
 		return $names;
 	}

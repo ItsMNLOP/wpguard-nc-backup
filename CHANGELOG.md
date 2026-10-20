@@ -25,13 +25,13 @@ All notable changes to this project are documented here.
 - Retention pruning: a "Keep last N backups" setting (default 0 = keep
   all) that deletes the oldest backup folder(s) on Nextcloud once more
   than N exist, right after a new backup verifies. Oldest-first by
-  `backup_id` order; the just-finished backup always survives by
-  construction. A pruning failure is logged but never flips a verified
-  backup back to failed. New `Nextcloud_Client::list_children()`
-  (PROPFIND Depth: 1) and `Retention` class, verified against a real
-  Nextcloud account via `tests/e2e/run-e2e-retention.sh`. Defaults to
-  keep-all since pruning is destructive and must be an explicit admin
-  opt-in. Pending Vex sign-off.
+  `backup_id` order among verified backups only; the just-finished
+  backup always survives by construction. A pruning failure is logged
+  but never flips a verified backup back to failed. New
+  `Nextcloud_Client::list_children()` (PROPFIND Depth: 1) and
+  `Retention` class, verified against a real Nextcloud account via
+  `tests/e2e/run-e2e-retention.sh`. Defaults to keep-all since pruning
+  is destructive and must be an explicit admin opt-in.
 
 ### Fixed
 - Corrected two Vex delta-audit documentation findings on the JOB-05
@@ -48,6 +48,26 @@ All notable changes to this project are documented here.
   `boot()`, not only on fresh plugin activation, so an in-place plugin
   update doesn't silently lose the safety-net cron until a deactivate/
   reactivate cycle (OBS-1).
+- Vex delta audit of scheduling and retention: **scheduling CLEAR TO
+  SHIP, no findings. Retention was initially BLOCKED** — two
+  implementation bugs had silently disabled it entirely
+  (`maybe_prune_old_backups()` called `Retention::prune()` with the
+  wrong number of arguments, and `prune()`'s declared return type
+  didn't match its `WP_Error` return path; both are PHP 8
+  errors silently caught by the calling try/catch, so retention never
+  actually ran despite a direct-call-only test of `prune()` passing)
+  plus a HIGH finding (the folder-listing self-exclusion check
+  compared URL-encoded paths, which silently broke for any Nextcloud
+  username containing a character PHP's `rawurlencode()` escapes but
+  Nextcloud's own encoder doesn't, such as `@` — the parent folder's
+  own name then leaked into the deletion candidate list) and a MEDIUM
+  (failed/interrupted job folders were counted toward the keep-N total
+  instead of being ignored). All four fixed; regression test now
+  exercises the real `step_finalize()` integration path specifically,
+  not just a direct call to `prune()`, so this class of bug can't hide
+  again. Also confirmed live against the real Nextcloud test server:
+  WebDAV `DELETE` lands in that account's trashbin, not permanent
+  erasure — documented in `docs/threat-model.md` T13.
 
 ## [1.0.0] — 2026-10-20 (Phase 1 MVP complete)
 

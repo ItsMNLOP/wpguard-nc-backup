@@ -1,5 +1,35 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — scheduling CLEAR TO SHIP; retention was BLOCKED, now fixed, 2026-10-20
+
+Vex's delta audit of commits `07ab212` (scheduling) and `6a85eb8`
+(retention): **scheduling CLEAR TO SHIP, no findings.** **Retention
+was initially BLOCKED** — caught two implementation bugs that had
+silently disabled it entirely in production (`maybe_prune_old_backups()`
+called `Retention::prune()` with the wrong argument count; `prune()`'s
+declared `: array` return type didn't match its `WP_Error` return —
+both PHP 8 errors silently swallowed by the calling try/catch, so
+retention never actually ran despite a direct-call-only test of
+`prune()` passing), one HIGH (the folder-listing self-exclusion check
+compared URL-encoded paths and silently broke for any Nextcloud
+username containing a character PHP's `rawurlencode()` escapes but
+Nextcloud's own encoder doesn't — e.g. `@` — meaning the parent
+folder's own name could leak into the deletion candidate list), and
+one MEDIUM (failed/interrupted job folders were counted toward the
+keep-N total instead of being ignored, so fewer real backups survived
+than configured). All four fixed same-day per standing instruction.
+The regression test (`run-e2e-retention.sh`) now includes a real
+end-to-end run through `step_finalize()` itself with retention
+configured — not just a direct call to `prune()` — specifically
+because that's exactly how the arity bug hid from the original test.
+Also confirmed live, not assumed: a WebDAV `DELETE` on the real
+Nextcloud test server lands in that account's own trashbin, not
+permanent erasure — meaningfully reduces (doesn't eliminate) the
+blast radius of a malicious/careless `retention_count` setting.
+34/34 unit tests and the full backup/restore E2E drill re-verified
+green. Full detail: `CHANGELOG.md` "Unreleased" → "Fixed",
+`docs/threat-model.md` T13.
+
 ## Phase 2 progress — retention pruning shipped, 2026-10-20
 
 Third Phase 2 item complete: a "Keep last N backups" setting (default

@@ -620,7 +620,8 @@ class Job_Orchestrator {
 			return;
 		}
 		try {
-			$result = Retention::prune( $client, $keep );
+			$parent_rel = $client->relative_path( Settings::get_site_id() . '/backups' );
+			$result = Retention::prune( $client, $parent_rel, $keep );
 			if ( is_wp_error( $result ) ) {
 				self::log( $job_id, 'finalize', 'warning', 'Retention pruning did not fully complete: ' . self::logger()->redact( $result->get_error_message() ) );
 				return;

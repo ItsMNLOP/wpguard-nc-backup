@@ -157,11 +157,32 @@ survives, by construction. A pruning failure is logged as a warning
 but never flips a verified backup back to failed — same
 never-affects-job-status discipline as the diagnostic job-log upload.
 Default is 0 specifically so no plugin update or activation can ever
-silently start deleting existing backups. Regression test:
+silently start deleting existing backups. Only a folder matching the
+real `backup_id` format *and* carrying a `COMPLETE.json` counts as a
+verified backup for both the keep-N count and as a deletion candidate
+(Vex delta audit, 2026-10-20, RETENTION-2) — a failed/interrupted
+job's folder is neither counted (so it can't silently consume one of
+the N "keep" slots a real backup should occupy) nor deleted (cleaning
+up non-backup remnants is a separate concern). Regression test:
 `tests/e2e/run-e2e-retention.sh` (against a real, isolated Nextcloud
 test folder — proves `list_children()` and `Retention::prune()` both
-against the real server, not a mock, including that the real remote
-listing after pruning matches what was asked for).
+against the real server, not a mock, including a failed-job stub that
+must be neither counted nor touched, and a real end-to-end run through
+`step_finalize()` itself, not just a direct call to `prune()`).
+
+**Confirmed against the real Nextcloud test server, 2026-10-20**: a
+WebDAV `DELETE` lands in that Nextcloud account's own trashbin
+(`/remote.php/dav/trashbin/<user>/trash/`), not permanent erasure —
+verified live by deleting a probe file and finding it there via
+PROPFIND. A retention-pruned backup is therefore recoverable from the
+Nextcloud side (by that account, or a Nextcloud admin) for however
+long that server's trashbin retention/quota policy keeps it — a
+server-side setting this plugin has no visibility into or control
+over. Meaningfully reduces the blast radius of a mistaken or malicious
+`retention_count` setting (see `docs/threat-model.md` T13), but don't
+rely on this as the only safety net: a server configured with trashbin
+disabled, or one whose retention window has already passed, has none
+of this protection.
 
 ## Disk space
 
