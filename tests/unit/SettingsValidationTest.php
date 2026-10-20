@@ -36,6 +36,32 @@ function test_rejects_missing_username() {
 	wpguard_assert( false === $result['ok'], 'missing username must be rejected' );
 }
 
+// Phase 2 (scheduling). The admin UI is always a <select> with a fixed
+// option list, so these cover: the field is omitted entirely (an older
+// stored option, or a non-UI caller), a valid choice, and tampering /
+// a future form mismatch -- none of these should ever hard-fail a save,
+// since scheduling is optional and must degrade to the safe default.
+function test_schedule_defaults_to_disabled_when_missing() {
+	$GLOBALS['__wpguard_test_options'] = array();
+	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'pw' ) );
+	wpguard_assert( true === $result['ok'], 'save without a schedule field must still succeed' );
+	wpguard_assert_equals( 'disabled', Settings::get_schedule(), 'an omitted schedule field must default to disabled' );
+}
+
+function test_accepts_valid_schedule_value() {
+	$GLOBALS['__wpguard_test_options'] = array();
+	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'pw', 'schedule' => 'weekly' ) );
+	wpguard_assert( true === $result['ok'], 'a valid schedule value must be accepted' );
+	wpguard_assert_equals( 'weekly', Settings::get_schedule(), 'the valid schedule value must be stored and read back' );
+}
+
+function test_rejects_unrecognized_schedule_falls_back_to_disabled() {
+	$GLOBALS['__wpguard_test_options'] = array();
+	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'pw', 'schedule' => 'hourly-or-something-not-offered' ) );
+	wpguard_assert( true === $result['ok'], 'an unrecognized schedule value must not hard-fail the whole save' );
+	wpguard_assert_equals( 'disabled', Settings::get_schedule(), 'an unrecognized schedule value must clamp to the safe default, not be stored verbatim' );
+}
+
 // Vex audit H-02 regression coverage. redact_wp_config_contents() is a
 // pure string transform (no WP functions), safe to test directly.
 function test_redact_wp_config_strips_credential_constants() {
@@ -83,6 +109,9 @@ return array(
 	'test_rejects_folder_traversal',
 	'test_blank_app_password_keeps_existing_value',
 	'test_rejects_missing_username',
+	'test_schedule_defaults_to_disabled_when_missing',
+	'test_accepts_valid_schedule_value',
+	'test_rejects_unrecognized_schedule_falls_back_to_disabled',
 	'test_redact_wp_config_strips_credential_constants',
 	'test_redact_wp_config_known_gap_const_syntax_not_caught',
 	'test_locked_app_password_purges_stored_wp_options_value',

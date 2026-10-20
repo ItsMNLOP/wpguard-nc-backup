@@ -20,6 +20,14 @@ class Settings {
 	const APP_PW_CONST  = 'WPGUARD_NC_APP_PASSWORD';
 	const CA_BUNDLE_CONST = 'WPGUARD_NC_CA_BUNDLE';
 
+	// Phase 2 (scheduling): a plain WP-Cron recurrence name, reused
+	// directly as both the stored setting value and the schedule's
+	// registered name (see register_weekly_schedule() in the main
+	// plugin file). 'disabled' means no recurring event at all --
+	// chosen as the default so activating or updating the plugin never
+	// silently starts recurring jobs an admin didn't ask for.
+	const SCHEDULE_CHOICES = array( 'disabled', 'daily', 'weekly' );
+
 	/** Raw stored option (excludes constant-overridden fields' stored value when locked). */
 	public static function get_all(): array {
 		$stored = get_option( self::OPTION_KEY, array() );
@@ -32,8 +40,14 @@ class Settings {
 			'app_password'   => '',
 			'remote_folder'  => '',
 			'ca_bundle_path' => '',
+			'schedule'       => 'disabled',
 		);
 		return array_merge( $defaults, $stored );
+	}
+
+	public static function get_schedule(): string {
+		$value = (string) self::get_all()['schedule'];
+		return in_array( $value, self::SCHEDULE_CHOICES, true ) ? $value : 'disabled';
 	}
 
 	public static function is_app_password_locked(): bool {
@@ -142,6 +156,13 @@ class Settings {
 				}
 			}
 		}
+
+		// Always a <select> with a fixed option list in the admin UI, so an
+		// unrecognized value (tampering, or a future form change missed
+		// here) falls back to the safe default rather than erroring the
+		// whole save.
+		$schedule = isset( $input['schedule'] ) ? (string) $input['schedule'] : 'disabled';
+		$clean['schedule'] = in_array( $schedule, self::SCHEDULE_CHOICES, true ) ? $schedule : 'disabled';
 
 		if ( ! empty( $errors ) ) {
 			return array( 'ok' => false, 'errors' => $errors );

@@ -57,9 +57,13 @@ class Admin {
 			'app_password'   => isset( $_POST['app_password'] ) ? wp_unslash( $_POST['app_password'] ) : '',
 			'remote_folder'  => isset( $_POST['remote_folder'] ) ? wp_unslash( $_POST['remote_folder'] ) : '',
 			'ca_bundle_path' => isset( $_POST['ca_bundle_path'] ) ? wp_unslash( $_POST['ca_bundle_path'] ) : '',
+			'schedule'       => isset( $_POST['schedule'] ) ? sanitize_text_field( wp_unslash( $_POST['schedule'] ) ) : 'disabled',
 		);
 		$result = Settings::save( $input );
 		if ( $result['ok'] ) {
+			// Phase 2 (scheduling): apply a schedule change immediately
+			// rather than waiting for the next page load to reconcile it.
+			sync_scheduled_backup();
 			wp_send_json_success( array( 'message' => __( 'Settings saved.', 'wpguard-nc-backup' ) ) );
 		} else {
 			wp_send_json_error( array( 'message' => __( 'Please fix the errors below.', 'wpguard-nc-backup' ), 'errors' => $result['errors'] ) );
@@ -213,6 +217,17 @@ class Admin {
 						<p class="description"><?php esc_html_e( 'Only for a private CA you operate (e.g. self-hosted Nextcloud). Leave blank for a normal publicly trusted certificate — this never weakens TLS verification, it only adds a trusted root.', 'wpguard-nc-backup' ); ?></p>
 					</td>
 				</tr>
+				<tr>
+					<th><label for="wpguard_nc_schedule"><?php esc_html_e( 'Automatic backup schedule', 'wpguard-nc-backup' ); ?></label></th>
+					<td>
+						<select id="wpguard_nc_schedule">
+							<option value="disabled" <?php selected( $settings['schedule'], 'disabled' ); ?>><?php esc_html_e( 'Disabled — manual only', 'wpguard-nc-backup' ); ?></option>
+							<option value="daily" <?php selected( $settings['schedule'], 'daily' ); ?>><?php esc_html_e( 'Daily', 'wpguard-nc-backup' ); ?></option>
+							<option value="weekly" <?php selected( $settings['schedule'], 'weekly' ); ?>><?php esc_html_e( 'Weekly', 'wpguard-nc-backup' ); ?></option>
+						</select>
+						<p class="description"><?php esc_html_e( 'Relies on WP-Cron, same as the manual backup fallback — only fires on site traffic (see Operations docs). Skips a run rather than overlapping if a backup is still genuinely in progress.', 'wpguard-nc-backup' ); ?></p>
+					</td>
+				</tr>
 			</table>
 			<p>
 				<button type="button" class="button button-primary" id="wpguard_nc_save"><?php esc_html_e( 'Save Settings', 'wpguard-nc-backup' ); ?></button>
@@ -247,7 +262,8 @@ class Admin {
 					nextcloud_user: document.getElementById('wpguard_nc_user').value,
 					app_password: document.getElementById('wpguard_nc_pw').value,
 					remote_folder: document.getElementById('wpguard_nc_folder').value,
-					ca_bundle_path: document.getElementById('wpguard_nc_ca').value
+					ca_bundle_path: document.getElementById('wpguard_nc_ca').value,
+					schedule: document.getElementById('wpguard_nc_schedule').value
 				}).then(function(res){
 					document.getElementById('wpguard_nc_settings_result').textContent = res.data.message;
 				});

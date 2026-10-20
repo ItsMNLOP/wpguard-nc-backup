@@ -15,6 +15,13 @@ All notable changes to this project are documented here.
   site nobody visits for a while. Never races a job whose advisory lock
   is genuinely still held by a live process. Pending Vex security
   sign-off before this is considered shippable.
+- Automatic backup scheduling: a Disabled/Daily/Weekly dropdown on the
+  settings page, backed by a real recurring WP-Cron event kept in sync
+  with the stored setting. Reuses `create_job()`'s JOB-05 stale-lock
+  reap, so a scheduled run clears a genuinely abandoned previous job
+  before starting and skips rather than overlaps a healthy one still in
+  progress. Defaults to Disabled so no plugin update or activation ever
+  silently starts recurring jobs. Pending Vex sign-off.
 
 ## [1.0.0] — 2026-10-20 (Phase 1 MVP complete)
 

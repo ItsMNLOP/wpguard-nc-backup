@@ -1,5 +1,25 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — automatic scheduling shipped, 2026-10-20
+
+Second Phase 2 item complete: a Disabled/Daily/Weekly dropdown on the
+settings page, backed by a real recurring WP-Cron event
+(`wpguard_nc_scheduled_backup`) kept in sync with the stored setting by
+`sync_scheduled_backup()` — called on boot and immediately after a
+settings save. 'Weekly' registered as a real custom cron recurrence
+(604800s) since WP core doesn't ship one. The handler reuses
+`create_job()` as-is, so a scheduled run gets the JOB-05 stale-lock
+reap for free and correctly skips rather than overlaps a healthy job
+still in progress. Default is Disabled (no silent auto-start on
+activation/update). New unit tests (3, in `SettingsValidationTest.php`)
+and a new E2E regression test `tests/e2e/run-e2e-scheduling.sh`
+(disabled→daily→weekly→disabled reschedule proven against the real
+WP-Cron array; run_scheduled_backup() starts a job when none is
+running and correctly skips when one already is) — both passed. 31/31
+unit tests and the full backup/restore E2E drill re-verified green
+afterward. Full detail: `docs/operations.md` ("Automatic scheduling").
+Not yet sent to Vex — see CHANGELOG.md "Unreleased".
+
 ## Phase 2 progress — JOB-05 automatic lock-expiry shipped, 2026-10-20
 
 First Phase 2 item complete: `Job_Orchestrator::reap_stale_lock()`

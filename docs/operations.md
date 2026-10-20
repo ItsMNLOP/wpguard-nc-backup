@@ -99,6 +99,28 @@ low-traffic site. If no one visits the site and the admin closes the tab
 mid-backup, the job can stall indefinitely in `running`. Real server-cron
 or WP-CLI-driven scheduling is Phase 2 (JOB-02).
 
+## Automatic scheduling (Phase 2, 2026-10-20)
+
+Settings page has an "Automatic backup schedule" dropdown: Disabled
+(default), Daily, Weekly. Backed by a real recurring WP-Cron event
+(`wpguard_nc_scheduled_backup`) reconciled against the stored setting
+by `sync_scheduled_backup()` (`wpguard-nc-backup.php`) — called on every
+boot and immediately after a settings save, so a schedule change takes
+effect without waiting for the next page load. 'Weekly' is a custom
+recurrence registered via the `cron_schedules` filter (WP core only
+ships hourly/twicedaily/daily).
+
+The handler, `run_scheduled_backup()`, reuses `Job_Orchestrator::create_job()`
+as-is — including its JOB-05 stale-lock reap — so a scheduled run
+automatically clears out a genuinely abandoned previous job before
+starting, and correctly skips (no-op) rather than overlapping if a
+healthy backup is still legitimately in progress. Same WP-Cron
+pseudo-cron limitation as everything else here (only fires on site
+traffic) until JOB-02 (real server-cron) lands. Default is Disabled
+specifically so activating or updating the plugin never silently starts
+recurring jobs an admin didn't ask for. Regression test:
+`tests/e2e/run-e2e-scheduling.sh`.
+
 ## Disk space
 
 No preflight disk-space check ships in MVP (NFR-10 mentions it; deferred).
