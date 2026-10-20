@@ -1,5 +1,24 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — JOB-05 automatic lock-expiry shipped, 2026-10-20
+
+First Phase 2 item complete: `Job_Orchestrator::reap_stale_lock()`
+automatically marks a genuinely abandoned job `failed` once its
+checkpoint has gone untouched past a threshold (600s default,
+filterable), without racing a job whose advisory lock is actually still
+held by a live process. Wired into `create_job()` (applies the instant
+anyone next tries to back up) plus a recurring hourly WP-Cron safety
+net. The existing manual "Cancel / Reset" button stays as an immediate
+human override. New regression test
+`tests/e2e/run-e2e-stale-lock-recovery.sh` (fresh job left alone; stale
+job reaped; a job whose lock is genuinely held by a real concurrent
+process correctly left alone however stale its clock looks, then reaped
+once that lock frees up) — passed against the live disposable stack.
+28/28 unit tests and the full backup/restore E2E drill re-verified green
+afterward (this touches `create_job()`, the entry point for every
+backup). Full detail: `docs/operations.md` ("Stale-lock recovery").
+Not yet sent to Vex for sign-off — see CHANGELOG.md "Unreleased".
+
 ## Scope decision — multisite parked, 2026-10-20
 
 Multisite support pulled off the active Phase 2 list and parked in

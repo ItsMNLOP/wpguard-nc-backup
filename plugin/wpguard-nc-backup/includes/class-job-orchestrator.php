@@ -36,6 +36,17 @@ class Job_Orchestrator {
 	// max_execution_time.
 	const STEP_TIME_BUDGET_SECONDS = 5.0;
 
+	// JOB-05 (Phase 2): a job whose checkpoint hasn't been touched in this
+	// long is treated as abandoned (PHP killed, container restarted, both
+	// the browser tab and the WP-Cron fallback failing to pick it back
+	// up) rather than genuinely in-progress. Set comfortably above the
+	// worst-case single advance() call documented in operations.md (an
+	// upload_parts retry loop can legitimately run up to ~30s x 4 retries
+	// = ~120s before returning), with headroom for a slow shared-hosting
+	// request. Filterable since "worst-case single step" varies by site
+	// size and hosting.
+	const STALE_LOCK_SECONDS = 600;
+
 	public static function tmp_dir_for( string $backup_id ): string {
 		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/' . $backup_id . '/';
 	}
@@ -56,6 +67,7 @@ class Job_Orchestrator {
 	}
 
 	public static function create_job(): string {
+		self::reap_stale_lock();
 		if ( Job_Store::has_running_job() ) {
 			return '';
 		}
@@ -67,6 +79,61 @@ class Job_Orchestrator {
 		return $job_id;
 	}
 
+	/**
+	 * JOB-05 automatic recovery: replaces having to wait for an admin to
+	 * notice a stuck job and click "Cancel / Reset" (still available,
+	 * kept for an immediate human override). Called from create_job()
+	 * so the fix applies the moment anyone next tries to back up --
+	 * no admin action and no real server-cron (JOB-02, separate item)
+	 * required -- and also from a recurring WP-Cron safety-net event
+	 * (see wpguard-nc-backup.php) so a stuck job doesn't sit untouched
+	 * indefinitely just because nobody happens to press "Back Up Now".
+	 *
+	 * Uses the same try_lock()/release_lock() pair as cancel() (Vex audit
+	 * H-01's primitive) so this can never race a genuinely active
+	 * advance() call: if the lock is held, the process is alive and
+	 * working regardless of how old updated_at looks, and we correctly
+	 * leave it alone.
+	 *
+	 * @return array|null The reaped job row (now 'failed'), or null if
+	 *   there was nothing to reap.
+	 */
+	public static function reap_stale_lock(): ?array {
+		$job = Job_Store::get_running();
+		if ( null === $job ) {
+			return null;
+		}
+		$threshold = (int) apply_filters( 'wpguard_nc_stale_lock_seconds', self::STALE_LOCK_SECONDS );
+		$age = time() - strtotime( $job['updated_at'] . ' UTC' );
+		if ( $age < $threshold ) {
+			return null;
+		}
+		if ( ! Job_Store::try_lock( $job['job_id'] ) ) {
+			// Lock is genuinely held right now -- a live process is
+			// working, regardless of how stale updated_at looks. Don't
+			// race it; let it finish or fail on its own.
+			return null;
+		}
+		try {
+			$fresh = Job_Store::get( $job['job_id'] );
+			if ( null === $fresh || in_array( $fresh['status'], array( 'verified', 'failed' ), true ) ) {
+				// Finished (or was already handled) between our read
+				// and acquiring the lock.
+				return null;
+			}
+			return self::fail(
+				$job['job_id'],
+				$fresh['step'],
+				sprintf(
+					'Automatically recovered: no progress for over %d seconds, likely an interrupted process. Previous backups are untouched.',
+					$threshold
+				)
+			);
+		} finally {
+			Job_Store::release_lock( $job['job_id'] );
+		}
+	}
+
 	private static function logger(): Logger {
 		return new Logger( array( Settings::get_app_password() ) );
 	}
@@ -76,15 +143,16 @@ class Job_Orchestrator {
 	}
 
 	/**
-	 * Manual admin override for JOB-05 (no stale-lock recovery in MVP): a
-	 * genuinely interrupted job -- WP-Cron fallback never picked it up
-	 * (operations.md: pseudo-cron only fires on site traffic) -- stays
-	 * `running`/`queued`/`uploaded-unverified` forever and blocks every
-	 * future "Back Up Now" via Job_Store::has_running_job(). This doesn't
-	 * add the deferred Phase 2 lock-leasing/expiry system; it just gives
-	 * an administrator an explicit, auditable way to mark a stuck job
-	 * failed (same cleanup path as any other failure) instead of needing
-	 * direct DB access.
+	 * Manual admin override for JOB-05, kept alongside the automatic
+	 * stale-lock reaper (reap_stale_lock()) below: a genuinely interrupted
+	 * job -- WP-Cron fallback never picked it up (operations.md:
+	 * pseudo-cron only fires on site traffic) -- would otherwise stay
+	 * `running`/`queued`/`uploaded-unverified` and block every future
+	 * "Back Up Now" via Job_Store::has_running_job(). The automatic reaper
+	 * now clears this on its own once a job is stale enough; this button
+	 * stays as an explicit, immediate, auditable human override for when
+	 * an admin doesn't want to wait out the staleness threshold, or wants
+	 * to cancel a job that's healthy but no longer wanted.
 	 *
 	 * @return array Updated job row, or the job unchanged if it was
 	 *   already terminal, or {status: not_found}.

@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] — Phase 2, in progress
+
+### Added
+- Automatic stale-lock recovery (JOB-05): a genuinely abandoned backup
+  job is now marked `failed` on its own once its checkpoint has gone
+  untouched past a threshold (600s default, filterable via
+  `wpguard_nc_stale_lock_seconds`), instead of requiring an admin to
+  notice and click "Cancel / Reset Stuck Job" (which remains available
+  as an immediate manual override). Applied the moment anyone next
+  tries to back up, plus a recurring hourly WP-Cron safety net for a
+  site nobody visits for a while. Never races a job whose advisory lock
+  is genuinely still held by a live process. Pending Vex security
+  sign-off before this is considered shippable.
+
 ## [1.0.0] — 2026-10-20 (Phase 1 MVP complete)
 
 Two full independent security audits (SOP-023), both **CLEAR TO SHIP**,

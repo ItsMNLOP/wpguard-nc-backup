@@ -39,10 +39,20 @@ spl_autoload_register(
 );
 
 register_activation_hook( __FILE__, __NAMESPACE__ . '\\activate' );
+register_deactivation_hook( __FILE__, __NAMESPACE__ . '\\deactivate' );
+
+const STALE_LOCK_CHECK_HOOK = 'wpguard_nc_stale_lock_check';
 
 function activate() {
 	Job_Store::install_or_upgrade_schema();
 	Settings::ensure_site_id();
+	if ( ! wp_next_scheduled( STALE_LOCK_CHECK_HOOK ) ) {
+		wp_schedule_event( time(), 'hourly', STALE_LOCK_CHECK_HOOK );
+	}
+}
+
+function deactivate() {
+	wp_clear_scheduled_hook( STALE_LOCK_CHECK_HOOK );
 }
 
 add_action( 'plugins_loaded', __NAMESPACE__ . '\\boot' );
@@ -55,6 +65,15 @@ function boot() {
 	}
 
 	add_action( 'wpguard_nc_cron_advance', __NAMESPACE__ . '\\cron_advance' );
+
+	// JOB-05 (Phase 2) safety net: Job_Orchestrator::create_job() already
+	// reaps a stale job the moment anyone next tries to back up, but a
+	// site that nobody visits for a while would otherwise leave a stuck
+	// job sitting untouched until someone does. This recurring hourly
+	// event (itself still WP-Cron pseudo-cron -- fires on the next
+	// traffic after it's due, same limitation as the advance-chain
+	// fallback) clears it proactively instead of waiting for that.
+	add_action( STALE_LOCK_CHECK_HOOK, __NAMESPACE__ . '\\Job_Orchestrator::reap_stale_lock' );
 
 	if ( defined( 'WP_CLI' ) && WP_CLI ) {
 		\WP_CLI::add_command( 'wpguard-nc-backup', new CLI_Command() );

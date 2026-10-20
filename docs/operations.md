@@ -38,27 +38,46 @@ Per-job structured log (last 200 entries), redacted at write time
 `wp wpguard-nc-backup status`. No secrets should ever appear there — this
 is tested (`tests/unit/LoggerRedactionTest.php`), not just asserted.
 
-## No stale-lock recovery (disclosed, not fixed in MVP — found live during E2E testing)
+## Stale-lock recovery (JOB-05) — automatic, plus a manual override
 
 JOB-01 requires preventing overlapping backups, implemented via
 `Job_Store::has_running_job()` refusing a new job while one is
-`queued`/`running`. MVP has no corresponding **automatic expiry**: JOB-05
-("lock leasing with expiration/recovery") is explicitly Phase 2/[H]. A job
-that is genuinely interrupted (PHP killed, container restarted, browser
-tab closed with WP-Cron also failing to pick it up — the real-world case
-this was found through, both during this build's own E2E testing and
-live on a real site) would otherwise stay `running` forever and block
-every future "Back Up Now".
+`queued`/`running`/`uploaded-unverified`. A job that is genuinely
+interrupted (PHP killed, container restarted, browser tab closed with
+WP-Cron also failing to pick it up — the real-world case this was first
+found through, both during this build's own E2E testing and live on a
+real site) would otherwise stay stuck forever and block every future
+"Back Up Now".
 
-**Fixed 2026-10-19, manual (not automatic) recovery**: the settings page
-has a **Cancel / Reset Stuck Job** button (`Job_Orchestrator::cancel()`),
-capability/nonce-gated like every other admin action, that marks a
-non-terminal job `failed` (same cleanup path as any other failure —
-nothing already uploaded to Nextcloud is touched) so a new backup can
-start, without needing direct DB access. This is not the deferred Phase 2
-automatic lock-leasing/expiry system — it's an explicit, auditable,
-human-triggered override for exactly this situation. Regression test:
-`tests/e2e/run-e2e-cancel-job.sh`.
+**Automatic recovery (Phase 2, 2026-10-20)**: `Job_Orchestrator::reap_stale_lock()`
+marks a job `failed` if its checkpoint hasn't been touched in over
+`STALE_LOCK_SECONDS` (600s default, filterable via
+`wpguard_nc_stale_lock_seconds`) — comfortably above the worst-case
+single `advance()` call (an `upload_parts` retry loop can legitimately
+run up to ~120s). It uses the same `try_lock()`/`release_lock()` pair as
+`cancel()` (Vex audit H-01's primitive), so it can never race a
+genuinely active process: if the lock is held, the job is left alone
+regardless of how stale its timestamp looks. Called from
+`create_job()` — so the fix applies the instant anyone next tries to
+back up, no admin action and no real server-cron (JOB-02, separate
+item) required — and from a recurring hourly WP-Cron event
+(`wpguard_nc_stale_lock_check`) as a safety net for a site nobody
+visits for a while. That recurring event is still WP-Cron pseudo-cron
+under the hood (fires on the next traffic after it's due), so it
+doesn't need real server-cron to exist, but inherits the same
+"only fires on site traffic" limitation as everything else here until
+JOB-02 lands. Regression test: `tests/e2e/run-e2e-stale-lock-recovery.sh`
+(fresh job left alone; aged-past-threshold job reaped; a job whose lock
+is genuinely held by a real concurrent process is correctly left alone
+however stale its clock looks, then reaped once that lock frees up).
+
+**Manual override, kept** (2026-10-19): the settings page also has a
+**Cancel / Reset Stuck Job** button (`Job_Orchestrator::cancel()`),
+capability/nonce-gated like every other admin action, for an admin who
+doesn't want to wait out the staleness threshold, or wants to cancel a
+job that's healthy but no longer wanted. Same cleanup path as any other
+failure — nothing already uploaded to Nextcloud is touched. Regression
+test: `tests/e2e/run-e2e-cancel-job.sh`.
 
 **Related advisory (Vex re-audit, 2026-10-19, LOW-R2):** the H-01 fix
 (`Job_Store::try_lock()`/`release_lock()`, a MySQL `GET_LOCK`/

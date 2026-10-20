@@ -120,6 +120,24 @@ class Job_Store {
 	}
 
 	/**
+	 * JOB-05 (Phase 2): the single non-terminal job, if one exists — the
+	 * same row has_running_job() is counting. Used by the automatic
+	 * stale-lock reaper to find a candidate without a second COUNT query.
+	 *
+	 * @return array|null
+	 */
+	public static function get_running(): ?array {
+		global $wpdb;
+		$row = $wpdb->get_row( "SELECT * FROM " . self::table_name() . " WHERE status IN ('queued','running','uploaded-unverified') ORDER BY created_at ASC LIMIT 1", ARRAY_A );
+		if ( ! $row ) {
+			return null;
+		}
+		$row['checkpoint'] = json_decode( (string) $row['checkpoint'], true ) ?: array();
+		$row['log'] = json_decode( (string) $row['log'], true ) ?: array();
+		return $row;
+	}
+
+	/**
 	 * Non-blocking MySQL advisory lock keyed by job_id (Vex audit H-01):
 	 * AJAX polling and the WP-Cron fallback can both call
 	 * Job_Orchestrator::advance() for the same job in overlapping
