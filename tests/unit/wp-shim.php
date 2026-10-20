@@ -9,6 +9,9 @@
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }
+if ( ! defined( 'WPGUARD_NC_DIR' ) ) {
+	define( 'WPGUARD_NC_DIR', ABSPATH . 'wp-content/plugins/wpguard-nc-backup/' );
+}
 if ( ! defined( 'WPGUARD_NC_FORMAT_VERSION' ) ) {
 	define( 'WPGUARD_NC_FORMAT_VERSION', 2 );
 }

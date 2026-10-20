@@ -55,6 +55,26 @@ All notable changes to this project are documented here.
   site, restored onto disposable infrastructure only. Pending Vex
   sign-off before this is considered shippable — the highest-stakes
   feature in this project, reviewed accordingly.
+  - Vex's full audit of the first build came back BLOCKED (4 HIGH, 3
+    MEDIUM, 4 LOW); all fixed — path-exclusion normalization (a
+    bypass via `./wp-config.php` or a doubled separator into the
+    plugin's own directory), externalizing large per-job state out of
+    the DB-backed checkpoint into disk-backed blobs with cursor-based
+    consumption (closing a stale-checkpoint re-execution risk against
+    a destructive step), a WP-Cron fallback for the restore job
+    (backups already had one, restore didn't), temporarily isolating
+    `active_plugins` to just WPGuard during the file-apply phase so a
+    third-party plugin mid-replacement can't fatal the next AJAX/cron
+    batch's fresh WordPress bootstrap, a quote-aware SQL identifier
+    rewrite (plain `str_replace` could have corrupted a string literal
+    value), and a randomized/auto-cleaned upload-staging directory
+    (the old fixed path exposed a DB dump + `wp-config.php`
+    indefinitely on a misconfigured server). New
+    `tests/e2e/run-e2e-restore-ajax-safety.sh` directly proves the
+    fresh-bootstrap-per-batch fix by driving a real restore through
+    ~12 separate processes against a plugin engineered to fatal on
+    exactly that gap. Full unit suite and entire E2E suite re-run,
+    zero regressions.
 - Incremental file backups: an opt-in "Incremental file backups"
   setting (default off) that skips re-archiving/re-uploading a file
   whose size and modified time match the previous chain backup,

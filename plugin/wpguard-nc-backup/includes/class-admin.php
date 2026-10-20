@@ -214,14 +214,14 @@ class Admin {
 			return;
 		}
 
-		$holding = Restore_Orchestrator::upload_dir();
-		if ( is_dir( $holding ) ) {
-			$this->rrmdir( $holding );
-		}
+		// Vex audit MEDIUM-UPLOAD-1: a fresh, random-token subdirectory
+		// per upload (never the fixed, guessable path this used to be),
+		// deleted by Restore_Orchestrator once its content has been
+		// staged into the job's own tmp dir (or on an earlier failure)
+		// -- see Restore_Orchestrator::new_upload_token()'s docblock.
+		$token = Restore_Orchestrator::new_upload_token();
+		$holding = Restore_Orchestrator::upload_dir_for_token( $token );
 		wp_mkdir_p( $holding );
-		$index = $holding . 'index.php';
-		file_put_contents( $index, "<?php\n// Silence is golden.\n" );
-		file_put_contents( $holding . '.htaccess', "Require all denied\n" );
 
 		$zip = new \ZipArchive();
 		if ( true !== $zip->open( $tmp_upload ) ) {
@@ -250,18 +250,18 @@ class Admin {
 		}
 		$zip->close();
 
-		wp_send_json_success( array( 'message' => __( 'Bundle uploaded and extracted; ready to verify.', 'wpguard-nc-backup' ) ) );
-	}
+		// Vex audit LOW-HTACCESS-1: a legitimate backup bundle contains
+		// its own .htaccess (Inventory::enumerate() always captures it),
+		// which the loop above just wrote over the access guard with the
+		// SITE's own rewrite rules, not a deny-all. Rewritten last,
+		// unconditionally, regardless of what the bundle itself contained.
+		file_put_contents( $holding . 'index.php', "<?php\n// Silence is golden.\n" );
+		file_put_contents( $holding . '.htaccess', "Require all denied\n" );
 
-	private function rrmdir( string $dir ): void {
-		if ( ! is_dir( $dir ) ) {
-			return;
-		}
-		$items = new \RecursiveIteratorIterator( new \RecursiveDirectoryIterator( $dir, \FilesystemIterator::SKIP_DOTS ), \RecursiveIteratorIterator::CHILD_FIRST );
-		foreach ( $items as $item ) {
-			$item->isDir() ? @rmdir( $item->getPathname() ) : @unlink( $item->getPathname() );
-		}
-		@rmdir( $dir );
+		wp_send_json_success( array(
+			'message'      => __( 'Bundle uploaded and extracted; ready to verify.', 'wpguard-nc-backup' ),
+			'upload_token' => $token,
+		) );
 	}
 
 	/** Phase 2 (one-click restore): starts the restore job itself; everything before this was read-only prep. */
@@ -273,17 +273,19 @@ class Admin {
 		$confirm = ! empty( $_POST['confirm_url_mismatch'] );
 
 		if ( 'upload' === $source_type ) {
-			if ( ! file_exists( Restore_Orchestrator::upload_dir() . 'manifest.json' ) ) {
+			$upload_token = isset( $_POST['upload_token'] ) ? sanitize_text_field( wp_unslash( $_POST['upload_token'] ) ) : '';
+			$holding = Restore_Orchestrator::upload_dir_for_token( $upload_token );
+			if ( '' === $holding || ! file_exists( $holding . 'manifest.json' ) ) {
 				wp_send_json_error( array( 'message' => __( 'Upload a backup bundle first.', 'wpguard-nc-backup' ) ) );
 				return;
 			}
-			$manifest = json_decode( (string) file_get_contents( Restore_Orchestrator::upload_dir() . 'manifest.json' ), true );
+			$manifest = json_decode( (string) file_get_contents( $holding . 'manifest.json' ), true );
 			$backup_id = is_array( $manifest ) ? (string) ( $manifest['backup_id'] ?? '' ) : '';
 			if ( '' === $backup_id ) {
 				wp_send_json_error( array( 'message' => __( 'Uploaded bundle\'s manifest.json has no backup_id.', 'wpguard-nc-backup' ) ) );
 				return;
 			}
-			$source = array( 'type' => 'upload', 'upload_dir' => Restore_Orchestrator::upload_dir() );
+			$source = array( 'type' => 'upload', 'upload_dir' => $holding );
 		} else {
 			$backup_id = isset( $_POST['backup_id'] ) ? sanitize_text_field( wp_unslash( $_POST['backup_id'] ) ) : '';
 			if ( '' === $backup_id ) {
@@ -298,6 +300,10 @@ class Admin {
 			wp_send_json_error( array( 'message' => __( 'A backup or restore is already running.', 'wpguard-nc-backup' ) ) );
 			return;
 		}
+		// Vex audit HIGH-AJAX-1: backups get a WP-Cron fallback so a
+		// closed browser tab doesn't strand them; restore had none at
+		// all until now, the one place a stranded job matters most.
+		wp_schedule_single_event( time() + 5, 'wpguard_nc_cron_advance', array( $job_id ) );
 		wp_send_json_success( array( 'job_id' => $job_id ) );
 	}
 
@@ -456,6 +462,7 @@ class Admin {
 			var nonce = <?php echo wp_json_encode( $nonce ); ?>;
 			var currentJobId = null;
 			var currentRestoreJobId = null;
+			var currentUploadToken = null;
 
 			function post(action, extra) {
 				var body = new URLSearchParams(Object.assign({ action: action, nonce: nonce }, extra || {}));
@@ -502,6 +509,13 @@ class Admin {
 					if (job.status !== 'verified' && job.status !== 'failed') {
 						setTimeout(function(){ pollJob(jobId); }, 500);
 					}
+				}).catch(function(){
+					// A single failed poll (network blip, a transient
+					// 5xx) must not silently stop polling forever -- the
+					// WP-Cron fallback keeps the job itself moving
+					// regardless; this just needs to keep checking.
+					document.getElementById('wpguard_nc_job_status').textContent = 'Network error polling for status -- the backup may still be running via WP-Cron. Retrying...';
+					setTimeout(function(){ pollJob(jobId); }, 2000);
 				});
 			}
 
@@ -517,6 +531,18 @@ class Admin {
 					if (job.status !== 'verified' && job.status !== 'failed') {
 						setTimeout(function(){ pollRestoreJob(jobId); }, 500);
 					}
+				}).catch(function(){
+					// Vex audit HIGH-AJAX-1: a single failed poll (a
+					// transient error response, a timed-out request --
+					// plausible mid-restore, when apply_files can
+					// legitimately take a while) must not silently stop
+					// polling forever. The WP-Cron fallback keeps the
+					// restore itself moving regardless; this just needs
+					// to keep checking rather than leave the admin
+					// looking at a frozen status box with no indication
+					// anything is still happening.
+					document.getElementById('wpguard_nc_restore_status').textContent = 'Network error polling for status -- the restore may still be running via WP-Cron. Retrying...';
+					setTimeout(function(){ pollRestoreJob(jobId); }, 2000);
 				});
 			}
 
@@ -616,6 +642,9 @@ class Admin {
 					.then(function(r){ return r.json(); })
 					.then(function(res){
 						document.getElementById('wpguard_nc_restore_upload_result').textContent = res.data.message;
+						if (res.success) {
+							currentUploadToken = res.data.upload_token;
+						}
 					});
 			});
 
@@ -638,6 +667,12 @@ class Admin {
 						return;
 					}
 					payload.backup_id = backupId;
+				} else {
+					if (!currentUploadToken) {
+						document.getElementById('wpguard_nc_restore_status').textContent = 'Upload a backup bundle first.';
+						return;
+					}
+					payload.upload_token = currentUploadToken;
 				}
 				if (!window.confirm('This will overwrite this site\'s current content and database with the chosen backup, in place. Continue?')) {
 					return;

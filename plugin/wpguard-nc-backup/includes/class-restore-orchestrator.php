@@ -48,6 +48,45 @@ class Restore_Orchestrator {
 	}
 
 	/**
+	 * Vex audit HIGH-CHECKPOINT-1: large, per-job data (the manifest,
+	 * the full remaining-file/remaining-statement lists) must never
+	 * live inside the checkpoint column itself -- for a real site with
+	 * thousands of files and a multi-megabyte SQL dump, that column
+	 * can exceed a real MySQL server's `max_allowed_packet` (4MB on a
+	 * stock MySQL 5.7, well within reach), and `Job_Store::update()`
+	 * failing silently there means the NEXT call reloads the LAST
+	 * successfully persisted (stale) checkpoint and re-executes
+	 * whatever it thinks it hasn't done yet -- for apply_one_file()
+	 * specifically, re-executing "move the live file into the rollback
+	 * dir, then overwrite it" a second time overwrites that same
+	 * rollback copy with the file's OWN NEW content, destroying the
+	 * only record of what was there before. Kept on local disk
+	 * instead (bounded only by ordinary filesystem limits, not a
+	 * single database row), with the checkpoint holding only a
+	 * filename and a small cursor/count.
+	 */
+	private static function blob_path( string $job_id, string $name ): string {
+		return self::tmp_dir_for( $job_id ) . $name . '.json';
+	}
+
+	private static function write_blob( string $job_id, string $name, $data ): void {
+		file_put_contents( self::blob_path( $job_id, $name ), wp_json_encode( $data ) );
+	}
+
+	private static function read_blob( string $job_id, string $name ) {
+		$path = self::blob_path( $job_id, $name );
+		if ( ! file_exists( $path ) ) {
+			return null;
+		}
+		$decoded = json_decode( (string) file_get_contents( $path ), true );
+		return is_array( $decoded ) ? $decoded : null;
+	}
+
+	private static function get_manifest( string $job_id ): array {
+		return self::read_blob( $job_id, 'manifest' ) ?? array();
+	}
+
+	/**
 	 * Two hard exclusions, never touched by a restore under any
 	 * circumstance -- neither quarantined nor overwritten, regardless
 	 * of what the backup being restored contains for either path:
@@ -83,12 +122,74 @@ class Restore_Orchestrator {
 		return ltrim( substr( $plugin_dir, strlen( $abspath ) ), '/' ) . '/';
 	}
 
-	private static function is_never_restored_path( string $relative ): bool {
-		return 'wp-config.php' === $relative || 0 === strpos( $relative, self::own_plugin_dir_prefix() );
+	/**
+	 * Vex audit HIGH-PATH-1: a path like './wp-config.php' or
+	 * 'wp-content//plugins/wpguard-nc-backup/evil.php' resolves to
+	 * exactly the protected target at the filesystem layer (PHP/the OS
+	 * both treat '.' segments and doubled separators as no-ops), but
+	 * neither matched the plain string comparison below -- meaning a
+	 * crafted manifest or crafted upload bundle could have named a
+	 * path that bypassed this exclusion while still landing on the
+	 * exact file it exists to protect. Normalizing before comparing
+	 * closes this at the earliest point (when target_files/quarantine
+	 * candidates are first built), not only relying on
+	 * Archive_Writer::is_path_safe()'s later, separate rejection of
+	 * the same segment shapes to fail the job safely as a backstop.
+	 */
+	private static function normalize_relative_path( string $relative ): string {
+		$parts = preg_split( '#[\\\\/]+#', $relative );
+		$normalized = array();
+		foreach ( $parts as $part ) {
+			if ( '' === $part || '.' === $part ) {
+				continue;
+			}
+			$normalized[] = $part;
+		}
+		return implode( '/', $normalized );
 	}
 
-	public static function upload_dir(): string {
-		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/' . self::UPLOAD_DIR_NAME . '/';
+	private static function is_never_restored_path( string $relative ): bool {
+		$relative = self::normalize_relative_path( $relative );
+		return 0 === strcasecmp( 'wp-config.php', $relative ) || 0 === strpos( $relative, self::own_plugin_dir_prefix() );
+	}
+
+	/**
+	 * Vex audit MEDIUM-UPLOAD-1: a fixed, guessable upload path with no
+	 * cleanup meant an uploaded bundle's database.sql.gz (full DB dump:
+	 * user password hashes, session tokens) and files.part-*.zip
+	 * (wp-config.php, including real DB credentials) sat at a
+	 * predictable URL indefinitely -- the .htaccess/index.php guard
+	 * only actually protects anything on Apache with AllowOverride
+	 * enabled; on Nginx (or Apache without it) the files are directly
+	 * web-servable to anyone who guesses the fixed path. A fresh,
+	 * random-token subdirectory per upload, deleted once its content
+	 * has been staged into the job's own tmp dir (or on failure before
+	 * that point), removes both the guessability and the indefinite
+	 * exposure window.
+	 */
+	public static function new_upload_token(): string {
+		return bin2hex( random_bytes( 16 ) );
+	}
+
+	public static function upload_dir_for_token( string $token ): string {
+		// Constrained to exactly what new_upload_token() produces --
+		// never built from anything request-supplied beyond that token
+		// string, so this can't be used to traverse elsewhere.
+		if ( ! preg_match( '/^[0-9a-f]{32}$/', $token ) ) {
+			return '';
+		}
+		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/' . self::UPLOAD_DIR_NAME . '/' . $token . '/';
+	}
+
+	public static function delete_upload_dir( string $dir ): void {
+		if ( '' === $dir || ! is_dir( $dir ) ) {
+			return;
+		}
+		$items = new \RecursiveIteratorIterator( new \RecursiveDirectoryIterator( $dir, \FilesystemIterator::SKIP_DOTS ), \RecursiveIteratorIterator::CHILD_FIRST );
+		foreach ( $items as $item ) {
+			$item->isDir() ? @rmdir( $item->getPathname() ) : @unlink( $item->getPathname() );
+		}
+		@rmdir( $dir );
 	}
 
 	private static function ensure_tmp_guarded( string $dir ): void {
@@ -118,6 +219,13 @@ class Restore_Orchestrator {
 	 * @return string New restore job_id, or '' if a backup or restore is already running.
 	 */
 	public static function create_restore_job( array $source, string $source_backup_id, bool $confirm_url_mismatch = false ): string {
+		// Vex audit LOW-RACE-1: create_job() (backups) reaps a stale
+		// lock before checking has_running_job() so an abandoned job
+		// doesn't block new work indefinitely; create_restore_job()
+		// had skipped this, so a stuck restore nobody manually
+		// cancelled would block every future backup AND restore until
+		// someone noticed.
+		Job_Orchestrator::reap_stale_lock();
 		if ( Job_Store::has_running_job() ) {
 			return '';
 		}
@@ -234,6 +342,25 @@ class Restore_Orchestrator {
 	private static function fail( string $job_id, string $step, string $message ): array {
 		$safe = self::logger()->redact( $message );
 		self::log( $job_id, $step, 'error', $safe );
+		// Vex audit HIGH-AJAX-2: if restore_apply_files already restricted
+		// `active_plugins` down to just this plugin (to stop any OTHER
+		// plugin's code -- genuinely restored to disk by this same job --
+		// from executing during an intermediate AJAX/cron bootstrap before
+		// the swap makes everything consistent again), a failure before
+		// the swap ever runs must restore the site's own real plugin list
+		// -- otherwise a failed restore attempt leaves every other plugin
+		// deactivated indefinitely.
+		$job = Job_Store::get( $job_id );
+		if ( null !== $job && isset( $job['checkpoint']['captured_active_plugins'] ) ) {
+			update_option( 'active_plugins', $job['checkpoint']['captured_active_plugins'] );
+		}
+		// A failure before restore_acquire finished copying an uploaded
+		// bundle's content into this job's own tmp dir must not leave
+		// that bundle's holding directory (full DB dump, wp-config.php)
+		// sitting around indefinitely either.
+		if ( null !== $job && 'upload' === ( $job['checkpoint']['source']['type'] ?? '' ) && ! empty( $job['checkpoint']['source']['upload_dir'] ) ) {
+			self::delete_upload_dir( $job['checkpoint']['source']['upload_dir'] );
+		}
 		Job_Store::update( $job_id, array( 'status' => 'failed', 'error' => $safe ) );
 		return Job_Store::get( $job_id );
 	}
@@ -247,7 +374,7 @@ class Restore_Orchestrator {
 		$cp = $job['checkpoint'];
 		$tmp = self::tmp_dir_for( $job_id );
 
-		if ( ! isset( $cp['manifest'] ) ) {
+		if ( ! isset( $cp['manifest_staged'] ) ) {
 			$init = self::acquire_init( $job, $cp, $tmp );
 			if ( is_wp_error( $init ) ) {
 				return self::fail( $job_id, 'restore_acquire', $init->get_error_message() );
@@ -279,6 +406,14 @@ class Restore_Orchestrator {
 			return Job_Store::get( $job_id );
 		}
 
+		// Everything needed has been copied into this job's OWN tmp dir
+		// by this point -- an uploaded bundle's holding directory (if
+		// this is an upload-sourced restore) has nothing left to serve
+		// and is deleted now rather than lingering for the rest of the
+		// job.
+		if ( 'upload' === ( $cp['source']['type'] ?? '' ) && ! empty( $cp['source']['upload_dir'] ) ) {
+			self::delete_upload_dir( $cp['source']['upload_dir'] );
+		}
 		self::log( $job_id, 'restore_acquire', 'info', 'All backup content fetched and integrity-verified.' );
 		Job_Store::update( $job_id, array( 'step' => 'restore_preflight', 'checkpoint' => $cp ) );
 		return Job_Store::get( $job_id );
@@ -353,7 +488,13 @@ class Restore_Orchestrator {
 			}
 		}
 
-		$cp['manifest'] = $manifest;
+		// Vex audit HIGH-CHECKPOINT-1: an incremental backup's manifest
+		// can carry one files[] entry per file on the whole site --
+		// kept on disk, not in the checkpoint column, same reasoning as
+		// target_files/db_statements_remaining below. Readers fetch it
+		// via get_manifest().
+		self::write_blob( $job['job_id'], 'manifest', $manifest );
+		$cp['manifest_staged'] = true;
 		$cp['own_parts'] = $own_parts;
 		$cp['backup_mode'] = $mode;
 		$cp['needed_parts_remaining'] = array_values( $needed );
@@ -468,7 +609,7 @@ class Restore_Orchestrator {
 	/** @return true|\WP_Error */
 	private static function acquire_database( array $job, array &$cp, string $tmp ) {
 		$db_component = null;
-		foreach ( (array) ( $cp['manifest']['components'] ?? array() ) as $component ) {
+		foreach ( (array) ( self::get_manifest( $job['job_id'] )['components'] ?? array() ) as $component ) {
 			if ( 'database' === ( $component['kind'] ?? '' ) ) {
 				$db_component = $component;
 				break;
@@ -513,7 +654,7 @@ class Restore_Orchestrator {
 		$job_id = $job['job_id'];
 		$cp = $job['checkpoint'];
 
-		if ( ! isset( $cp['target_files'] ) ) {
+		if ( ! isset( $cp['target_files_count'] ) ) {
 			$build = self::build_target_files( $job, $cp );
 			if ( is_wp_error( $build ) ) {
 				return self::fail( $job_id, 'restore_preflight', $build->get_error_message() );
@@ -523,7 +664,7 @@ class Restore_Orchestrator {
 			return Job_Store::get( $job_id );
 		}
 
-		$manifest = $cp['manifest'];
+		$manifest = self::get_manifest( $job_id );
 		$source_home = $manifest['source']['home_url'] ?? '';
 		$current_home = home_url();
 		if ( '' !== $source_home && $source_home !== $current_home && empty( $cp['confirm_url_mismatch'] ) ) {
@@ -562,7 +703,9 @@ class Restore_Orchestrator {
 			Job_Orchestrator::RETENTION_ERROR_OPTION   => get_option( Job_Orchestrator::RETENTION_ERROR_OPTION, '' ),
 		);
 
-		$cp['quarantine_candidates'] = self::compute_quarantine_candidates( $cp );
+		$quarantine_candidates = self::compute_quarantine_candidates( $job_id );
+		self::write_blob( $job_id, 'quarantine_candidates', $quarantine_candidates );
+		$cp['quarantine_candidates_count'] = count( $quarantine_candidates );
 
 		$cp['shadow_prefix'] = 'wpgshd' . substr( md5( $job_id ), 0, 8 ) . '_';
 		$cp['backup_table_prefix'] = 'wpgbak' . substr( md5( $job_id . 'bak' ), 0, 8 ) . '_';
@@ -571,17 +714,21 @@ class Restore_Orchestrator {
 
 		self::log( $job_id, 'restore_preflight', 'info', sprintf(
 			'Preflight passed. %d file(s) will be restored; %d existing file(s) not in this backup will be quarantined (moved aside), not deleted.',
-			count( $cp['target_files'] ), count( $cp['quarantine_candidates'] )
+			$cp['target_files_count'], $cp['quarantine_candidates_count']
 		) );
 		Job_Store::update( $job_id, array( 'step' => 'restore_apply_db', 'checkpoint' => $cp ) );
 		return Job_Store::get( $job_id );
 	}
 
-	/** @return array|\WP_Error */
+	/**
+	 * @return array|\WP_Error Updated checkpoint (holding only a count,
+	 *   never the list itself -- see blob_path()'s docblock), or an
+	 *   error. The resolved list is written to the 'target_files' blob.
+	 */
 	private static function build_target_files( array $job, array $cp ) {
 		if ( 'incremental' === $cp['backup_mode'] ) {
 			$targets = array();
-			foreach ( (array) ( $cp['manifest']['files'] ?? array() ) as $entry ) {
+			foreach ( (array) ( self::get_manifest( $job['job_id'] )['files'] ?? array() ) as $entry ) {
 				$targets[] = array(
 					'path'             => $entry['path'],
 					'sha256'           => $entry['sha256'] ?? null,
@@ -589,7 +736,9 @@ class Restore_Orchestrator {
 					'source_part'      => $entry['source_part'],
 				);
 			}
-			$cp['target_files'] = self::exclude_own_plugin_paths( $targets );
+			$targets = self::exclude_own_plugin_paths( $targets );
+			self::write_blob( $job['job_id'], 'target_files', $targets );
+			$cp['target_files_count'] = count( $targets );
 			return $cp;
 		}
 
@@ -617,7 +766,9 @@ class Restore_Orchestrator {
 				);
 			}
 		}
-		$cp['target_files'] = self::exclude_own_plugin_paths( $targets );
+		$targets = self::exclude_own_plugin_paths( $targets );
+		self::write_blob( $job['job_id'], 'target_files', $targets );
+		$cp['target_files_count'] = count( $targets );
 		return $cp;
 	}
 
@@ -667,9 +818,9 @@ class Restore_Orchestrator {
 	}
 
 	/** @return string[] Relative paths that exist live but are not part of this restore. */
-	private static function compute_quarantine_candidates( array $cp ): array {
+	private static function compute_quarantine_candidates( string $job_id ): array {
 		$target_paths = array();
-		foreach ( $cp['target_files'] as $t ) {
+		foreach ( (array) ( self::read_blob( $job_id, 'target_files' ) ?? array() ) as $t ) {
 			$target_paths[ $t['path'] ] = true;
 		}
 		$live = Inventory::enumerate();
@@ -701,7 +852,7 @@ class Restore_Orchestrator {
 		$job_id = $job['job_id'];
 		$cp = $job['checkpoint'];
 
-		if ( ! isset( $cp['db_statements_remaining'] ) ) {
+		if ( ! isset( $cp['db_statements_cursor'] ) ) {
 			$prepared = self::prepare_db_statements( $job, $cp );
 			if ( is_wp_error( $prepared ) ) {
 				return self::fail( $job_id, 'restore_apply_db', $prepared->get_error_message() );
@@ -712,9 +863,10 @@ class Restore_Orchestrator {
 		}
 
 		global $wpdb;
+		$statements = self::read_blob( $job_id, 'db_statements' ) ?? array();
 		$deadline = microtime( true ) + self::STEP_TIME_BUDGET_SECONDS;
 		do {
-			$statement = array_shift( $cp['db_statements_remaining'] );
+			$statement = $statements[ $cp['db_statements_cursor'] ];
 			$wpdb->query( $statement );
 			if ( '' !== (string) $wpdb->last_error ) {
 				return self::fail(
@@ -723,10 +875,20 @@ class Restore_Orchestrator {
 					'Database import failed on a shadow table (nothing live was touched yet): ' . self::logger()->redact( (string) $wpdb->last_error )
 				);
 			}
-			Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
-		} while ( ! empty( $cp['db_statements_remaining'] ) && microtime( true ) < $deadline );
+			$cp['db_statements_cursor']++;
+			// Vex audit HIGH-CHECKPOINT-1: a checkpoint write failure
+			// here must stop the job -- re-running from a stale cursor
+			// would re-execute a statement that already succeeded
+			// (duplicate INSERTs, or a CREATE TABLE erroring against a
+			// table that already exists, since DROP TABLE IF EXISTS only
+			// ever runs once per table, at the start of its own block).
+			$persisted = Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+			if ( ! $persisted ) {
+				return self::fail( $job_id, 'restore_apply_db', 'Could not persist job progress (checkpoint write failed) -- stopping rather than risk re-executing an already-applied statement.' );
+			}
+		} while ( $cp['db_statements_cursor'] < count( $statements ) && microtime( true ) < $deadline );
 
-		if ( empty( $cp['db_statements_remaining'] ) ) {
+		if ( $cp['db_statements_cursor'] >= count( $statements ) ) {
 			self::log( $job_id, 'restore_apply_db', 'info', 'Database staged into shadow tables and verified importable.' );
 			Job_Store::update( $job_id, array( 'step' => 'restore_apply_files', 'checkpoint' => $cp ) );
 			return Job_Store::get( $job_id );
@@ -746,7 +908,7 @@ class Restore_Orchestrator {
 			return new \WP_Error( 'wpguard_nc_restore_db_decompress_failed', 'Could not decompress the staged database export -- it may be corrupted.' );
 		}
 
-		$source_prefix = (string) ( $cp['manifest']['source']['table_prefix'] ?? '' );
+		$source_prefix = (string) ( self::get_manifest( $job['job_id'] )['source']['table_prefix'] ?? '' );
 		if ( '' === $source_prefix ) {
 			return new \WP_Error( 'wpguard_nc_restore_no_table_prefix', 'manifest.json does not record a source table_prefix -- refusing to guess which tables to rename.' );
 		}
@@ -785,13 +947,23 @@ class Restore_Orchestrator {
 			}
 
 			$shadow_table_name = $cp['shadow_prefix'] . $suffix;
-			$rewritten = str_replace( "`{$table_name}`", "`{$shadow_table_name}`", $rest );
+			// Vex audit MEDIUM-RENAME-1: a plain str_replace() ran across
+			// the WHOLE block, including every INSERT statement's string
+			// literal values -- a post_content value that happened to
+			// contain the literal substring (backtick-quoted table name)
+			// would have that substring silently rewritten too, corrupting
+			// real content. Restricted to text outside single-quoted
+			// string literals, the same quote/backslash-escape tracking
+			// DB_Exporter::split_statements() already uses to find
+			// statement boundaries safely.
+			$rewritten = DB_Exporter::replace_outside_strings( "`{$table_name}`", "`{$shadow_table_name}`", $rest );
 			foreach ( DB_Exporter::split_statements( $rewritten ) as $s ) {
 				$statements[] = $s;
 			}
 		}
 
-		$cp['db_statements_remaining'] = $statements;
+		self::write_blob( $job['job_id'], 'db_statements', $statements );
+		$cp['db_statements_cursor'] = 0;
 		return $cp;
 	}
 
@@ -807,33 +979,55 @@ class Restore_Orchestrator {
 		$cp = $job['checkpoint'];
 		$abspath = rtrim( ABSPATH, '/\\' );
 
-		if ( ! isset( $cp['files_to_apply'] ) ) {
-			$cp['files_to_apply'] = $cp['target_files'];
-			$cp['quarantine_remaining'] = $cp['quarantine_candidates'];
+		if ( ! isset( $cp['quarantine_cursor'] ) ) {
+			$cp['quarantine_cursor'] = 0;
+			$cp['files_cursor'] = 0;
+			// Vex audit HIGH-AJAX-2: unlike the CLI path (one continuous
+			// bootstrap for the whole restore), the AJAX/cron path
+			// bootstraps WordPress FRESH for every batch. Quarantining or
+			// replacing one plugin's files in an earlier batch, while
+			// that plugin is still listed as active, can fatal the VERY
+			// NEXT bootstrap if that plugin's code now expects a file
+			// this batch hasn't applied yet -- found as a real,
+			// reachable failure mode (not merely a theoretical one) in
+			// Vex's audit. Restricting `active_plugins` down to just
+			// this plugin for the remainder of apply_files (restored on
+			// any failure via fail(), or superseded entirely once
+			// restore_swap's own wp_options row takes over) means no
+			// OTHER plugin's code runs during any of the intermediate,
+			// possibly-inconsistent bootstraps this phase spans.
+			$cp['captured_active_plugins'] = get_option( 'active_plugins', array() );
+			update_option( 'active_plugins', array( plugin_basename( WPGUARD_NC_DIR . 'wpguard-nc-backup.php' ) ) );
 		}
 
+		$quarantine_candidates = self::read_blob( $job_id, 'quarantine_candidates' ) ?? array();
 		// Quarantine first: anything live but not part of this backup,
 		// moved aside (never deleted) before any extraction begins.
-		if ( ! empty( $cp['quarantine_remaining'] ) ) {
+		if ( $cp['quarantine_cursor'] < count( $quarantine_candidates ) ) {
 			$deadline = microtime( true ) + self::STEP_TIME_BUDGET_SECONDS;
 			do {
-				$relative = array_shift( $cp['quarantine_remaining'] );
+				$relative = $quarantine_candidates[ $cp['quarantine_cursor'] ];
 				$live_abs = $abspath . '/' . $relative;
 				if ( file_exists( $live_abs ) || is_link( $live_abs ) ) {
 					$dest = $cp['rollback_dir'] . 'quarantine/' . $relative;
 					wp_mkdir_p( dirname( $dest ) );
 					@rename( $live_abs, $dest );
 				}
-				Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
-			} while ( ! empty( $cp['quarantine_remaining'] ) && microtime( true ) < $deadline );
+				$cp['quarantine_cursor']++;
+				$persisted = Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+				if ( ! $persisted ) {
+					return self::fail( $job_id, 'restore_apply_files', 'Could not persist job progress (checkpoint write failed) -- stopping rather than risk re-quarantining a file and losing track of where it went.' );
+				}
+			} while ( $cp['quarantine_cursor'] < count( $quarantine_candidates ) && microtime( true ) < $deadline );
 			return Job_Store::get( $job_id );
 		}
 
-		if ( ! empty( $cp['files_to_apply'] ) ) {
+		$target_files = self::read_blob( $job_id, 'target_files' ) ?? array();
+		if ( $cp['files_cursor'] < count( $target_files ) ) {
 			$deadline = microtime( true ) + self::STEP_TIME_BUDGET_SECONDS;
 			$open_zips = array(); // "backup_id/part" => ZipArchive, kept open across this batch only
 			do {
-				$entry = array_shift( $cp['files_to_apply'] );
+				$entry = $target_files[ $cp['files_cursor'] ];
 				$result = self::apply_one_file( $job, $cp, $entry, $abspath, $open_zips );
 				if ( is_wp_error( $result ) ) {
 					foreach ( $open_zips as $z ) {
@@ -841,8 +1035,25 @@ class Restore_Orchestrator {
 					}
 					return self::fail( $job_id, 'restore_apply_files', $result->get_error_message() );
 				}
-				Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
-			} while ( ! empty( $cp['files_to_apply'] ) && microtime( true ) < $deadline );
+				$cp['files_cursor']++;
+				// Vex audit HIGH-CHECKPOINT-1: apply_one_file() has
+				// already moved the live file into the rollback
+				// directory (if one existed) and written the backup's
+				// content in its place BEFORE this point -- a checkpoint
+				// write failure here must stop the job rather than let
+				// the next call re-run apply_one_file() on the SAME
+				// entry, which would move the file it JUST wrote (the
+				// backup's own content) into the rollback slot a second
+				// time, overwriting the real original that was there
+				// before this entry was ever touched.
+				$persisted = Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+				if ( ! $persisted ) {
+					foreach ( $open_zips as $z ) {
+						$z->close();
+					}
+					return self::fail( $job_id, 'restore_apply_files', "Could not persist job progress after applying {$entry['path']} (checkpoint write failed) -- stopping rather than risk re-processing it and destroying its rollback copy." );
+				}
+			} while ( $cp['files_cursor'] < count( $target_files ) && microtime( true ) < $deadline );
 			foreach ( $open_zips as $z ) {
 				$z->close();
 			}
@@ -902,7 +1113,22 @@ class Restore_Orchestrator {
 		if ( file_exists( $target_abs ) || is_link( $target_abs ) ) {
 			$dest = $cp['rollback_dir'] . 'replaced/' . $entry['path'];
 			wp_mkdir_p( dirname( $dest ) );
-			@rename( $target_abs, $dest );
+			// Vex audit MEDIUM-RENAME-2: the original @-suppressed
+			// failure here (plausible on shared hosting -- an
+			// FTP-deployed file's directory owned by a different user
+			// than the PHP process that just created the rollback
+			// directory) let execution continue straight into
+			// overwriting the live file with no rollback copy at all,
+			// silently. The original version is now unrecoverable by
+			// the time anyone would notice. Treated as a hard stop
+			// instead -- refusing to overwrite a file this restore
+			// couldn't actually preserve a copy of.
+			if ( ! @rename( $target_abs, $dest ) ) {
+				return new \WP_Error(
+					'wpguard_nc_restore_rollback_failed',
+					"Could not move the existing {$entry['path']} into the rollback directory before overwriting it (often a file-ownership mismatch between this PHP process and the existing file). Stopped without overwriting it."
+				);
+			}
 		}
 		wp_mkdir_p( dirname( $target_abs ) );
 		if ( false === file_put_contents( $target_abs, $content ) ) {
@@ -926,11 +1152,28 @@ class Restore_Orchestrator {
 		global $wpdb;
 
 		$shadow_tables = $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $cp['shadow_prefix'] ) . '%' ) );
+		// Vex audit LOW-SWAP-1: finding zero shadow tables here should
+		// never happen after a successful restore_apply_db (which fails
+		// the job outright on any import error), but if it somehow did,
+		// the old code would skip the rename entirely and still mark
+		// the job verified -- a silent vacuous "success" that changed
+		// nothing in the database while the files had already been
+		// applied. Treated as a hard failure instead.
+		if ( empty( $shadow_tables ) ) {
+			return self::fail( $job_id, 'restore_swap', 'No shadow tables found to swap in -- the database import produced no tables. Nothing was changed in the database; check the restore_apply_db log above.' );
+		}
 		$renames = array();
 		foreach ( (array) $shadow_tables as $shadow_table ) {
 			$suffix = substr( $shadow_table, strlen( $cp['shadow_prefix'] ) );
 			$live_table = $wpdb->prefix . $suffix;
-			$exists_live = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $live_table ) );
+			// Vex audit LOW-LIKE-1: $live_table was passed to a LIKE
+			// pattern unescaped -- '_' in LIKE matches any single
+			// character, so (e.g.) a table literally named "wp1options"
+			// would also match a pattern for "wp_options". No real
+			// WordPress table name collides this way in practice, but
+			// esc_like() is the correct call regardless of whether a
+			// concrete exploit exists today.
+			$exists_live = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $live_table ) ) );
 			if ( $exists_live ) {
 				$renames[] = "`{$live_table}` TO `{$cp['backup_table_prefix']}{$suffix}`";
 			}

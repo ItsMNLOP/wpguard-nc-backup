@@ -38,9 +38,24 @@ class Archive_Writer {
 		if ( '/' === $relative_name[0] || preg_match( '#^[A-Za-z]:[\\\\/]#', $relative_name ) ) {
 			return false;
 		}
+		// Vex audit HIGH-PATH-1 (one-click restore): a bare '..' segment
+		// was the only thing rejected. A '.' (single-dot) segment or an
+		// empty segment from a doubled separator ('wp-content//plugins/...')
+		// both resolve as a no-op at the filesystem layer, but neither
+		// matched the literal string comparisons that gate restore's
+		// own never-touch exclusions (Restore_Orchestrator::is_never_restored_path()),
+		// letting a crafted manifest/upload path (e.g. './wp-config.php')
+		// slip past a check meant to protect exactly that file. Rejecting
+		// both here, at the one shared choke point every archive-write
+		// AND every restore-extraction path already calls, closes this
+		// for every caller at once rather than patching each exclusion
+		// check individually.
+		if ( false !== strpos( $relative_name, "\0" ) ) {
+			return false;
+		}
 		$parts = preg_split( '#[\\\\/]+#', $relative_name );
 		foreach ( $parts as $part ) {
-			if ( '..' === $part ) {
+			if ( '..' === $part || '.' === $part || '' === $part ) {
 				return false;
 			}
 		}

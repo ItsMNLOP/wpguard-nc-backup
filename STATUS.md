@@ -1,5 +1,88 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — one-click restore: Vex audit findings fixed, awaiting re-verification, 2026-10-20
+
+Vex's full audit of the first build (commit `6a652d2`, see the entry
+below) came back **BLOCKED**: 4 HIGH, 3 MEDIUM, 4 LOW findings. Per
+Mike's standing instruction, moved forward with fixes automatically
+rather than waiting for a go-ahead:
+
+- **HIGH-PATH-1** — `is_never_restored_path()` compared paths by
+  exact string before normalizing, so `./wp-config.php` and a doubled
+  separator leading into the plugin's own directory both bypassed the
+  "never touched" exclusions this plugin's whole restore-safety
+  argument rests on. Fixed with `normalize_relative_path()`
+  (segment-split, drop `.`/empty segments, rejoin single-separator,
+  case-insensitive compare) — proven directly via reflection in the
+  new `RestoreNeverTouchedPathTest.php`, not just argued.
+- **HIGH-CHECKPOINT-1** — large per-job data (manifest, target-file
+  list, quarantine candidates, DB statement list) lived in the
+  DB-backed checkpoint column, risking silent `max_allowed_packet`
+  truncation on a large site; a failed write would make the next
+  `advance()` reload a stale checkpoint and could re-execute an
+  already-applied destructive step. Fixed by externalizing all of
+  these to per-job disk-backed blob files (checkpoint now holds only
+  small cursors/counts), and every checkpoint write's return value is
+  now checked, failing the job outright rather than risking
+  re-execution.
+- **HIGH-AJAX-1** — the restore's AJAX/browser path had no WP-Cron
+  fallback at all (backups already had one). Fixed —
+  `wp_schedule_single_event` on job creation, plus `.catch()` retry
+  handlers on the JS poll loops instead of silently halting on a
+  network blip.
+- **HIGH-AJAX-2** — every AJAX/cron batch is a genuinely fresh
+  WordPress bootstrap, unlike the CLI path's one continuous process;
+  a third-party plugin mid-way through having its files
+  quarantined/replaced could fatal the very next bootstrap, stalling
+  the restore with no way forward. Fixed by temporarily restricting
+  live `active_plugins` to just WPGuard during the file-apply phase,
+  restored on any failure. Vex explicitly asked this be proven via
+  separate fresh-bootstrap processes, not just the CLI's single
+  process — built `tests/e2e/run-e2e-restore-ajax-safety.sh` for
+  exactly that: a synthetic plugin engineered to require a file an
+  older backup doesn't have, restored via ~12 separate `wp eval`
+  processes each a fresh bootstrap, asserting zero intermediate
+  fatals. Passes.
+- **MEDIUM-RENAME-1** — the DB-rewrite step's plain `str_replace()`
+  on backtick-quoted table names could have corrupted a string
+  literal value containing the same substring (e.g. a post discussing
+  `wp_posts` by name). Fixed via a new quote/escape-aware
+  `DB_Exporter::replace_outside_strings()`.
+- **MEDIUM-UPLOAD-1** — the upload-bundle holding directory used a
+  fixed, predictable, never-cleaned-up path, exposing an uploaded DB
+  dump + `wp-config.php` indefinitely on a misconfigured web server.
+  Fixed via a random per-upload token with explicit cleanup on both
+  success and failure paths.
+- **MEDIUM-RENAME-2** — the rollback-rename before overwriting a live
+  file didn't check its own return value, so a failure there could
+  silently proceed to overwrite the live file with no rollback copy.
+  Fixed — now fails the job instead. (This is what the new AJAX-safety
+  test's ownership bug first surfaced in testing — a real rename
+  failure now correctly stops the job rather than continuing blind.)
+- **LOW-SWAP-1 / LOW-LIKE-1 / LOW-HTACCESS-1 / LOW-RACE-1** — a swap
+  step that could silently "verify" with nothing actually swapped if
+  the shadow-table list came back empty; a raw table name used
+  unescaped in a `LIKE` pattern; an uploaded bundle's own `.htaccess`
+  overwriting the deny-all guard after extraction; a lock-reaping race
+  on restore job creation. All fixed.
+
+Full unit suite: 86/86 passing (added `RestoreNeverTouchedPathTest.php`,
+expanded `ArchivePathSafetyTest.php` and `SplitStatementsTest.php` for
+the fixes above). `tests/e2e/run-e2e-restore.sh` re-run end to end
+against the same real production backup, fully green after this large
+a restructuring (blob externalization, cursor-based consumption,
+active-plugins isolation, upload-token flow) — confirms no regression.
+New `tests/e2e/run-e2e-restore-ajax-safety.sh` passes, directly proving
+HIGH-AJAX-2's fix. Full existing E2E suite re-run for regression
+confirmation — all 10 green, zero regressions: main drill, cancel-job,
+cancel-lock-contention, const-override, incremental, lock-race,
+retention, scheduling, stale-lock-recovery, update-checker.
+
+Docs updated: `docs/threat-model.md` T20 now documents Vex's findings
+and fixes inline, not just the original design. Not yet committed —
+re-dispatching Vex for re-verification before shipping, per established
+pattern (audit → fix → re-verify → repeat until CLEAR TO SHIP).
+
 ## Phase 2 progress — one-click restore built, two self-caught bugs fixed, awaiting Vex, 2026-10-20
 
 Sixth Phase 2 item, and the highest-stakes one in the whole project:

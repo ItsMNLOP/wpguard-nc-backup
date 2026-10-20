@@ -193,11 +193,23 @@ function boot() {
  * WP-Cron fallback so a closed browser tab doesn't strand a job
  * (ADR 0003). Advances until terminal or until a time budget is spent,
  * then reschedules itself for jobs still in progress.
+ *
+ * Vex audit HIGH-AJAX-1 (one-click restore): this previously called
+ * Job_Orchestrator::advance() unconditionally -- fine as long as only
+ * backups ever scheduled this event, but restore had no cron fallback
+ * registered at all, meaning a closed tab or a network blip during the
+ * one phase where that matters most (restore_apply_db onward, the
+ * point of no return) left the job stuck until the stale-lock reaper's
+ * timeout, with no automated way to finish it. Dispatched by
+ * checkpoint kind here so restore jobs now get the exact same
+ * closed-tab protection backups always have.
  */
 function cron_advance( string $job_id ) {
 	$deadline = time() + 20;
 	while ( time() < $deadline ) {
-		$job = Job_Orchestrator::advance( $job_id );
+		$job_row = Job_Store::get( $job_id );
+		$is_restore = null !== $job_row && 'restore' === ( $job_row['checkpoint']['kind'] ?? 'backup' );
+		$job = $is_restore ? Restore_Orchestrator::advance( $job_id ) : Job_Orchestrator::advance( $job_id );
 		if ( in_array( $job['status'] ?? '', array( 'verified', 'failed', 'not_found' ), true ) ) {
 			return;
 		}

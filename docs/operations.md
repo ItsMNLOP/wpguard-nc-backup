@@ -337,6 +337,62 @@ backup from the owner's own production site (not a synthetic
 fixture), restored in place onto a disposable WordPress install with
 the plugin genuinely active and running on it.
 
+**Vex audit round (findings fixed before ship):** the first build
+(commit `6a652d2`) came back BLOCKED. Fixes, briefly:
+- The path-exclusion check above now normalizes a path (splitting on
+  separators, dropping `.`/empty segments, case-insensitive compare)
+  *before* comparing it against the plugin-directory/`wp-config.php`
+  exclusions — the un-normalized exact-string comparison let
+  `./wp-config.php` or a doubled separator leading into the plugin's
+  own directory bypass them. Proven directly (reflection-based test
+  against the actual private method) in
+  `tests/unit/RestoreNeverTouchedPathTest.php`.
+- Large per-job data (the manifest, target-file list, quarantine
+  candidates, DB statement list) no longer lives in the DB-backed
+  checkpoint column — each is written to a per-job disk-backed "blob"
+  file instead, with the checkpoint holding only small cursors/counts.
+  A large site's checkpoint could otherwise silently exceed
+  `max_allowed_packet`, and a failed write would make the *next*
+  `advance()` call reload a stale checkpoint and potentially
+  re-execute an already-applied destructive step. Every checkpoint
+  write's return value is now checked; a failed write stops the job
+  rather than risking that.
+- The restore job now has a WP-Cron fallback (`wp_schedule_single_event`
+  on creation), matching backups — it previously had none at all, so
+  closing the browser tab mid-restore left it stuck.
+- Every AJAX/WP-Cron batch is a genuinely fresh WordPress bootstrap
+  (unlike the CLI path, which runs the whole restore in one
+  continuous process) — if an earlier batch had already quarantined
+  or replaced part of a still-"active" third-party plugin's files, the
+  very next bootstrap could fatal loading it, stalling the restore
+  with no way forward. Fixed by temporarily restricting live
+  `active_plugins` to just this plugin during the file-apply phase,
+  restored on any failure. Proven directly, not just argued:
+  `tests/e2e/run-e2e-restore-ajax-safety.sh` engineers a synthetic
+  plugin whose live version depends on a file an older backup
+  predates, then drives the restore from that backup through roughly
+  a dozen genuinely separate `wp eval` processes (each its own fresh
+  bootstrap), asserting zero intermediate fatals.
+- The DB-rewrite step's identifier substitution is now quote/escape
+  aware (`DB_Exporter::replace_outside_strings()`) rather than a plain
+  `str_replace()`, which could have corrupted a string literal value
+  happening to contain the same backtick-quoted substring (e.g. a post
+  discussing `wp_posts` by name).
+- The upload-bundle holding directory is now a random per-upload
+  token with explicit cleanup on both the success and failure paths,
+  replacing a fixed, predictable, never-cleaned-up path that exposed
+  an uploaded DB dump and `wp-config.php` indefinitely on a
+  misconfigured web server.
+- Several smaller fixes: a swap step now fails explicitly rather than
+  silently "verifying" with nothing actually swapped if the
+  shadow-table list came back empty; a table name used in a `LIKE`
+  pattern is now escaped; an uploaded bundle's own `.htaccess` no
+  longer overwrites the deny-all guard after extraction; a restore
+  job's lock is now reaped before checking for a running job.
+
+Full unit suite (86/86) and the entire existing E2E suite re-run after
+this round with zero regressions.
+
 ## Updates (Phase 2, 2026-10-20)
 
 This plugin isn't on the WordPress.org directory, so wp-admin's normal

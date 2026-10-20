@@ -71,7 +71,26 @@ class Job_Store {
 		return $row;
 	}
 
-	public static function update( string $job_id, array $fields ): void {
+	/**
+	 * Vex audit HIGH-CHECKPOINT-1: the return value was previously
+	 * discarded entirely. $wpdb->update() returns false on failure --
+	 * including a checkpoint payload rejected for exceeding the
+	 * server's max_allowed_packet -- and a caller that doesn't know
+	 * that happened will reload the LAST successfully persisted
+	 * checkpoint on its next call, silently re-executing whatever work
+	 * it thought it had already recorded as done. For most callers
+	 * that's merely wasteful (re-processing an item); for a step that
+	 * moves a live file aside into a rollback location before
+	 * overwriting it (one-click restore's apply_one_file()), silent
+	 * re-execution can overwrite that same rollback copy with the
+	 * file's NEW content on the second pass, destroying the only
+	 * record of what was there before. Callers for whom this
+	 * distinction matters must check the return value and fail
+	 * explicitly rather than silently continuing.
+	 *
+	 * @return bool True if the row was actually updated.
+	 */
+	public static function update( string $job_id, array $fields ): bool {
 		global $wpdb;
 		$data = array();
 		$format = array();
@@ -85,7 +104,7 @@ class Job_Store {
 		}
 		$data['updated_at'] = current_time( 'mysql', true );
 		$format[] = '%s';
-		$wpdb->update( self::table_name(), $data, array( 'job_id' => $job_id ), $format, array( '%s' ) );
+		return false !== $wpdb->update( self::table_name(), $data, array( 'job_id' => $job_id ), $format, array( '%s' ) );
 	}
 
 	public static function append_log( string $job_id, array $entry ): void {

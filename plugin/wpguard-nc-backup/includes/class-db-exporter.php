@@ -238,4 +238,53 @@ class DB_Exporter {
 		}
 		return $statements;
 	}
+
+	/**
+	 * Pure. Phase 2 (one-click restore). Vex audit MEDIUM-RENAME-1:
+	 * restoring a table rename needs to replace an exact backtick-quoted
+	 * table name inside a dump this exporter wrote -- but a plain
+	 * str_replace() across the whole block would also rewrite that same
+	 * substring if it happened to appear inside an INSERT statement's
+	 * own string literal value (e.g. a post whose content discusses
+	 * `wp_posts` by name). Restricted to text outside single-quoted
+	 * string literals, using the exact same quote/backslash-escape
+	 * tracking split_statements() above uses to find real statement
+	 * boundaries -- a value is never mistaken for identifier text.
+	 */
+	public static function replace_outside_strings( string $search, string $replace, string $sql ): string {
+		if ( '' === $search ) {
+			return $sql;
+		}
+		$result = '';
+		$in_string = false;
+		$len = strlen( $sql );
+		$search_len = strlen( $search );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$char = $sql[ $i ];
+			if ( $in_string ) {
+				if ( '\\' === $char && $i + 1 < $len ) {
+					$result .= $char . $sql[ $i + 1 ];
+					$i++;
+					continue;
+				}
+				if ( "'" === $char ) {
+					$in_string = false;
+				}
+				$result .= $char;
+				continue;
+			}
+			if ( "'" === $char ) {
+				$in_string = true;
+				$result .= $char;
+				continue;
+			}
+			if ( substr( $sql, $i, $search_len ) === $search ) {
+				$result .= $replace;
+				$i += $search_len - 1;
+				continue;
+			}
+			$result .= $char;
+		}
+		return $result;
+	}
 }
