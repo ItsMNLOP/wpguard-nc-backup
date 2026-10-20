@@ -143,6 +143,24 @@ wp_source eval "
 " > /dev/null
 wp_source db query "UPDATE wp_wpguard_nc_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
 
+# Vex re-verification note: seed enough old-looking verified fixtures
+# directly under the real site-id/backups/ parent (deterministic,
+# regardless of whatever leftover history other test runs may have
+# left there) so retention_count=2 is GUARANTEED to have more than 2
+# verified entries to choose from -- the real backup about to be
+# created is always the newest, so it never collides with these.
+SITE_ID=$(wp_source eval 'echo \WPGuard\NCBackup\Settings::get_site_id();')
+for n in 1 2; do
+  FIXTURE_NAME=$(printf '2020010%dT000000Z-eeee000%d' "$n" "$n")
+  wp_source eval "
+    \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) ) );
+    \$parent = \$client->relative_path( '$SITE_ID/backups' );
+    \$client->mkcol_recursive( \$parent . '/$FIXTURE_NAME' );
+    \$client->put_bytes( \$parent . '/$FIXTURE_NAME/COMPLETE.json', '{\"ok\":true}' );
+  " > /dev/null
+done
+echo "OK  seeded 2 deterministic old verified fixtures under the real backups folder"
+
 echo "Running one real backup via WP-CLI (wp wpguard-nc-backup run) -- this is the same real backup path run-e2e.sh exercises, expect this to take a couple of minutes..."
 wp_source wpguard-nc-backup run > "$SCRATCH/real_backup_run.log" 2>&1 || true
 tail -5 "$SCRATCH/real_backup_run.log"
@@ -153,17 +171,19 @@ REAL_STATUS=$(wp_source eval "echo \WPGuard\NCBackup\Job_Store::get('$REAL_JOB_I
 echo "OK  real backup reached 'verified'"
 
 REAL_LOG=$(wp_source eval "echo wp_json_encode(\WPGuard\NCBackup\Job_Store::get('$REAL_JOB_ID')['log']);")
-if [[ "$REAL_LOG" == *"ArgumentCountError"* ]] || [[ "$REAL_LOG" == *"Too few arguments"* ]]; then
-  echo "FAIL: the real job log shows the RETENTION-3 arity error -- maybe_prune_old_backups() is calling Retention::prune() incorrectly again"
+
+# Vex re-verification note: the original assertion here only checked
+# for the ABSENCE of an error, which can't tell a genuine success
+# apart from a different silently-swallowed failure reaching the same
+# catch block -- exactly the shape that let RETENTION-3 through the
+# first time. Now requires the explicit success phrase and explicitly
+# fails on either caught-error phrase.
+if [[ "$REAL_LOG" == *"threw an unexpected error"* ]] || [[ "$REAL_LOG" == *"did not fully complete"* ]]; then
+  echo "FAIL: retention's own try/catch caught something on the real step_finalize() path: $REAL_LOG"
   exit 1
 fi
-echo "OK  no ArgumentCountError in the real job's log -- maybe_prune_old_backups() -> Retention::prune() call arity is correct on the real step_finalize() path"
-
-if [[ "$REAL_LOG" == *"Retention:"* ]] || [[ "$REAL_LOG" == *"Retention pruning"* ]]; then
-  echo "OK  retention logged an outcome on the real finalize path (either a prune action or a caught/reported issue -- either way, it genuinely ran, not silently skipped by a crash)"
-else
-  echo "NOTE: no retention log line found -- acceptable if fewer than 2 verified backups existed on the real site-id/backups/ folder at the time (a true no-op logs nothing by design), not a failure by itself"
-fi
+[[ "$REAL_LOG" == *"Retention: removed"* ]] || { echo "FAIL: expected an explicit 'Retention: removed N old backup(s)...' success log line (2 deterministic fixtures were seeded specifically to guarantee a real deletion happens), got: $REAL_LOG"; exit 1; }
+echo "OK  retention explicitly logged a real deletion on the real step_finalize() path -- not just an absence of error"
 
 echo "=== Cleanup: restore retention_count to 0 (keep-all) so it doesn't affect unrelated future test runs against the real shared backups folder ==="
 wp_source eval "

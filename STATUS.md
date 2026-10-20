@@ -1,5 +1,24 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2 progress — retention re-verified, CLEAR TO SHIP, 2026-10-20
+
+Vex's independent re-verification of the retention fixes below: all
+four RETENTION-* findings confirmed fixed by direct source read AND a
+live run against the real Nextcloud test server (not taken on word) —
+**CLEAR TO SHIP**. Found two further non-blocking items, both fixed
+same-day: the regression test's Case E only checked for the *absence*
+of an error, which can't distinguish a real success from a different
+silently-caught failure landing in the same log line (the same shape
+that let the original arity bug through) — tightened to require the
+explicit "Retention: removed..." success phrase and to fail outright
+on either caught-error phrase, with two deterministic fixtures now
+seeded under the real backups folder so a real deletion is guaranteed
+rather than possibly landing in the ambiguous no-op case. Also
+documented the retention fix's own added request cost (one PROPFIND
+per candidate folder, for the COMPLETE.json check) in
+`docs/operations.md`. 34/34 unit tests and the retention E2E test
+re-verified green.
+
 ## Phase 2 progress — scheduling CLEAR TO SHIP; retention was BLOCKED, now fixed, 2026-10-20
 
 Vex's delta audit of commits `07ab212` (scheduling) and `6a85eb8`

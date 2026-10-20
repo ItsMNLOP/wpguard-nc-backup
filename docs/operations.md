@@ -170,6 +170,16 @@ against the real server, not a mock, including a failed-job stub that
 must be neither counted nor touched, and a real end-to-end run through
 `step_finalize()` itself, not just a direct call to `prune()`).
 
+**Request cost (Vex re-verification, 2026-10-20):** the COMPLETE.json
+check above adds one PROPFIND (Depth: 0) per candidate folder under
+the backups parent, so a pruning run now costs N+1 HTTP requests (1
+Depth:1 listing + N Depth:0 existence checks) instead of 1. Each is
+small and cheap, but scales with however many backup folders exist at
+prune time (only ever once per successful backup, not per request).
+Not a timeout concern at realistic backup counts; worth knowing if
+retention is ever configured with a very large keep count on a very
+slow Nextcloud server.
+
 **Confirmed against the real Nextcloud test server, 2026-10-20**: a
 WebDAV `DELETE` lands in that Nextcloud account's own trashbin
 (`/remote.php/dav/trashbin/<user>/trash/`), not permanent erasure —
