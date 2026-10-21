@@ -47,6 +47,9 @@ that proves it.
 
 ## Known open items for the next agent/session
 
-- CI (`.github/workflows/ci.yml`) written, never executed — no CI runner
-  connected during this build.
+- CI (`.github/workflows/ci.yml`) is connected and executing on every push
+  to the real GitHub repo (confirmed via `gh run list` 2026-10-21) — the
+  "written, never executed" note in earlier docs is stale. It does not yet
+  build/attach a release zip on tag push (still manual, `docs/releasing.md`)
+  and does not run the `multi-backend` compose profile (manual only).
 - Phase 2+ items not yet started are tracked in `STATUS.md`.

@@ -1,5 +1,35 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Doc correction — CI status was stale, 2026-10-21
+
+`gh run list` against the real GitHub repo shows CI has actually been
+connected and executing on every push for some time (a long failure
+streak — cygpath on Linux, missing `docker/.env.example`, healthcheck
+gating — now fixed; the last two runs are green). The "written, never
+executed / no CI runner connected" language in `AGENTS.md`, `SECURITY.md`,
+and `docs/test-matrix.md` (all now corrected) was stale, left over from
+early in this project before a runner was actually connected, and never
+updated after. Phase 1 gate item 7 below (checkbox record from that
+earlier session) is left as-is — a historical record of that session's
+own state, not a current claim.
+
+**Still genuinely missing** (the real remainder of "CI bash port",
+Phase 2 item 10): auto-building and attaching the release zip to a
+GitHub Release on tag push. `docs/releasing.md`'s manual process is
+still required for that specific step.
+
+**Phase 3 candidates list below pruned**: both items were already
+built and shipped by the time this was re-checked — "other WebDAV
+destinations" (ownCloud/OpenCloud, see the multi-backend entry above)
+and "Nextcloud-free backup" (see "Download Now" in the entry further
+below) both satisfy their own candidate description exactly. Removed
+rather than left stale. One real gap found while re-checking the
+latter: `CLI_Command::run()`/`restore()` (`class-cli-command.php`
+lines 20, 70) still hard-require `Settings::has_credentials()`
+unconditionally — the credential-free path only exists on the AJAX
+`destination=download` route, not WP-CLI. Not yet scoped or started;
+raised to the owner 2026-10-21.
+
 ## Phase 3 — multi-backend (ownCloud + OpenCloud), CLEAR TO SHIP, 2026-10-21
 
 Generalizes the backup destination from "Nextcloud" to any server speaking
@@ -602,25 +632,9 @@ probing ever surfaces. Proceeding to cut v1.2.0.
 
 ## Phase 3 candidates (not yet scoped, for later discussion)
 
-- Nextcloud-free backup: let a site with no configured Nextcloud
-  destination still create a backup and download it straight to the
-  browser, rather than requiring Nextcloud credentials just to run
-  one at all. Raised during real-world Phase 2 testing: restore
-  already works with zero Nextcloud dependency when driven from an
-  uploaded bundle (see docs/operations.md, "One-click restore"); the
-  backup side has no equivalent today — `ajax_start_backup()` requires
-  `Settings::has_credentials()` unconditionally, and the local staging
-  directory is always deleted (`cleanup_tmp()`) once a backup
-  finishes, success or failure, so nothing persists locally either
-  way. Not scoped or started.
-- Other WebDAV-compatible destinations (ownCloud, OpenCloud, and
-  similar): today's `Nextcloud_Client`/OCS app-password flow is
-  Nextcloud-specific, but the actual transport is plain WebDAV
-  (PUT/PROPFIND), which ownCloud and OpenCloud both also speak, since
-  they share Nextcloud's lineage. Likely means a destination
-  abstraction (pluggable transport/auth, not a Nextcloud-only client)
-  rather than a one-off addition. Phase 3 or 4, once base features are
-  settled. Not scoped or started.
+(Both prior entries here — Nextcloud-free backup, other WebDAV
+destinations — shipped; see the doc-correction note at the top of this
+file, 2026-10-21. Nothing currently queued in this section.)
 
 ## Phase 2 progress — one-click restore: security re-verification CLEAR TO SHIP, 2026-10-20
 

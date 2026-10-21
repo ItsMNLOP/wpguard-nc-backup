@@ -22,5 +22,7 @@ yet.
 - No automated dependency/security-advisory monitoring configured yet
   (there are no dependencies to monitor — MVP ships zero Composer
   packages).
-- CI security/static-analysis workflow is written (`.github/workflows/ci.yml`)
-  but has not executed in any CI environment yet.
+- CI security/static-analysis workflow (`.github/workflows/ci.yml`) is
+  connected and executing on every push to the real GitHub repo (confirmed
+  2026-10-21). It does not yet run the `multi-backend` compose profile
+  (ownCloud/OpenCloud) — that matrix is exercised manually.

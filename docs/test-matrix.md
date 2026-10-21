@@ -23,5 +23,5 @@ See `docs/adr/0008-version-support-matrix.md` for the version table itself
 | JOB-05 manual stuck-job cancel | E2E | `tests/e2e/run-e2e-cancel-job.sh` | yes — added 2026-10-19 after a real stuck job on a live site; create-but-never-advance a job, cancel it, confirm `failed` + `has_running_job()` false + idempotent re-cancel |
 | Cancel respects the H-01 lock (doesn't race a live `advance()`) | E2E | `tests/e2e/run-e2e-cancel-lock-contention.sh` | yes — added 2026-10-19 (security-audit LOW-C1); genuine concurrent holder + canceller processes |
 | Incompressible extensions (jpg/png/zip/pdf/etc.) stored not DEFLATEd, both stored and deflated entries extract byte-identical | unit | `tests/unit/ArchiveWriterCompressionTest.php` | yes — added 2026-10-20 with the second perf round |
-| Multi-version WP/PHP/Nextcloud/MariaDB matrix | CI matrix | `.github/workflows/ci.yml` | **not executed** — no CI runner connected |
+| Multi-version WP/PHP/Nextcloud/MariaDB matrix | CI matrix | `.github/workflows/ci.yml` | yes — connected and executing on every push (confirmed via `gh run list` 2026-10-21); does not cover the `multi-backend` profile (ownCloud/OpenCloud), which stays manual |
 | Upgrade-from-previous-version / schema migration | — | n/a yet | **not applicable** — 0.1.0 is the first version |
