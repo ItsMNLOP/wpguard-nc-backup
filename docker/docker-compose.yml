@@ -14,13 +14,20 @@ services:
     volumes:
       - db_source_data:/var/lib/mysql
     networks: [wpguard-test]
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root -p\"$$MARIADB_ROOT_PASSWORD\" --silent"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   wp-source:
     image: wordpress:7.1-php8.3-apache
     restart: "no"
     mem_limit: 512m
     cpus: 1
-    depends_on: [db-source]
+    depends_on:
+      db-source:
+        condition: service_healthy
     environment:
       WORDPRESS_DB_HOST: db-source
       WORDPRESS_DB_NAME: ${WP_SOURCE_DB_NAME}
@@ -50,13 +57,20 @@ services:
     volumes:
       - db_nextcloud_data:/var/lib/mysql
     networks: [wpguard-test]
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root -p\"$$MARIADB_ROOT_PASSWORD\" --silent"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   nextcloud:
     image: nextcloud:34-apache
     restart: "no"
     mem_limit: 1g
     cpus: 1.5
-    depends_on: [db-nextcloud]
+    depends_on:
+      db-nextcloud:
+        condition: service_healthy
     environment:
       MYSQL_HOST: db-nextcloud
       MYSQL_DATABASE: ${NC_DB_NAME}
@@ -71,13 +85,20 @@ services:
     volumes:
       - nextcloud_data:/var/www/html
     networks: [wpguard-test]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1/status.php"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
 
   nc-proxy:
     image: nginx:alpine
     restart: "no"
     mem_limit: 128m
     cpus: 0.5
-    depends_on: [nextcloud]
+    depends_on:
+      nextcloud:
+        condition: service_healthy
     volumes:
       - ./nginx/nc-proxy.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/certs:ro
@@ -105,13 +126,20 @@ services:
     volumes:
       - db_restore_data:/var/lib/mysql
     networks: [wpguard-test]
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root -p\"$$MARIADB_ROOT_PASSWORD\" --silent"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   wp-restore:
     image: wordpress:7.1-php8.3-apache
     restart: "no"
     mem_limit: 512m
     cpus: 1
-    depends_on: [db-restore]
+    depends_on:
+      db-restore:
+        condition: service_healthy
     environment:
       WORDPRESS_DB_HOST: db-restore
       WORDPRESS_DB_NAME: ${WP_RESTORE_DB_NAME}
