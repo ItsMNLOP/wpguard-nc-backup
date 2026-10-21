@@ -6,9 +6,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * WebDAV transport adapter. The only class that knows Nextcloud's WebDAV
- * URL shapes (MNT-03). Never sets sslverify=>false (ADR 0007, threat-model
- * T11 — enforced here and checked by tests/unit/NoInsecureTlsTest.php).
+ * WebDAV transport adapter. The only class that knows the WebDAV URL
+ * shape (MNT-03) all three verified backends share: Nextcloud, ownCloud
+ * classic (10.x), and OpenCloud (confirmed live against 7.2.4's legacy
+ * remote.php/dav/files/{user} compatibility shim -- see STATUS.md and
+ * docs/threat-model.md T22). Not retested against oCIS, which likely
+ * rides along since OpenCloud is its fork, or any other WebDAV server.
+ * Never sets sslverify=>false (ADR 0007, threat-model T11 — enforced
+ * here and checked by tests/unit/NoInsecureTlsTest.php).
  */
 class Nextcloud_Client {
 
@@ -391,16 +396,16 @@ class Nextcloud_Client {
 		$message = $error->get_error_message();
 
 		if ( 401 === $status || 403 === $status ) {
-			return array( 'ok' => false, 'reason' => 'auth', 'message' => __( 'Authentication failed (401/403). Check the username and app password.', 'wpguard-nc-backup' ) );
+			return array( 'ok' => false, 'reason' => 'auth', 'message' => __( 'Authentication failed (401/403). Check the username and app password / app token.', 'wpguard-nc-backup' ) );
 		}
 		if ( 404 === $status ) {
-			return array( 'ok' => false, 'reason' => 'not_found', 'message' => __( 'Destination not found (404). Check the Nextcloud URL and folder path.', 'wpguard-nc-backup' ) );
+			return array( 'ok' => false, 'reason' => 'not_found', 'message' => __( 'Destination not found (404). Check the server URL and folder path.', 'wpguard-nc-backup' ) );
 		}
 		if ( 507 === $status ) {
-			return array( 'ok' => false, 'reason' => 'quota', 'message' => __( 'Nextcloud reported insufficient storage/quota.', 'wpguard-nc-backup' ) );
+			return array( 'ok' => false, 'reason' => 'quota', 'message' => __( 'Server reported insufficient storage/quota.', 'wpguard-nc-backup' ) );
 		}
 		if ( 0 === $status ) {
-			return array( 'ok' => false, 'reason' => 'network', 'message' => __( 'Network or TLS error reaching Nextcloud: ', 'wpguard-nc-backup' ) . $this->logger->redact( $message ) );
+			return array( 'ok' => false, 'reason' => 'network', 'message' => __( 'Network or TLS error reaching the server: ', 'wpguard-nc-backup' ) . $this->logger->redact( $message ) );
 		}
 		return array( 'ok' => false, 'reason' => $stage, 'message' => $this->logger->redact( $message ) );
 	}

@@ -2,7 +2,7 @@
 
 ## Running a backup
 
-Admin UI: Settings > Nextcloud Backup > "Back Up Now". Progress polls via
+Admin UI: WPGuard > Nextcloud Backup > "Back Up Now". Progress polls via
 AJAX every 500ms; a WP-Cron fallback (`wpguard_nc_cron_advance`) keeps the
 job moving even if the admin tab is closed (ADR 0003). Reloading or
 reopening the settings page while a job is in progress resumes reporting
@@ -15,6 +15,57 @@ CLI (used by the E2E harness, also usable by an admin with shell access):
 wp wpguard-nc-backup run
 wp wpguard-nc-backup status
 ```
+
+## Downloadable backups (Phase 3)
+
+"Download Now" packages the exact same backup (database + files, same
+manifest/COMPLETE.json format) into one flat zip and lets you save it
+straight to your own computer, instead of uploading it to Nextcloud. No
+Nextcloud configuration is required for this — it's offered unconditionally
+alongside "Back Up Now", not just as a fallback when Nextcloud isn't set up.
+A download-destination backup is always a full backup (no incremental chain
+to diff against without a persistent remote location); retention pruning
+doesn't apply to it either.
+
+The bundle is held in a random-token directory under
+`wp-content/wpguard-nc-backup-tmp/downloads/<token>/`, guarded the same way
+as every other tmp/staging directory this plugin creates (`.htaccess`,
+excluded from the next backup's own file enumeration). It is never deleted
+on download (the server can't know the browser received every byte) —
+instead:
+- A new "Download Now" backup replaces any still-pending one (at most one
+  pending bundle exists at a time).
+- "Delete local copy" removes it immediately.
+- An hourly sweep (and one on every settings-page load) removes it after
+  24 hours regardless (`wpguard_nc_download_bundle_ttl_seconds` filter, 300s
+  floor).
+- Deactivating the plugin purges it immediately rather than leaving it
+  until reactivation.
+
+The download itself is served by a dedicated `admin_post_` endpoint
+(capability + nonce gated, navigable GET rather than AJAX/fetch, so the
+browser streams it instead of buffering the whole zip in memory first).
+
+**A downloaded bundle's `wp-config.php` has the site's real DB credentials
+stripped** (`DB_NAME`/`DB_USER`/`DB_PASSWORD`/`DB_HOST`, in addition to this
+plugin's own app-password/CA-bundle constants, which are already stripped
+on every backup regardless of destination) — a downloadable bundle leaves
+the admin's controlled storage entirely the moment it's saved locally, a
+materially wider exposure than the Nextcloud path (documented, accepted
+residual exposure: `docs/threat-model.md` T9). AUTH_KEY/AUTH_SALT/etc are
+deliberately left untouched (WP 2FA and encryption plugins store real
+recovery material keyed to those values). **Restoring a downloaded bundle
+onto different infrastructure requires re-entering those four DB values by
+hand** — restoring it back onto the exact site it came from needs nothing
+extra, since that site already has its own real values.
+
+**A downloaded bundle restores through the existing "Upload a backup
+bundle" restore path with no separate restore code** — it's built in the
+exact same flat layout (`manifest.json`, `COMPLETE.json`, `database.sql.gz`,
+`files.part-*.zip` at the zip root) `ajax_upload_restore_bundle()` already
+accepts. Round-trip is bounded by the server's own `upload_max_filesize`/
+`post_max_size` on the restoring site, same as any other manual bundle
+upload.
 
 ## Statuses (NFR-01)
 

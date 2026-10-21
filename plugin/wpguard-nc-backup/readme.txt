@@ -24,7 +24,7 @@ A backup is never reported successful until every uploaded component has been re
 == Installation ==
 
 1. Upload and activate the plugin.
-2. Go to Settings > Nextcloud Backup.
+2. Go to WPGuard > Nextcloud Backup.
 3. Enter your Nextcloud URL, the dedicated account's username, its app password, and a destination folder.
 4. Click Test Connection.
 5. Click Back Up Now.

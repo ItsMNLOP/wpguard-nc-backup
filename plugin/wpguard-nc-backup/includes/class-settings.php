@@ -28,6 +28,23 @@ class Settings {
 	// silently starts recurring jobs an admin didn't ask for.
 	const SCHEDULE_CHOICES = array( 'disabled', 'daily', 'weekly' );
 
+	/**
+	 * Phase 3 (multi-backend): Nextcloud_Client is already a generic
+	 * client for this shared WebDAV dialect (confirmed live against
+	 * owncloud/server:10.15 and opencloud 7.2.4 via
+	 * tests/e2e/run-e2e-multi-backend.sh; see STATUS.md and
+	 * docs/threat-model.md T22), so no backend-specific branching exists
+	 * anywhere in the transport layer. get_backend() has no consumer
+	 * yet (security audit, 2026-10-21): the admin UI and error/diagnostic
+	 * messages already use backend-neutral combined wording ("app
+	 * password / app token", "the server") that covers all three
+	 * backends without reading this value at all. Stored for the admin's
+	 * own record and as the hook point should per-backend wording or doc
+	 * links ever be added later; currently display-inert. Default stays
+	 * 'nextcloud' either way.
+	 */
+	const BACKEND_CHOICES = array( 'nextcloud', 'owncloud', 'opencloud' );
+
 	/** Raw stored option (excludes constant-overridden fields' stored value when locked). */
 	public static function get_all(): array {
 		$stored = get_option( self::OPTION_KEY, array() );
@@ -35,6 +52,7 @@ class Settings {
 			$stored = array();
 		}
 		$defaults = array(
+			'backend'        => 'nextcloud',
 			'nextcloud_url'  => '',
 			'nextcloud_user' => '',
 			'app_password'   => '',
@@ -58,6 +76,11 @@ class Settings {
 	 */
 	public static function get_incremental_enabled(): bool {
 		return (bool) self::get_all()['incremental_enabled'];
+	}
+
+	public static function get_backend(): string {
+		$value = (string) self::get_all()['backend'];
+		return in_array( $value, self::BACKEND_CHOICES, true ) ? $value : 'nextcloud';
 	}
 
 	public static function get_schedule(): string {
@@ -126,6 +149,13 @@ class Settings {
 		$errors  = array();
 		$current = self::get_all();
 		$clean   = array();
+
+		// Always a <select> with a fixed option list in the admin UI (same
+		// tolerance as schedule below) -- wording/doc-link hint only, so an
+		// unrecognized value falls back to the safe, pre-existing default
+		// rather than erroring the whole save.
+		$backend = isset( $input['backend'] ) ? (string) $input['backend'] : 'nextcloud';
+		$clean['backend'] = in_array( $backend, self::BACKEND_CHOICES, true ) ? $backend : 'nextcloud';
 
 		$url = isset( $input['nextcloud_url'] ) ? trim( (string) $input['nextcloud_url'] ) : '';
 		$url = rtrim( $url, '/' );
@@ -266,8 +296,66 @@ class Settings {
 	 * Pure string transform, no I/O, so the orchestrator handles reading
 	 * the real file and writing the redacted copy to the job's tmp dir.
 	 */
+	/**
+	 * Matches one full PHP single- or double-quoted string literal
+	 * (escape-aware), for use as define()'s second argument in a
+	 * redaction regex.
+	 *
+	 * security audit finding NEW-MEDIUM-1 (re-verification, 2026-10-21): the previous
+	 * `.*?` here was non-greedy, so it matched only up to the FIRST
+	 * `);` anywhere in the value. Proven live: a credential value
+	 * containing its own literal `);` fragment (plausible -- some
+	 * hosting panels generate passwords from the full printable-ASCII
+	 * set) left everything after that point in the archive unredacted,
+	 * AND defeated the fail-closed strpos() re-check downstream in
+	 * Job_Orchestrator::redacted_wp_config_copy(), since that check
+	 * searches for the FULL secret string, which is no longer present
+	 * once part of it was consumed by the partial match -- a redaction
+	 * failure that silently looked like success. A real quoted-string
+	 * match (tracking the actual quote/escape boundary, not "stop at
+	 * the next close-paren") cannot be fooled by an inner `);` the same
+	 * way. Written as a nowdoc specifically to avoid manually counting
+	 * PHP-string-escape-of-regex-escape backslashes -- what's between
+	 * the markers is the literal regex fragment, verbatim.
+	 */
+	private static function quoted_string_value_pattern(): string {
+		return <<<'REGEX'
+(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")
+REGEX;
+	}
+
 	public static function redact_wp_config_contents( string $content ): string {
-		$pattern = '/define\s*\(\s*[\'"](?:' . preg_quote( self::APP_PW_CONST, '/' ) . '|' . preg_quote( self::CA_BUNDLE_CONST, '/' ) . ')[\'"]\s*,.*?\)\s*;/';
+		$names = preg_quote( self::APP_PW_CONST, '/' ) . '|' . preg_quote( self::CA_BUNDLE_CONST, '/' );
+		$pattern = '/define\s*\(\s*[\'"](?:' . $names . ')[\'"]\s*,\s*' . self::quoted_string_value_pattern() . '\s*\)\s*;/';
 		return preg_replace( $pattern, '// wpguard-nc-backup: line redacted from backup archive (credential constant).', $content );
+	}
+
+	/**
+	 * Phase 3 (downloadable backups), security audit finding MEDIUM-DL-1: a backup
+	 * destined for Nextcloud stays inside storage the admin already
+	 * controls (documented, accepted residual exposure -- threat-model
+	 * T9); a downloadable bundle leaves that custody model entirely the
+	 * moment it lands in the admin's own Downloads folder, where it then
+	 * also sits on the server itself for up to 24h (MEDIUM-DL-2/sweep
+	 * TTL). redact_wp_config_contents() only ever stripped this plugin's
+	 * OWN constants, never the site's real DB credentials -- proven live
+	 * by the audit: a seeded DB_PASSWORD survived into the archived
+	 * wp-config.php unchanged. Applied only to download-destination
+	 * bundles (Job_Orchestrator::step_export_files()), never the
+	 * Nextcloud path, to avoid silently changing that already-documented,
+	 * already-accepted behavior. Deliberately does NOT strip
+	 * AUTH_KEY/AUTH_SALT/etc or any other constant -- WP 2FA and
+	 * encryption plugins store real recovery material keyed to those
+	 * values, and stripping them would make a legitimate same-host
+	 * restore from a downloaded bundle silently lose that data. The admin
+	 * must re-enter DB_NAME/DB_USER/DB_PASSWORD/DB_HOST by hand when
+	 * restoring a downloaded bundle onto different infrastructure --
+	 * documented in docs/operations.md and docs/restore-manual.md.
+	 */
+	public static function redact_wp_config_db_credentials( string $content ): string {
+		$db_consts = array( 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_HOST' );
+		$names = implode( '|', array_map( static fn( $c ) => preg_quote( $c, '/' ), $db_consts ) );
+		$pattern = '/define\s*\(\s*[\'"](?:' . $names . ')[\'"]\s*,\s*' . self::quoted_string_value_pattern() . '\s*\)\s*;/';
+		return preg_replace( $pattern, '// wpguard-nc-backup: line redacted from downloadable bundle (DB credential constant -- re-enter manually when restoring elsewhere).', $content );
 	}
 }

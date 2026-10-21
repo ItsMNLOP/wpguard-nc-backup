@@ -40,6 +40,7 @@ services:
       - wp_source_html:/var/www/html
       - ../plugin/wpguard-nc-backup:/var/www/html/wp-content/plugins/wpguard-nc-backup
       - ./certs:/usr/local/share/ca-certificates:ro
+      - ./php/uploads.ini:/usr/local/etc/php/conf.d/zz-wpguard-test-uploads.ini:ro
     ports:
       - "127.0.0.1:8081:80"
     networks: [wpguard-test]
@@ -113,6 +114,124 @@ services:
           # plugin's validation for test convenience.
           - nc-proxy.wpguard-test.local
 
+  # Phase 3 multi-backend probe/test fixtures (ownCloud classic + OpenCloud).
+  # Not part of the default stack -- bring up with `--profile multi-backend`.
+  db-owncloud:
+    image: mariadb:11.4
+    restart: "no"
+    mem_limit: 512m
+    cpus: 1
+    profiles: ["multi-backend"]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${OC_DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${OC_DB_NAME}
+      MARIADB_USER: ${OC_DB_USER}
+      MARIADB_PASSWORD: ${OC_DB_PASSWORD}
+    volumes:
+      - db_owncloud_data:/var/lib/mysql
+    networks: [wpguard-test]
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root -p\"$$MARIADB_ROOT_PASSWORD\" --silent"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  owncloud:
+    image: owncloud/server:10.15
+    restart: "no"
+    mem_limit: 1g
+    cpus: 1.5
+    profiles: ["multi-backend"]
+    depends_on:
+      db-owncloud:
+        condition: service_healthy
+    environment:
+      OWNCLOUD_DB_TYPE: mysql
+      OWNCLOUD_DB_HOST: db-owncloud
+      OWNCLOUD_DB_NAME: ${OC_DB_NAME}
+      OWNCLOUD_DB_USERNAME: ${OC_DB_USER}
+      OWNCLOUD_DB_PASSWORD: ${OC_DB_PASSWORD}
+      OWNCLOUD_ADMIN_USERNAME: ${OWNCLOUD_ADMIN_USER}
+      OWNCLOUD_ADMIN_PASSWORD: ${OWNCLOUD_ADMIN_PASSWORD}
+      OWNCLOUD_DOMAIN: oc-proxy.wpguard-test.local
+      # owncloud/server's config.php template does `explode(',', ...)` on
+      # this var, not a space-split -- a space-separated value here lands
+      # as one unsplit, never-matching trusted-domain string (confirmed
+      # live: config.php showed exactly that). Also observed: editing
+      # config.php's trusted_domains directly via `occ` on an
+      # already-running container did not hold across subsequent `occ`
+      # invocations -- each one appeared to re-derive the same broken
+      # value from this var. Only a force-recreate of the container
+      # (`docker compose ... up -d --force-recreate owncloud`, same data
+      # volume, so no reinstall) against the corrected comma-separated
+      # value actually fixed it.
+      OWNCLOUD_TRUSTED_DOMAINS: "owncloud,oc-proxy,oc-proxy.wpguard-test.local"
+      OWNCLOUD_OVERWRITEPROTOCOL: https
+    volumes:
+      - owncloud_data:/mnt/data
+    networks: [wpguard-test]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/status.php"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+
+  oc-proxy:
+    image: nginx:alpine
+    restart: "no"
+    mem_limit: 128m
+    cpus: 0.5
+    profiles: ["multi-backend"]
+    depends_on:
+      owncloud:
+        condition: service_healthy
+    volumes:
+      - ./nginx/oc-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro
+    ports:
+      - "127.0.0.1:8444:443"
+    networks:
+      wpguard-test:
+        aliases:
+          - oc-proxy.wpguard-test.local
+
+  opencloud:
+    image: opencloudeu/opencloud:7.2.4
+    restart: "no"
+    mem_limit: 1g
+    cpus: 1.5
+    profiles: ["multi-backend"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "opencloud init --insecure false || true; exec opencloud server"
+    environment:
+      OC_URL: https://opencloud.wpguard-test.local:9200
+      IDM_ADMIN_PASSWORD: ${OPENCLOUD_ADMIN_PASSWORD}
+      PROXY_TRANSPORT_TLS_CERT: /certs/opencloud.pem
+      PROXY_TRANSPORT_TLS_KEY: /certs/opencloud.key
+      # OpenCloud's own internal services call each other over HTTPS on
+      # this same container (e.g. frontend -> data service), even though
+      # PROXY_TRANSPORT_TLS_CERT only serves the external-facing listener
+      # -- so Go's x509 verifier needs the test CA too, or those internal
+      # calls fail (status 500 on PUT, confirmed live). The container
+      # runs as a non-root user with no write access to the system trust
+      # store, so SSL_CERT_FILE (which Go's crypto/x509 honors directly
+      # on Linux) is used instead of update-ca-certificates. Trusting a
+      # CA this plugin's own test fixtures generated, not disabling
+      # verification (ADR 0007's spirit, even though this self-call path
+      # is OpenCloud-internal, never the plugin's own).
+      SSL_CERT_FILE: /certs/wpguard-test-ca.crt
+    volumes:
+      - opencloud_data:/var/lib/opencloud
+      - opencloud_config:/etc/opencloud
+      - ./certs:/certs:ro
+    ports:
+      - "127.0.0.1:9200:9200"
+    networks:
+      wpguard-test:
+        aliases:
+          - opencloud.wpguard-test.local
+
   db-restore:
     image: mariadb:11.4
     restart: "no"
@@ -154,6 +273,7 @@ services:
       # E2E scripts depend on -- so this is the safe target for a real
       # in-place restore test, not wp-source.
       - ../plugin/wpguard-nc-backup:/var/www/html/wp-content/plugins/wpguard-nc-backup
+      - ./php/uploads.ini:/usr/local/etc/php/conf.d/zz-wpguard-test-uploads.ini:ro
     ports:
       - "127.0.0.1:8082:80"
     networks: [wpguard-test]
@@ -194,6 +314,10 @@ volumes:
   wp_source_html:
   db_nextcloud_data:
   nextcloud_data:
+  db_owncloud_data:
+  owncloud_data:
+  opencloud_data:
+  opencloud_config:
   db_restore_data:
   wp_restore_html:
 

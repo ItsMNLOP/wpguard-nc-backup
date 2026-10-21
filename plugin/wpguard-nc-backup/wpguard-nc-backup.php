@@ -32,7 +32,9 @@ define( 'WPGUARD_NC_VERSION', '1.2.0' );
 define( 'WPGUARD_NC_FORMAT_VERSION', 2 );
 define( 'WPGUARD_NC_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WPGUARD_NC_URL', plugin_dir_url( __FILE__ ) );
-define( 'WPGUARD_NC_DB_SCHEMA_VERSION', 1 );
+// Phase 3 (downloadable backups): bumped 1 -> 2, adds the jobs table's
+// own `destination` column (see class-job-store.php's create() docblock).
+define( 'WPGUARD_NC_DB_SCHEMA_VERSION', 2 );
 
 spl_autoload_register(
 	function ( $class ) {
@@ -79,6 +81,12 @@ function sync_stale_lock_check(): void {
 function deactivate() {
 	wp_clear_scheduled_hook( STALE_LOCK_CHECK_HOOK );
 	wp_clear_scheduled_hook( SCHEDULED_BACKUP_HOOK );
+	// Phase 3 (downloadable backups): the hourly sweep this deactivates
+	// is the only thing that would otherwise ever clean up a pending
+	// local bundle holding a full DB dump -- purge unconditionally
+	// rather than leave one sitting on disk for as long as the plugin
+	// stays deactivated.
+	Job_Orchestrator::sweep_download_bundles( true );
 }
 
 /**
@@ -176,6 +184,11 @@ function boot() {
 	// traffic after it's due, same limitation as the advance-chain
 	// fallback) clears it proactively instead of waiting for that.
 	add_action( STALE_LOCK_CHECK_HOOK, __NAMESPACE__ . '\\Job_Orchestrator::reap_stale_lock' );
+
+	// Phase 3 (downloadable backups): same hourly safety net, TTL-only
+	// (no $purge_all arg passed, so an unexpired pending bundle survives
+	// until an admin downloads/deletes it or it genuinely goes stale).
+	add_action( STALE_LOCK_CHECK_HOOK, __NAMESPACE__ . '\\Job_Orchestrator::sweep_download_bundles' );
 
 	// Idempotent reconciliation on every load (OBS-1: covers an
 	// in-place plugin update, which activate() alone would miss), in

@@ -249,21 +249,40 @@ class Restore_Orchestrator {
 		// cancelled would block every future backup AND restore until
 		// someone noticed.
 		Job_Orchestrator::reap_stale_lock();
-		if ( Job_Store::has_running_job() ) {
+
+		// security audit finding NEW-LOW-1 (re-verification, 2026-10-21): proven live --
+		// 5 parallel backup+restore create calls produced 2 concurrent
+		// active jobs (a download backup running alongside a restore),
+		// since only create_job() held an advisory lock around its own
+		// check-then-act window; this one had none at all. Same shared
+		// lock name as create_job() (see its docblock) -- also
+		// serializes a backup starting against a restore starting, not
+		// just two restores against each other.
+		global $wpdb;
+		$lock_name = Job_Orchestrator::create_job_lock_name();
+		$got = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 5)', $lock_name ) );
+		if ( '1' !== (string) $got ) {
 			return '';
 		}
-		$job_id = 'restore-' . bin2hex( random_bytes( 8 ) );
-		self::ensure_tmp_guarded( self::tmp_dir_for( $job_id ) );
-		Job_Store::create( $job_id, $source_backup_id );
-		Job_Store::update( $job_id, array(
-			'step'       => 'restore_acquire',
-			'checkpoint' => array(
-				'kind'                  => 'restore',
-				'source'                => $source,
-				'confirm_url_mismatch'  => $confirm_url_mismatch,
-			),
-		) );
-		return $job_id;
+		try {
+			if ( Job_Store::has_running_job() ) {
+				return '';
+			}
+			$job_id = 'restore-' . bin2hex( random_bytes( 8 ) );
+			self::ensure_tmp_guarded( self::tmp_dir_for( $job_id ) );
+			Job_Store::create( $job_id, $source_backup_id );
+			Job_Store::update( $job_id, array(
+				'step'       => 'restore_acquire',
+				'checkpoint' => array(
+					'kind'                  => 'restore',
+					'source'                => $source,
+					'confirm_url_mismatch'  => $confirm_url_mismatch,
+				),
+			) );
+			return $job_id;
+		} finally {
+			$wpdb->query( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+		}
 	}
 
 	public static function advance( string $job_id ): array {

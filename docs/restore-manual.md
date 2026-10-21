@@ -2,7 +2,7 @@
 
 **If you're restoring this exact site, in place, and the plugin is still
 installed and running on it: use the plugin's own one-click restore
-(Settings > Nextcloud Backup > Restore) instead of this document.** It
+(WPGuard > Nextcloud Backup > Restore) instead of this document.** It
 handles every step below automatically, verified against real production
 data (`tests/e2e/run-e2e-restore.sh`, `docs/operations.md`'s "One-click
 restore" section, `docs/threat-model.md` T20). This manual runbook exists

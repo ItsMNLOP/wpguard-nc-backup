@@ -31,6 +31,7 @@ class Job_Store {
 			backup_id VARCHAR(64) NOT NULL,
 			status VARCHAR(24) NOT NULL DEFAULT 'queued',
 			step VARCHAR(40) NOT NULL DEFAULT 'init',
+			destination VARCHAR(16) NOT NULL DEFAULT 'nextcloud',
 			checkpoint LONGTEXT NULL,
 			log LONGTEXT NULL,
 			error TEXT NULL,
@@ -42,21 +43,33 @@ class Job_Store {
 		update_option( 'wpguard_nc_db_schema_version', WPGUARD_NC_DB_SCHEMA_VERSION, true );
 	}
 
-	public static function create( string $job_id, string $backup_id ): void {
+	/**
+	 * Phase 3 (downloadable backups): $destination is decided once, here,
+	 * and lives in its own column rather than inside the checkpoint JSON
+	 * blob -- every step function that rebuilds $cp from scratch (step_init
+	 * replaces the whole checkpoint with just array('chain' => $chain), for
+	 * example) would otherwise silently drop it the moment any step ran,
+	 * since Job_Store::update() replaces the checkpoint column wholesale,
+	 * never merges. A top-level column is read automatically by every
+	 * SELECT * caller already in this file, with no merge discipline
+	 * needed anywhere else.
+	 */
+	public static function create( string $job_id, string $backup_id, string $destination = 'nextcloud' ): void {
 		global $wpdb;
 		$wpdb->insert(
 			self::table_name(),
 			array(
-				'job_id'     => $job_id,
-				'backup_id'  => $backup_id,
-				'status'     => 'queued',
-				'step'       => 'init',
-				'checkpoint' => wp_json_encode( array() ),
-				'log'        => wp_json_encode( array() ),
-				'created_at' => current_time( 'mysql', true ),
-				'updated_at' => current_time( 'mysql', true ),
+				'job_id'      => $job_id,
+				'backup_id'   => $backup_id,
+				'status'      => 'queued',
+				'step'        => 'init',
+				'destination' => $destination,
+				'checkpoint'  => wp_json_encode( array() ),
+				'log'         => wp_json_encode( array() ),
+				'created_at'  => current_time( 'mysql', true ),
+				'updated_at'  => current_time( 'mysql', true ),
 			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 	}
 
@@ -183,15 +196,49 @@ class Job_Store {
 		return 'wpguard_nc_job_' . $job_id;
 	}
 
-	/** @return array|null The most recent job with status = 'verified'. */
+	/**
+	 * @return array|null The most recent job with status = 'verified'.
+	 *
+	 * Phase 3, security audit finding LOW-DL-2: a download-only job has no persistent
+	 * remote copy (its local bundle is purged within 24h at most), so it
+	 * must never be reported here as the site's standing "last verified
+	 * backup" -- the admin-page display this feeds is specifically about
+	 * what's durably recoverable, and a download-only job's bundle may
+	 * already be gone by the time anyone reads this.
+	 */
 	public static function get_latest_verified(): ?array {
 		global $wpdb;
-		$row = $wpdb->get_row( "SELECT * FROM " . self::table_name() . " WHERE status = 'verified' ORDER BY created_at DESC LIMIT 1", ARRAY_A );
+		$row = $wpdb->get_row( "SELECT * FROM " . self::table_name() . " WHERE status = 'verified' AND destination = 'nextcloud' ORDER BY created_at DESC LIMIT 1", ARRAY_A );
 		if ( ! $row ) {
 			return null;
 		}
 		$row['checkpoint'] = json_decode( (string) $row['checkpoint'], true ) ?: array();
 		$row['log'] = json_decode( (string) $row['log'], true ) ?: array();
 		return $row;
+	}
+
+	/**
+	 * Phase 3, security audit finding LOW-DL-3: used by the download-bundle sweep to
+	 * clear a job's checkpoint the moment its on-disk bundle is removed --
+	 * without this, download_available (public_job_view()) kept reading
+	 * true from a stale download_token after the file it names was
+	 * already deleted, resurfacing a dead download link on the next page
+	 * load. Scans 'download'-destination rows only (never a large set in
+	 * practice -- one per local backup ever taken) rather than needing a
+	 * JSON-aware SQL query, which isn't portable across MySQL versions
+	 * this plugin supports.
+	 */
+	public static function find_by_download_token( string $token ): ?array {
+		global $wpdb;
+		$rows = $wpdb->get_results( "SELECT * FROM " . self::table_name() . " WHERE destination = 'download'", ARRAY_A );
+		foreach ( (array) $rows as $row ) {
+			$cp = json_decode( (string) $row['checkpoint'], true ) ?: array();
+			if ( $token === ( $cp['download_token'] ?? '' ) || $token === ( $cp['bundle_local_token'] ?? '' ) ) {
+				$row['checkpoint'] = $cp;
+				$row['log'] = json_decode( (string) $row['log'], true ) ?: array();
+				return $row;
+			}
+		}
+		return null;
 	}
 }

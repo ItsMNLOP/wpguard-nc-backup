@@ -66,7 +66,7 @@ security model.
 1. Download the latest release ZIP, or build one yourself with
    `docker/scripts/package.ps1`.
 2. Upload and activate the plugin in WordPress.
-3. Go to **Settings > Nextcloud Backup**.
+3. Go to **WPGuard > Nextcloud Backup**.
 4. Enter your Nextcloud URL, the dedicated account's username, its app
    password, and a destination folder.
 5. Click **Test Connection**, then **Back Up Now**.

@@ -14,6 +14,33 @@ class Admin {
 
 	const NONCE_ACTION = 'wpguard_nc_admin';
 
+	/**
+	 * Phase 3, security audit finding LOW-DL-4: the download link previously reused
+	 * NONCE_ACTION, the same nonce shared by every other action on this
+	 * page (save settings, start backup, cancel job, start/upload
+	 * restore) -- that value sits in a navigable GET URL (browser
+	 * history, server access logs, Referer headers), a materially wider
+	 * exposure surface than a POSTed nonce never leaves the request body.
+	 * A nonce alone (without the session cookie) can't perform any
+	 * privileged action, but least-privilege nonce scoping is cheap here.
+	 */
+	const NONCE_ACTION_DOWNLOAD = 'wpguard_nc_download_bundle';
+
+	/**
+	 * Shared top-level menu slug for the whole WPGuard plugin family, not
+	 * just this plugin. Every WPGuard plugin's admin.php should carry an
+	 * identical copy of add_menu() below: whichever plugin's admin_menu
+	 * callback runs first creates the 'WPGuard' parent (and immediately
+	 * removes the duplicate landing submenu WP auto-adds under it, since
+	 * no plugin owns a real page there), and every other WPGuard plugin
+	 * just finds it already in $menu and adds its own submenu under it.
+	 * No shared code loads across plugin boundaries -- this is the same
+	 * "copy the idempotent snippet, let whichever loads first win"
+	 * pattern WP libraries like Action Scheduler use, since separate
+	 * plugin zips can't literally share a PHP class.
+	 */
+	const FAMILY_PARENT_SLUG = 'wpguard';
+
 	public function register(): void {
 		add_action( 'admin_menu', array( $this, 'add_menu' ) );
 		add_action( 'wp_ajax_wpguard_nc_save_settings', array( $this, 'ajax_save_settings' ) );
@@ -25,10 +52,40 @@ class Admin {
 		add_action( 'wp_ajax_wpguard_nc_list_restorable_backups', array( $this, 'ajax_list_restorable_backups' ) );
 		add_action( 'wp_ajax_wpguard_nc_upload_restore_bundle', array( $this, 'ajax_upload_restore_bundle' ) );
 		add_action( 'wp_ajax_wpguard_nc_start_restore', array( $this, 'ajax_start_restore' ) );
+		// Phase 3 (downloadable backups): a navigable GET, not AJAX --
+		// fetch() would buffer the whole zip in browser memory before
+		// handing it to the user, a real problem for a full-site backup.
+		// The priv-only admin_post_ hook refuses an unauthenticated request
+		// before this callback is even reached.
+		add_action( 'admin_post_wpguard_nc_download_bundle', array( $this, 'handle_download_bundle' ) );
+		add_action( 'wp_ajax_wpguard_nc_delete_download_bundle', array( $this, 'ajax_delete_download_bundle' ) );
 	}
 
 	public function add_menu(): void {
-		add_options_page(
+		global $menu;
+		$parent_exists = false;
+		foreach ( (array) $menu as $item ) {
+			if ( isset( $item[2] ) && self::FAMILY_PARENT_SLUG === $item[2] ) {
+				$parent_exists = true;
+				break;
+			}
+		}
+		if ( ! $parent_exists ) {
+			add_menu_page(
+				__( 'WPGuard', 'wpguard-nc-backup' ),
+				__( 'WPGuard', 'wpguard-nc-backup' ),
+				'manage_options',
+				self::FAMILY_PARENT_SLUG,
+				'',
+				'dashicons-shield'
+			);
+			// WP auto-adds a submenu item duplicating the parent label/slug;
+			// no WPGuard plugin owns a real page there, so drop it rather
+			// than leave a dead link.
+			remove_submenu_page( self::FAMILY_PARENT_SLUG, self::FAMILY_PARENT_SLUG );
+		}
+		add_submenu_page(
+			self::FAMILY_PARENT_SLUG,
 			__( 'WPGuard Nextcloud Backup', 'wpguard-nc-backup' ),
 			__( 'Nextcloud Backup', 'wpguard-nc-backup' ),
 			'manage_options',
@@ -55,6 +112,7 @@ class Admin {
 			return;
 		}
 		$input = array(
+			'backend'        => isset( $_POST['backend'] ) ? sanitize_text_field( wp_unslash( $_POST['backend'] ) ) : 'nextcloud',
 			'nextcloud_url'  => isset( $_POST['nextcloud_url'] ) ? wp_unslash( $_POST['nextcloud_url'] ) : '',
 			'nextcloud_user' => isset( $_POST['nextcloud_user'] ) ? wp_unslash( $_POST['nextcloud_user'] ) : '',
 			'app_password'   => isset( $_POST['app_password'] ) ? wp_unslash( $_POST['app_password'] ) : '',
@@ -80,7 +138,7 @@ class Admin {
 			return;
 		}
 		if ( ! Settings::has_credentials() ) {
-			wp_send_json_error( array( 'message' => __( 'Enter and save the Nextcloud URL, username, and app password first.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Enter and save the server URL, username, and app password / app token first.', 'wpguard-nc-backup' ) ) );
 			return;
 		}
 		$logger = new Logger( array( Settings::get_app_password() ) );
@@ -97,17 +155,96 @@ class Admin {
 		if ( ! $this->require_capability_and_nonce() ) {
 			return;
 		}
-		if ( ! Settings::has_credentials() ) {
-			wp_send_json_error( array( 'message' => __( 'Configure and save Nextcloud settings before starting a backup.', 'wpguard-nc-backup' ) ) );
+		// Phase 3 (downloadable backups): 'download' is always offered,
+		// Nextcloud configured or not -- 'nextcloud' (the default, for any
+		// caller that predates this param) still requires credentials,
+		// unchanged.
+		$destination = isset( $_POST['destination'] ) ? sanitize_text_field( wp_unslash( $_POST['destination'] ) ) : 'nextcloud';
+		if ( ! in_array( $destination, array( 'nextcloud', 'download' ), true ) ) {
+			$destination = 'nextcloud';
+		}
+		if ( 'nextcloud' === $destination && ! Settings::has_credentials() ) {
+			wp_send_json_error( array( 'message' => __( 'Configure and save your cloud storage destination before backing up to it, or use Download Now instead.', 'wpguard-nc-backup' ) ) );
 			return;
 		}
-		$job_id = Job_Orchestrator::create_job();
+		$job_id = Job_Orchestrator::create_job( $destination );
 		if ( '' === $job_id ) {
 			wp_send_json_error( array( 'message' => __( 'A backup is already running.', 'wpguard-nc-backup' ) ) );
 			return;
 		}
 		wp_schedule_single_event( time() + 5, 'wpguard_nc_cron_advance', array( $job_id ) );
 		wp_send_json_success( array( 'job_id' => $job_id ) );
+	}
+
+	/**
+	 * Phase 3 (downloadable backups): streams the verified local bundle.
+	 * Capability + nonce gated like every other handler here; job_id is
+	 * the only request input, the actual file path is derived entirely
+	 * from server-side job state, never from anything request-supplied.
+	 */
+	public function handle_download_bundle(): void {
+		// Note: an anonymous request never reaches this method at all --
+		// wp-admin/admin-post.php itself returns wp_die('', 400) for any
+		// admin_post_{action} with no matching admin_post_nopriv_{action}
+		// registered (deliberately not registered here), confirmed live.
+		// The check below is still real defense in depth for a logged-in
+		// user who lacks the capability.
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You do not have permission to do this.', 'wpguard-nc-backup' ), '', array( 'response' => 403 ) );
+		}
+		$nonce = isset( $_GET['nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['nonce'] ) ) : '';
+		if ( ! wp_verify_nonce( $nonce, self::NONCE_ACTION_DOWNLOAD ) ) {
+			wp_die( esc_html__( 'Security check failed; please reload the page and try again.', 'wpguard-nc-backup' ), '', array( 'response' => 403 ) );
+		}
+		$job_id = isset( $_GET['job_id'] ) ? sanitize_text_field( wp_unslash( $_GET['job_id'] ) ) : '';
+		$job = '' !== $job_id ? Job_Store::get( $job_id ) : null;
+		if ( null === $job || 'download' !== ( $job['destination'] ?? '' ) || 'verified' !== ( $job['status'] ?? '' ) ) {
+			wp_die( esc_html__( 'No downloadable backup is available for that job.', 'wpguard-nc-backup' ), '', array( 'response' => 404 ) );
+		}
+
+		$token = $job['checkpoint']['download_token'] ?? '';
+		$dir = Job_Orchestrator::download_dir_for_token( $token );
+		$base = realpath( Job_Orchestrator::download_base_dir() );
+		$real_dir = '' !== $dir ? realpath( $dir ) : false;
+		// Defense in depth: the token/path come entirely from server-side
+		// checkpoint state, never from this request, but confirm the
+		// resolved path still lands inside the one directory this
+		// endpoint is ever allowed to serve from before trusting it.
+		if ( false === $base || false === $real_dir || 0 !== strpos( $real_dir . DIRECTORY_SEPARATOR, $base . DIRECTORY_SEPARATOR ) ) {
+			wp_die( esc_html__( 'Downloadable backup could not be located.', 'wpguard-nc-backup' ), '', array( 'response' => 404 ) );
+		}
+		$bundle_path = $job['checkpoint']['download_bundle_path'] ?? '';
+		$real_bundle = '' !== $bundle_path ? realpath( $bundle_path ) : false;
+		if ( false === $real_bundle || 0 !== strpos( $real_bundle, $real_dir ) || ! is_file( $real_bundle ) ) {
+			wp_die( esc_html__( 'Downloadable backup file is missing -- it may have expired (pending bundles are removed after 24 hours). Run a new backup.', 'wpguard-nc-backup' ), '', array( 'response' => 404 ) );
+		}
+
+		nocache_headers();
+		header( 'Content-Type: application/zip' );
+		header( 'Content-Disposition: attachment; filename="' . sanitize_file_name( basename( $real_bundle ) ) . '"' );
+		header( 'Content-Length: ' . filesize( $real_bundle ) );
+		header( 'X-Content-Type-Options: nosniff' );
+		while ( ob_get_level() > 0 ) {
+			ob_end_clean();
+		}
+		@ini_set( 'zlib.output_compression', 'Off' );
+		readfile( $real_bundle );
+		exit;
+	}
+
+	/**
+	 * Phase 3: POST + nonce -- an admin explicitly discarding a pending
+	 * local bundle before its TTL. At most one pending bundle ever exists
+	 * at a time (cap-at-one, enforced in Job_Orchestrator::create_job()),
+	 * so purging unconditionally is equivalent to "delete job_id's bundle"
+	 * without needing to resolve job_id to a specific directory first.
+	 */
+	public function ajax_delete_download_bundle(): void {
+		if ( ! $this->require_capability_and_nonce() ) {
+			return;
+		}
+		Job_Orchestrator::sweep_download_bundles( true );
+		wp_send_json_success( array( 'message' => __( 'Local backup bundle deleted.', 'wpguard-nc-backup' ) ) );
 	}
 
 	/** Phase 2 (one-click restore): a job_id may belong to either orchestrator; dispatched by checkpoint kind. */
@@ -173,7 +310,7 @@ class Admin {
 			return;
 		}
 		if ( ! Settings::has_credentials() ) {
-			wp_send_json_error( array( 'message' => __( 'Configure and save Nextcloud settings first.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Configure and save your cloud storage destination first.', 'wpguard-nc-backup' ) ) );
 			return;
 		}
 		$client = Nextcloud_Client::from_settings( new Logger( array( Settings::get_app_password() ) ) );
@@ -358,13 +495,20 @@ class Admin {
 	/** Strips anything that shouldn't reach the browser even redacted-in-principle (defense in depth). */
 	private function public_job_view( array $job ): array {
 		return array(
-			'job_id'     => $job['job_id'] ?? '',
-			'backup_id'  => $job['backup_id'] ?? '',
-			'status'     => $job['status'] ?? '',
-			'step'       => $job['step'] ?? '',
-			'error'      => $job['error'] ?? '',
-			'log'        => array_slice( $job['log'] ?? array(), -10 ),
-			'kind'       => 'restore' === ( $job['checkpoint']['kind'] ?? 'backup' ) ? 'restore' : 'backup',
+			'job_id'             => $job['job_id'] ?? '',
+			'backup_id'          => $job['backup_id'] ?? '',
+			'status'             => $job['status'] ?? '',
+			'step'               => $job['step'] ?? '',
+			'error'              => $job['error'] ?? '',
+			'log'                => array_slice( $job['log'] ?? array(), -10 ),
+			'kind'               => 'restore' === ( $job['checkpoint']['kind'] ?? 'backup' ) ? 'restore' : 'backup',
+			// Phase 3: never exposes the bundle's real filesystem path --
+			// just enough for the UI to show/hide the download link and
+			// build the admin_post.php URL from job_id + nonce.
+			'destination'        => $job['destination'] ?? 'nextcloud',
+			'download_available' => 'download' === ( $job['destination'] ?? '' )
+				&& 'verified' === ( $job['status'] ?? '' )
+				&& ! empty( $job['checkpoint']['download_token'] ),
 		);
 	}
 
@@ -372,8 +516,14 @@ class Admin {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
+		// Phase 3: housekeeping sweep on every settings-page load, same as
+		// the hourly cron -- catches a TTL-expired bundle promptly even on
+		// a low-traffic site where the cron's own pseudo-cron trigger
+		// might lag.
+		Job_Orchestrator::sweep_download_bundles();
 		$settings = Settings::get_all();
 		$nonce = wp_create_nonce( self::NONCE_ACTION );
+		$download_nonce = wp_create_nonce( self::NONCE_ACTION_DOWNLOAD );
 		$locked_pw = Settings::is_app_password_locked();
 		$locked_ca = Settings::is_ca_bundle_locked();
 		$latest_verified = Job_Store::get_latest_verified();
@@ -406,18 +556,29 @@ class Admin {
 			<h2><?php esc_html_e( 'Connection', 'wpguard-nc-backup' ); ?></h2>
 			<table class="form-table" role="presentation">
 				<tr>
-					<th><label for="wpguard_nc_url"><?php esc_html_e( 'Nextcloud URL (https only)', 'wpguard-nc-backup' ); ?></label></th>
-					<td><input type="url" id="wpguard_nc_url" value="<?php echo esc_attr( $settings['nextcloud_url'] ); ?>" class="regular-text" placeholder="https://your-nextcloud.example.com"></td>
+					<th><label for="wpguard_nc_backend"><?php esc_html_e( 'Cloud storage type', 'wpguard-nc-backup' ); ?></label></th>
+					<td>
+						<select id="wpguard_nc_backend">
+							<option value="nextcloud" <?php selected( $settings['backend'], 'nextcloud' ); ?>><?php esc_html_e( 'Nextcloud', 'wpguard-nc-backup' ); ?></option>
+							<option value="owncloud" <?php selected( $settings['backend'], 'owncloud' ); ?>><?php esc_html_e( 'ownCloud (classic, 10.x)', 'wpguard-nc-backup' ); ?></option>
+							<option value="opencloud" <?php selected( $settings['backend'], 'opencloud' ); ?>><?php esc_html_e( 'OpenCloud', 'wpguard-nc-backup' ); ?></option>
+						</select>
+						<p class="description"><?php esc_html_e( 'All three speak the same WebDAV dialect this plugin uses, verified directly against each. The connection and every backup/restore step work identically regardless of which you pick -- this is for your own record (the credential field below already covers all three without needing to know which one is selected).', 'wpguard-nc-backup' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="wpguard_nc_url"><?php esc_html_e( 'Server URL (https only)', 'wpguard-nc-backup' ); ?></label></th>
+					<td><input type="url" id="wpguard_nc_url" value="<?php echo esc_attr( $settings['nextcloud_url'] ); ?>" class="regular-text" placeholder="https://your-server.example.com"></td>
 				</tr>
 				<tr>
 					<th><label for="wpguard_nc_user"><?php esc_html_e( 'Username (dedicated, non-admin account recommended)', 'wpguard-nc-backup' ); ?></label></th>
 					<td><input type="text" id="wpguard_nc_user" value="<?php echo esc_attr( $settings['nextcloud_user'] ); ?>" class="regular-text"></td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_pw"><?php esc_html_e( 'App password', 'wpguard-nc-backup' ); ?></label></th>
+					<th><label for="wpguard_nc_pw"><?php esc_html_e( 'App password / app token', 'wpguard-nc-backup' ); ?></label></th>
 					<td>
 						<input type="password" id="wpguard_nc_pw" value="" class="regular-text" autocomplete="new-password" <?php echo $locked_pw ? 'disabled' : ''; ?> placeholder="<?php echo esc_attr( $locked_pw ? __( 'Set via WPGUARD_NC_APP_PASSWORD constant', 'wpguard-nc-backup' ) : __( 'leave blank to keep current value', 'wpguard-nc-backup' ) ); ?>">
-						<p class="description"><?php esc_html_e( 'Never echoed back. Generate a dedicated app password in Nextcloud under Personal Settings > Security — do not use your main account password.', 'wpguard-nc-backup' ); ?></p>
+						<p class="description"><?php esc_html_e( 'Never echoed back. Generate a dedicated app password (Nextcloud/ownCloud) or app token (OpenCloud) under your account\'s Security settings — do not use your main account password.', 'wpguard-nc-backup' ); ?></p>
 					</td>
 				</tr>
 				<tr>
@@ -466,10 +627,13 @@ class Admin {
 			<h2><?php esc_html_e( 'Manual backup', 'wpguard-nc-backup' ); ?></h2>
 			<p>
 				<button type="button" class="button button-primary" id="wpguard_nc_backup_now"><?php esc_html_e( 'Back Up Now', 'wpguard-nc-backup' ); ?></button>
+				<button type="button" class="button" id="wpguard_nc_download_now"><?php esc_html_e( 'Download Now', 'wpguard-nc-backup' ); ?></button>
 				<button type="button" class="button" id="wpguard_nc_cancel_job"><?php esc_html_e( 'Cancel / Reset Stuck Job', 'wpguard-nc-backup' ); ?></button>
 			</p>
+			<p class="description"><?php esc_html_e( 'Back Up Now sends this backup to your configured cloud storage destination. Download Now instead packages the same backup into one .zip and lets you save it straight to your own computer -- no cloud storage configuration required. A pending download is NOT deleted automatically just because you clicked Download (the server cannot confirm your browser received every byte) -- it stays on this server, guarded against direct web access, until you click "Delete local copy" below, start another Download Now backup (which replaces it), or 24 hours pass, whichever comes first.', 'wpguard-nc-backup' ); ?></p>
 			<p class="description"><?php esc_html_e( 'If a backup never completes (e.g. the site had no other traffic to trigger the WP-Cron fallback), use Cancel to mark it failed so a new backup can start. Already-uploaded parts of a cancelled job are left on Nextcloud untouched.', 'wpguard-nc-backup' ); ?></p>
 			<div id="wpguard_nc_job_status" role="status"></div>
+			<p id="wpguard_nc_job_download_row" style="display:none;"><a class="button button-primary" id="wpguard_nc_job_download_link" href="#"><?php esc_html_e( 'Download backup (.zip)', 'wpguard-nc-backup' ); ?></a> <button type="button" class="button" id="wpguard_nc_job_download_delete"><?php esc_html_e( 'Delete local copy', 'wpguard-nc-backup' ); ?></button></p>
 			<pre id="wpguard_nc_job_log" style="max-height:300px;overflow:auto;background:#fff;border:1px solid #ccd0d4;padding:8px;"></pre>
 
 			<h2><?php esc_html_e( 'Restore', 'wpguard-nc-backup' ); ?></h2>
@@ -479,7 +643,7 @@ class Admin {
 				<tr>
 					<th><?php esc_html_e( 'Source', 'wpguard-nc-backup' ); ?></th>
 					<td>
-						<label><input type="radio" name="wpguard_nc_restore_source" value="nextcloud" checked> <?php esc_html_e( 'Choose from Nextcloud', 'wpguard-nc-backup' ); ?></label>
+						<label><input type="radio" name="wpguard_nc_restore_source" value="nextcloud" checked> <?php esc_html_e( 'Choose from configured cloud storage', 'wpguard-nc-backup' ); ?></label>
 						<select id="wpguard_nc_restore_backup_list" style="margin-left:8px;"><option value=""><?php esc_html_e( '— loading —', 'wpguard-nc-backup' ); ?></option></select>
 						<br><br>
 						<label><input type="radio" name="wpguard_nc_restore_source" value="upload"> <?php esc_html_e( 'Upload a backup bundle', 'wpguard-nc-backup' ); ?></label>
@@ -509,6 +673,7 @@ class Admin {
 		(function(){
 			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 			var nonce = <?php echo wp_json_encode( $nonce ); ?>;
+			var downloadNonce = <?php echo wp_json_encode( $download_nonce ); ?>;
 			var currentJobId = null;
 			var currentRestoreJobId = null;
 			var currentUploadToken = null;
@@ -521,6 +686,7 @@ class Admin {
 
 			document.getElementById('wpguard_nc_save').addEventListener('click', function(){
 				post('wpguard_nc_save_settings', {
+					backend: document.getElementById('wpguard_nc_backend').value,
 					nextcloud_url: document.getElementById('wpguard_nc_url').value,
 					nextcloud_user: document.getElementById('wpguard_nc_user').value,
 					app_password: document.getElementById('wpguard_nc_pw').value,
@@ -549,6 +715,15 @@ class Admin {
 			function renderJob(job) {
 				currentJobId = job.job_id || currentJobId;
 				renderJobInto('wpguard_nc_job_status', 'wpguard_nc_job_log', job);
+				var row = document.getElementById('wpguard_nc_job_download_row');
+				if (job.download_available) {
+					var url = ajaxUrl.replace('admin-ajax.php', 'admin-post.php') +
+						'?action=wpguard_nc_download_bundle&job_id=' + encodeURIComponent(job.job_id) + '&nonce=' + encodeURIComponent(downloadNonce);
+					document.getElementById('wpguard_nc_job_download_link').href = url;
+					row.style.display = '';
+				} else {
+					row.style.display = 'none';
+				}
 			}
 
 			function pollJob(jobId) {
@@ -595,13 +770,28 @@ class Admin {
 				});
 			}
 
-			document.getElementById('wpguard_nc_backup_now').addEventListener('click', function(){
-				post('wpguard_nc_start_backup', {}).then(function(res){
+			function startBackup(destination) {
+				document.getElementById('wpguard_nc_job_download_row').style.display = 'none';
+				post('wpguard_nc_start_backup', { destination: destination }).then(function(res){
 					if (res.success) {
 						pollJob(res.data.job_id);
 					} else {
 						document.getElementById('wpguard_nc_job_status').textContent = res.data.message;
 					}
+				});
+			}
+			document.getElementById('wpguard_nc_backup_now').addEventListener('click', function(){
+				startBackup('nextcloud');
+			});
+			document.getElementById('wpguard_nc_download_now').addEventListener('click', function(){
+				startBackup('download');
+			});
+			document.getElementById('wpguard_nc_job_download_delete').addEventListener('click', function(){
+				if (!currentJobId) { return; }
+				if (!window.confirm('Delete this local backup bundle? This cannot be undone.')) { return; }
+				post('wpguard_nc_delete_download_bundle', { job_id: currentJobId }).then(function(res){
+					document.getElementById('wpguard_nc_job_download_row').style.display = 'none';
+					document.getElementById('wpguard_nc_job_status').textContent = res.data.message;
 				});
 			});
 

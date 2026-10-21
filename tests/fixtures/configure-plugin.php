@@ -10,6 +10,10 @@
 use WPGuard\NCBackup\Settings;
 
 $input = array(
+	// Phase 3 (multi-backend): wording hint only, defaults to the
+	// pre-existing behavior when unset so every caller that predates
+	// this var keeps working unchanged.
+	'backend'        => getenv( 'WPGUARD_TEST_BACKEND' ) ?: 'nextcloud',
 	'nextcloud_url'  => getenv( 'WPGUARD_TEST_NC_URL' ) ?: '',
 	'nextcloud_user' => getenv( 'WPGUARD_TEST_NC_USER' ) ?: '',
 	'app_password'   => getenv( 'WPGUARD_TEST_NC_APP_PASSWORD' ) ?: '',

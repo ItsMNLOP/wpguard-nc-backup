@@ -1,5 +1,348 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 3 — multi-backend (ownCloud + OpenCloud), CLEAR TO SHIP, 2026-10-21
+
+Generalizes the backup destination from "Nextcloud" to any server speaking
+the same WebDAV dialect. `Nextcloud_Client` needed zero code changes --
+it was already a generic adapter with no Nextcloud-specific URL shapes
+or headers. The only new surface is `Settings::BACKEND_CHOICES`
+(`nextcloud`/`owncloud`/`opencloud`) and the admin UI's wording (which
+credential term and error copy is shown); picked up by a prior session,
+left uncommitted and undocumented when it was interrupted mid-debug.
+This session verified and finished it:
+
+**Verified live against real disposable instances**
+(`owncloud/server:10.15`, `opencloudeu/opencloud:7.2.4`, brought up via
+the new `docker compose --profile multi-backend` services), via
+`tests/e2e/run-e2e-multi-backend.sh`: connection test, full backup,
+incremental (remote-manifest GET/parse round-trip), chain-aware
+retention (keep-N correctly protects a still-referenced base backup,
+reclaims a fully-superseded one -- same scenario `run-e2e-incremental.sh`
+already proves for Nextcloud), restore with URL migration, and a real
+multi-part PUT/GET roundtrip (an 80MB seeded file, past the 64MB
+`PART_SIZE_BYTES` threshold, SHA-256-confirmed byte-identical after a
+full backup/restore cycle) -- against both backends. Full detail:
+`docs/threat-model.md` T22.
+
+**Three real bugs found and fixed, all test-infrastructure, zero plugin
+code changes:**
+1. `docker-compose.yml`'s `OWNCLOUD_TRUSTED_DOMAINS` was space-separated,
+   but the `owncloud/server` image's own config template does
+   `explode(',', ...)` on it -- the whole space-joined string landed as
+   one single, never-matching trusted-domain entry, a live "untrusted
+   domain" 400 on every WebDAV call. Fixed with a comma-separated value;
+   fixing `config.php` directly via `occ` on the already-running
+   container did not hold across subsequent `occ` invocations (each one
+   re-derived the same broken value from the container's original
+   environment), so a `--force-recreate` against the corrected env was
+   needed (same data volume, no reinstall).
+2. The new E2E script's own retention assertion assumed "keep last 1"
+   means exactly one folder remains, not accounting for chain-aware
+   retention's documented behavior (`class-retention.php`) of also
+   protecting a still-referenced base backup -- the plugin's retention
+   logic was correct throughout; this was the new test's own bug.
+3. The script's restore step pulled a backup by `backup_id` onto a
+   *different* WordPress install (different URL/port, hence a different
+   `Settings::get_site_id()`), 404ing under the wrong site folder --
+   the plugin's remote-pull restore has always been scoped to the
+   current site's own `site_id` by design. Fixed by forcing
+   `SITE_ID_KEY` to the source site's id before restoring, same as the
+   real cross-site case in `run-e2e-restore.sh`.
+
+**Also found and fixed, test-infra only**: the script's own restore step
+changed `WP_RESTORE_TABLE_PREFIX` in `.env` and recreated `wp-restore`
+with it, with no cleanup on exit -- left `wpmb_` behind in `.env` after
+a run, which broke four unrelated E2E suites' own assumptions the next
+time they ran (`run-e2e.sh`, `run-e2e-const-override.sh`,
+`run-e2e-download-backup.sh`, `run-e2e-restore-migration.sh` all failed
+for this reason alone, not from any plugin or multi-backend code).
+Fixed with the same restore-on-exit trap already used for wp-source's
+plugin settings. Full regression re-run clean after the fix: all 13
+pre-existing E2E suites plus `run-e2e-multi-backend.sh`, 133/133 unit
+tests (includes the `backend`-setting tests already written by the
+earlier session).
+
+**Also found, separately**: `.e2e-multi-backend-scratch/` (holds a full
+dump of `wpguard_nc_settings`, app password included) was never added to
+`.gitignore` -- fixed with a `.e2e-*-scratch/` catch-all pattern covering
+every current and future per-script scratch dir.
+
+**Overclaim correction**: the prior session's code comments in
+`class-nextcloud-client.php` and `class-settings.php` cited
+`docs/threat-model.md` T21/T22 and said the multi-backend behavior was
+"confirmed live" -- T22 didn't exist yet (T21 is the unrelated
+downloadable-backups finding) and no STATUS.md entry existed either.
+The claims are true now that this session has actually done the
+verification; T22 added, citations corrected to T22 only.
+
+**Known limits**: CI (`ci.yml`) does not run the `multi-backend` compose
+profile -- this matrix is exercised manually, not on every push. OpenCloud
+is only verified through its legacy `remote.php/dav/files/{user}`
+compatibility shim, not its native API. oCIS is untested (likely rides
+along, since OpenCloud is its fork, but not confirmed).
+
+**Vex security audit (SOP-023): CLEAR TO SHIP, zero findings.**
+Independently confirmed `get_backend()` has no consumer anywhere in the
+plugin -- `Nextcloud_Client` and both `redact_wp_config_*()` methods
+never read it, so all three backends get byte-for-byte identical
+treatment at the transport, credential, and redaction layers. The
+`backend` input is double-validated (strict allowlist at both save and
+read), so a tampered value can only ever fall back to `'nextcloud'`
+wording. One doc-accuracy correction came out of the audit: this
+section and the relevant code comments originally described the
+`backend` setting as dynamically switching the UI's credential wording
+per backend -- it doesn't; the UI already uses backend-neutral combined
+wording ("app password / app token") that covers all three without
+reading the setting at all, which the audit flagged as *better* (it
+doesn't reveal which backend is configured to anyone reading over the
+admin's shoulder) rather than worse. Corrected throughout
+(`docs/threat-model.md` T22, `class-settings.php`,
+`class-admin.php`'s settings-page description) rather than building the
+dynamic-wording path that was never actually there. `SSL_CERT_FILE` on
+the test-only OpenCloud container confirmed test-infra-only, no effect
+on the plugin's own TLS verification (ADR 0007, `NoInsecureTlsTest.php`
+unaffected). Full detail: `docs/threat-model.md` T22. Still sitting in
+the same uncommitted working tree as the already-CLEAR-TO-SHIP
+downloadable-backups/admin-menu work above (batch-commit per the
+owner's standing instruction) -- tangled together in one `git diff`,
+but both independently CLEAR TO SHIP now.
+
+## Phase 3 progress — downloadable backups CLEAR TO SHIP (final), 2026-10-21
+
+The second security re-verification (round 3 overall): all three round-2
+findings confirmed fixed, re-proven live where re-proof was meaningful
+(the exact `);`-in-password bypass case re-run standalone and confirmed
+gone for both quote styles; the concatenated-define bypass mechanism the
+re-verification itself surfaced mid-session confirmed live too). This
+session's agent hit a provider-side rate limit partway through and was
+resumed with full context rather than restarted — no work lost, no
+re-litigation needed.
+
+**One new mechanism found on this pass, assessed and accepted rather than
+fixed**: a `define()` value built from string concatenation (e.g.
+`define('DB_PASSWORD', 'abc' . 'def');`) defeats both the quoted-string
+regex (concatenation isn't a single string literal, so the whole line
+passes through unredacted) and the fail-closed `strpos()` re-check (the
+runtime-joined value never appears as one contiguous substring in the
+source text either — only its two separate pieces do). Deliberately not
+fixed, for the same reason the pre-existing, already-accepted `LOW-R1`
+gap (`const` syntax) isn't: no real `wp-config.php` from any mainstream
+WordPress installer or hosting panel has ever been observed defining a
+credential constant this way. Folded into `LOW-R1`'s own test comment
+(`tests/unit/SettingsValidationTest.php`) rather than opened as a
+separate finding, per the audit's own disposition — that comment
+previously slightly overstated how completely the fail-closed backstop
+covers every unusual `define()` shape; now accurate about this one too.
+Also confirmed: the downloadable-backups feature introduces no new
+advisory-lock concurrency surface beyond what `T12`'s existing, pre-dating
+documented gap already covers (download-generation steps run through the
+same `advance()`/lock mechanism as every other step; the TTL sweep is a
+non-state-advancing cron callback with no lock interaction at all).
+
+**Verdict: CLEAR TO SHIP.** Zero open HIGH/MEDIUM findings across all
+three audit rounds (the original 9, the 3 from round 2, and this round's
+single accepted-not-fixed mechanism). Full regression and unit suite
+unchanged from the prior round (130/130 unit tests, all 12 pre-existing
+E2E suites plus `run-e2e-download-backup.sh` green) — no code changed
+this round beyond the one test-comment correction.
+
+## Phase 3 progress — downloadable backups, re-verification found one new MEDIUM, fixed same-day, 2026-10-21
+
+The security re-verification of the nine findings below (commit from the
+first BLOCKED pass): **all nine confirmed fixed**, several re-proven live
+(a sentinel `DB_PASSWORD` no longer survives; 5 concurrent `create_job()`
+calls now produce exactly 1 job; a swept bundle's checkpoint is confirmed
+cleared; the download link's dedicated nonce confirmed rejected against
+the wrong action). **A fresh adversarial pass — not a re-check of what was
+already fixed — found one new MEDIUM, ship-blocking, plus two LOW:**
+
+- **NEW-MEDIUM-1**: the redaction regex's `.*?` (both the original
+  app-password/CA-bundle redaction and the new DB-credential one, same
+  shared pattern) is non-greedy — it matches only up to the *first* `);`
+  anywhere in the value. Proven live: a credential value containing its
+  own literal `);` fragment (plausible — some hosting panels generate
+  passwords from the full printable-ASCII set) left everything after that
+  point in the archived wp-config.php unredacted. Worse, it simultaneously
+  **defeated the fail-closed re-check** added specifically to catch a
+  redaction failure: that check does `strpos($redacted, $secret)` against
+  the *full* secret string, which is no longer present once part of it
+  was consumed by the partial `.*?` match — a redaction failure that
+  silently looked like success. Fixed by replacing `.*?` with a real
+  quoted-string-literal match (`Settings::quoted_string_value_pattern()`,
+  escape-aware, both quote styles, written as a nowdoc specifically to
+  avoid manually counting PHP-string-escape-of-regex-escape backslashes)
+  in both `redact_wp_config_contents()` and `redact_wp_config_db_credentials()`.
+  Two new regression tests reproduce the exact proof case (single- and
+  double-quoted) for each function.
+- **NEW-LOW-1**: the same class of race as MEDIUM-DL-3, on the restore
+  side — `create_restore_job()` had no advisory lock at all around its own
+  has-running-job-check-then-insert. Proven live: parallel backup+restore
+  create calls produced 2 concurrent active jobs (a download backup
+  running alongside a restore). Fixed by extracting the lock name into a
+  new `Job_Orchestrator::create_job_lock_name()` and wrapping
+  `create_restore_job()` with the same `GET_LOCK`/`RELEASE_LOCK` pair —
+  since the lock is a single shared name, this also serializes a backup
+  starting against a restore starting, not just two of the same kind.
+- **NEW-LOW-2**: the advisory lock name was a bare static string, which
+  would contend with an unrelated site sharing the same MySQL server
+  under a different database/prefix (common on shared hosting — a
+  co-tenant holding the lock for any reason would silently drop this
+  site's own backup/restore trigger for up to 5s). Fixed by namespacing
+  the lock name with this site's own `site_id` (already generated and
+  persisted for exactly this kind of cross-site disambiguation), folded
+  into the same `create_job_lock_name()` helper above.
+
+All three fixed same-day. 130/130 unit tests (3 new). Full regression
+(all 12 pre-existing E2E suites plus `run-e2e-download-backup.sh`)
+re-run clean again — `create_restore_job()` changed this round too, so
+the restore-touching suites were back in scope, not just the download
+ones. Re-dispatched for a second re-verification before this is
+considered shippable.
+
+## Phase 3 progress — WPGuard top-level admin menu + downloadable backups, security audit BLOCKED, fixed same-day, 2026-10-21
+
+Two Phase 3 items built together at the owner's direction: (1) the admin
+UI moved from Settings > Nextcloud Backup to a shared top-level **WPGuard**
+menu (`Admin::add_menu()`, idempotent shared-parent pattern so future
+WPGuard-family plugins land as submenus rather than collecting under
+Settings or each getting their own top-level entry); (2) "Download Now" —
+a second, independent backup destination, always available regardless of
+whether Nextcloud is configured, that packages the same backup into one
+flat zip and serves it to the admin's browser instead of uploading it.
+Held uncommitted together per the owner's instruction (batch-commit once
+all Phase 3 work is done).
+
+Design for the download feature came out of an advisor consult before any
+code: `destination` stored as its own top-level `jobs` table column
+(schema bumped 1->2) rather than inside the checkpoint JSON blob, since
+several step functions replace the whole checkpoint wholesale rather than
+merging — a field stored there would have silently vanished the first
+time any step ran. New `step_bundle_local()` replaces upload_parts+finalize
+for a download-destination job: builds the bundle in the exact same flat
+layout (`manifest.json`, `COMPLETE.json`, `database.sql.gz`,
+`files.part-*.zip` at the zip root) the *existing* `ajax_upload_restore_bundle()`
+already accepts, specifically so a downloaded bundle restores through the
+existing upload-restore path with zero new restore code — then reopens the
+bundle independently (`ZipArchive::CHECKCONS`) and re-verifies every entry's
+size+sha256 by extracting to disk one at a time (never buffering a whole
+DB dump in memory, ADR 0004) before the job is allowed to reach `verified`.
+Bundle lives in a 128-bit random-token directory nested under the existing
+guarded `wp-content/wpguard-nc-backup-tmp/` base (inherits its `.htaccess`
+and `Inventory` exclusion automatically). Lifecycle: cap-at-one (a new
+download backup removes any still-pending one), 24h TTL sweep (hourly cron
++ on settings-page load), explicit "Delete local copy" button, and
+plugin-deactivation purge. New dedicated `admin_post_wpguard_nc_download_bundle`
+endpoint streams it (a real navigable GET, not fetch/AJAX, so the browser
+doesn't buffer the whole zip in memory first).
+
+New `tests/e2e/run-e2e-download-backup.sh`: drives the whole flow over
+*real* authenticated HTTP (not `wp eval`) against the disposable stack's
+`wp-restore` target with Nextcloud deliberately left unconfigured — a
+no-credentials backup started via the real AJAX endpoint, unauthenticated/
+bad-nonce download requests denied, the guarded directory confirmed not
+directly web-servable, a real authenticated download, cap-at-one, explicit
+delete, TTL sweep, and — the central design claim proven directly, not
+just argued — the downloaded bundle fed back through the real, unmodified
+upload-restore endpoint and restored successfully. Building this test
+surfaced three of its own bugs before the real audit even started: driving
+job steps via `wp eval` wrote absolute paths from the wrong container (the
+disposable stack's `wpcli` and `wp-restore` containers mount the same
+volume at different mountpoints) into the job's own persisted checkpoint —
+fixed by driving every step through the real HTTP AJAX endpoint instead,
+exactly matching how a real browser/WP-Cron-driven backup behaves; a
+Git-Bash/MSYS path-mangling quirk corrupted a raw `curl` multipart
+upload's MIME-type argument; and the disposable `wp-restore` target's
+*files* (unlike its DB) aren't reset between E2E suites, so this test's
+own backup was picking up ~100MB of real leftover content from whichever
+suite last restored onto it — fixed with an explicit cleanup step. Also
+found the "Upload a backup bundle" restore feature (shipped Phase 2) had
+never actually been exercised with a real upload in any E2E suite before
+this — PHP's stock `upload_max_filesize=2M` silently blocked it; fixed by
+adding `docker/php/uploads.ini` (test-infra only, not a plugin change).
+
+**Sent to the security audit: BLOCKED.** 4 MEDIUM, 5 LOW, two proven live:
+
+- **MEDIUM-DL-1**: the existing wp-config.php redaction only ever stripped
+  this plugin's own constants (app password, CA bundle path) — never the
+  site's real `DB_NAME`/`DB_USER`/`DB_PASSWORD`/`DB_HOST`. Proven live: a
+  seeded `DB_PASSWORD` survived into the archived wp-config.php unchanged.
+  The Nextcloud path's same behavior is a documented, accepted exposure
+  (threat-model T9, storage the admin already controls); a downloadable
+  bundle leaves that custody model entirely the moment it's saved to the
+  admin's own computer. Fixed with a new `Settings::redact_wp_config_db_credentials()`,
+  applied only to download-destination bundles, plus the same fail-closed
+  re-check pattern as the existing app-password case (refuse to archive
+  rather than silently leak if the real `DB_PASSWORD` constant somehow
+  survives). Deliberately leaves `AUTH_KEY`/salts untouched — WP 2FA and
+  encryption plugins store real recovery material keyed to those values,
+  and stripping them would make a legitimate same-host restore silently
+  lose that data. `docs/operations.md` updated: restoring a downloaded
+  bundle onto different infrastructure needs those four values re-entered
+  by hand.
+- **MEDIUM-DL-2**: the UI claimed a pending bundle is removed "immediately
+  once you download it," which was never true (the server can't confirm
+  the browser received every byte, so `handle_download_bundle()` never
+  deletes on its own) — the actual behavior (TTL/cap-at-one/explicit-delete
+  only) is the correct one; the UI text was wrong, not the code. Fixed by
+  correcting the copy rather than adding delete-on-download, which would
+  strand an admin with no bundle to retry after any connection hiccup on a
+  multi-MB download.
+- **MEDIUM-DL-3**: `create_job()`'s has-running-job check and the job
+  insert were a plain check-then-act with no atomicity. Proven live: 5
+  concurrent requests produced 5 distinct running jobs. Worse for download
+  jobs specifically — cap-at-one and the explicit-delete endpoint both
+  assume at most one pending bundle exists; the audit proved a second,
+  genuinely verified bundle silently destroyed by a delete call carrying
+  the *first* job's job_id. Fixed with a MySQL advisory lock (`GET_LOCK`/
+  `RELEASE_LOCK`, the same primitive `Job_Store`'s per-job locking already
+  uses) wrapping the whole check-then-act window in `create_job()` —
+  closes the race for both destinations, not just download.
+- **MEDIUM-DL-4**: `step_bundle_local()` allocated a fresh token (and
+  therefore directory) on every call with no check for one already in
+  progress — a process killed mid-assembly (e.g. `max_execution_time`)
+  orphaned its partial directory forever while the next poll silently
+  started a new one, unbounded for as long as the admin's tab kept
+  retrying, each one holding a partial DB dump on disk. Fixed by
+  persisting the token into the checkpoint immediately and reusing it
+  (wiping and rebuilding the directory) on re-entry, a hard 3-attempt cap
+  before failing the job outright, and a `disk_free_space()` precheck
+  against the bundle's expected size.
+- **LOW-DL-1**: a failed download job with Nextcloud *also* configured
+  still fired an authenticated WebDAV PUT for its diagnostic log (harmless
+  in practice — `step_init()` never creates the remote folder for a
+  download job, so it 409s — but contradicts "no Nextcloud involvement at
+  all" and is needless outbound credential use). Fixed with an early
+  return in `upload_diagnostic_log()` for download-destination jobs.
+- **LOW-DL-2**: `Job_Store::get_latest_verified()` had no destination
+  filter, so a download-only job (whose bundle may already be gone) could
+  be shown as the site's standing "last verified backup." Fixed by
+  filtering to `destination = 'nextcloud'`.
+- **LOW-DL-3**: the sweep removed a bundle's directory but never cleared
+  the owning job's checkpoint, so `download_available` kept reading true
+  and resurfaced a dead download link. Fixed with a new
+  `Job_Store::find_by_download_token()`, called from the sweep to clear
+  the owning job's checkpoint in the same pass.
+- **LOW-DL-4**: the download link reused the same nonce shared by every
+  other action on the settings page, sitting in a navigable GET URL
+  (browser history, server logs, Referer headers) — a nonce alone can't
+  perform a privileged action without the session cookie, but least-
+  privilege nonce scoping is cheap. Fixed with a dedicated
+  `NONCE_ACTION_DOWNLOAD`.
+- **LOW-DL-5**: zero Phase 3 unit tests existed. Added `DownloadBundleTest.php`
+  (9 tests covering `download_dir_for_token()`'s hex-only validation —
+  traversal attempts, null bytes, wrong length, wrong case — and
+  `new_download_token()`'s own shape) and a new
+  `test_redact_wp_config_db_credentials_strips_db_constants` in
+  `SettingsValidationTest.php`.
+
+All nine fixed same-day per standing instruction. 127/127 unit tests
+(10 new). Full regression: all 12 pre-existing E2E suites plus the new
+`run-e2e-download-backup.sh` re-run clean — `create_job()`'s new
+advisory lock touches every job of either destination, so the complete
+suite was re-run, not just the download-specific one. Re-dispatched to
+the security audit for re-verification before this is considered
+shippable, per established pattern.
+
 ## Phase 2.5 — migration on restore, in progress, 2026-10-21
 
 Promoted out of the Phase 3 candidates list below (was originally a

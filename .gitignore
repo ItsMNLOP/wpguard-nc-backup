@@ -18,3 +18,10 @@ tests/e2e/artifacts/
 .DS_Store
 Thumbs.db
 .e2e-cancel-contention-scratch/
+# Catch-all for every current and future per-script E2E scratch dir
+# (e.g. .e2e-multi-backend-scratch/, .e2e-download-scratch/) -- these can
+# hold real settings/credentials dumped during a run (configure-plugin.php
+# captures/restores wpguard_nc_settings including app_password) and must
+# never land in this public repo. The explicit entries above predate this
+# and are kept for clarity but are now redundant with this pattern.
+.e2e-*-scratch/

@@ -20,12 +20,25 @@ if ( ! defined( 'ABSPATH' ) ) {
  * in-memory object at any point is one archive part (bounded by
  * PART_SIZE_BYTES, ADR 0004).
  *
- * Steps: init -> export_db -> export_files -> package_manifest ->
- * upload_parts -> finalize -> (verified | failed).
+ * Steps: init -> export_db -> export_files -> package_manifest -> then,
+ * by destination (decided once at create_job(), see Job_Store::create()'s
+ * docblock): 'nextcloud' -> upload_parts -> finalize -> (verified |
+ * failed); 'download' (Phase 3) -> bundle_local -> (verified | failed).
  */
 class Job_Orchestrator {
 
 	const PART_SIZE_BYTES = 64 * 1024 * 1024;
+
+	/**
+	 * Phase 3 (downloadable backups): how long a pending local bundle
+	 * (full DB dump + files, unencrypted) sits on disk before the hourly
+	 * sweep removes it even if nobody ever clicked Download. Filterable;
+	 * MIN floor exists for the same reason STALE_LOCK_SECONDS has one --
+	 * a misbehaving filter must not be able to shrink this below the time
+	 * it actually takes an admin to notice the button and click it.
+	 */
+	const DOWNLOAD_BUNDLE_TTL_SECONDS = DAY_IN_SECONDS;
+	const MIN_DOWNLOAD_BUNDLE_TTL_SECONDS = 300;
 
 	// Perf: export_db/export_files used to do exactly one table/file per
 	// advance() call, so a site with thousands of small files meant
@@ -78,6 +91,70 @@ class Job_Orchestrator {
 		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/' . $backup_id . '/';
 	}
 
+	/**
+	 * Phase 3 (downloadable backups): a dedicated, 128-bit-random-token
+	 * subdirectory, not the per-job tmp dir keyed by backup_id (only 32
+	 * random bits -- plenty for a short-lived upload/restore staging dir,
+	 * not for something meant to persist up to DOWNLOAD_BUNDLE_TTL_SECONDS
+	 * holding a full DB dump + wp-config.php). Nested under the existing
+	 * guarded wpguard-nc-backup-tmp/ base -- inherits its .htaccess
+	 * (Apache "Require all denied" applies to descendants too) and is
+	 * already covered by Inventory::EXCLUDED_PATTERNS's
+	 * 'wp-content/wpguard-nc-backup-tmp' exact-match entry, which stops
+	 * the enumeration walk before it ever descends into this directory at
+	 * all -- no separate exclusion pattern needed.
+	 */
+	public static function download_base_dir(): string {
+		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/downloads/';
+	}
+
+	public static function new_download_token(): string {
+		return bin2hex( random_bytes( 16 ) );
+	}
+
+	/** Constrained to exactly what new_download_token() produces -- never built from request input. */
+	public static function download_dir_for_token( string $token ): string {
+		if ( ! preg_match( '/^[0-9a-f]{32}$/', $token ) ) {
+			return '';
+		}
+		return self::download_base_dir() . $token . '/';
+	}
+
+	/**
+	 * @param bool $purge_all Phase 3: true removes every pending bundle
+	 *   unconditionally (called when a new local-download backup starts --
+	 *   at most one pending bundle exists at a time -- and on plugin
+	 *   deactivation, since the hourly sweep that would otherwise catch a
+	 *   TTL expiry stops firing once deactivated). False (the hourly
+	 *   cron's own call, and render_page()'s) only removes bundles past
+	 *   DOWNLOAD_BUNDLE_TTL_SECONDS.
+	 */
+	public static function sweep_download_bundles( bool $purge_all = false ): void {
+		$base = self::download_base_dir();
+		if ( ! is_dir( $base ) ) {
+			return;
+		}
+		$ttl = max( self::MIN_DOWNLOAD_BUNDLE_TTL_SECONDS, (int) apply_filters( 'wpguard_nc_download_bundle_ttl_seconds', self::DOWNLOAD_BUNDLE_TTL_SECONDS ) );
+		foreach ( new \DirectoryIterator( $base ) as $item ) {
+			if ( $item->isDot() || ! $item->isDir() ) {
+				continue;
+			}
+			if ( $purge_all || ( time() - $item->getMTime() ) > $ttl ) {
+				$token = $item->getFilename();
+				self::cleanup_tmp( $item->getPathname() . '/' );
+				// security audit finding LOW-DL-3: the owning job's checkpoint must be
+				// cleared in the same pass, not left pointing at a now-deleted
+				// directory -- see Job_Store::find_by_download_token()'s docblock.
+				$owner = Job_Store::find_by_download_token( $token );
+				if ( null !== $owner ) {
+					$cp = $owner['checkpoint'];
+					unset( $cp['download_token'], $cp['download_bundle_path'], $cp['download_bundle_bytes'], $cp['download_ready_at'], $cp['bundle_local_token'], $cp['bundle_local_attempts'] );
+					Job_Store::update( $owner['job_id'], array( 'checkpoint' => $cp ) );
+				}
+			}
+		}
+	}
+
 	private static function ensure_tmp_guarded(): void {
 		$base = rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/';
 		if ( ! is_dir( $base ) ) {
@@ -93,17 +170,72 @@ class Job_Orchestrator {
 		}
 	}
 
-	public static function create_job(): string {
+	/**
+	 * @param string $destination 'nextcloud' (default) or 'download' (Phase 3). Any other value falls back to 'nextcloud'.
+	 *
+	 * Phase 3, security audit finding MEDIUM-DL-3: has_running_job() then insert was a
+	 * plain check-then-act with no atomicity -- proven live, 5 concurrent
+	 * requests produced 5 distinct running jobs. For the Nextcloud path
+	 * this mostly wastes work; for 'download' it's worse, since cap-at-one
+	 * (sweep_download_bundles()) and the explicit-delete endpoint both
+	 * assume at most one pending bundle exists -- the audit proved a
+	 * second verified bundle getting silently destroyed by a delete call
+	 * for the first job's job_id. A short-lived MySQL advisory lock
+	 * (same GET_LOCK/RELEASE_LOCK primitive Job_Store already uses for
+	 * per-job locking, here keyed globally since no job_id exists yet)
+	 * closes the whole check-then-act window, not just the download case.
+	 */
+	/**
+	 * security audit finding NEW-LOW-2 (re-verification, 2026-10-21): a bare static
+	 * lock name would contend with an unrelated site sharing the same
+	 * MySQL server under a different database/prefix (common on shared
+	 * hosting) -- namespaced per-site via the site_id this plugin already
+	 * generates and persists for exactly this kind of cross-site
+	 * disambiguation. Shared between create_job() (backups) and
+	 * Restore_Orchestrator::create_restore_job() (security audit finding NEW-LOW-1)
+	 * so a backup and a restore can never both pass their own
+	 * check-then-act window at the same time either -- GET_LOCK names
+	 * are process-global on the MySQL connection, not per-table, so one
+	 * shared name is exactly what's needed to serialize both against
+	 * each other, not just against themselves.
+	 */
+	public static function create_job_lock_name(): string {
+		return 'wpguard_nc_create_' . substr( md5( Settings::get_site_id() ), 0, 20 );
+	}
+
+	public static function create_job( string $destination = 'nextcloud' ): string {
+		$destination = in_array( $destination, array( 'nextcloud', 'download' ), true ) ? $destination : 'nextcloud';
 		self::reap_stale_lock();
-		if ( Job_Store::has_running_job() ) {
+
+		global $wpdb;
+		$lock_name = self::create_job_lock_name();
+		$got = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 5)', $lock_name ) );
+		if ( '1' !== (string) $got ) {
+			// Another create_job() call is genuinely in flight right now;
+			// treat it the same as "a backup is already running" rather
+			// than risk a second concurrent job.
 			return '';
 		}
-		self::ensure_tmp_guarded();
-		$job_id = 'job-' . bin2hex( random_bytes( 8 ) );
-		$backup_id = gmdate( 'Ymd\THis\Z' ) . '-' . bin2hex( random_bytes( 4 ) );
-		wp_mkdir_p( self::tmp_dir_for( $backup_id ) );
-		Job_Store::create( $job_id, $backup_id );
-		return $job_id;
+		try {
+			if ( Job_Store::has_running_job() ) {
+				return '';
+			}
+			self::ensure_tmp_guarded();
+			// Phase 3: cap-at-one-pending-bundle is enforced here, not by
+			// correlating against a prior job row (which may no longer exist
+			// or may not have reached 'verified') -- a new local backup
+			// starting is the one unambiguous moment an old one is no longer
+			// needed. Now race-free: this whole method runs under the lock
+			// above, so no second create_job() call can be mid-flight.
+			self::sweep_download_bundles( 'download' === $destination );
+			$job_id = 'job-' . bin2hex( random_bytes( 8 ) );
+			$backup_id = gmdate( 'Ymd\THis\Z' ) . '-' . bin2hex( random_bytes( 4 ) );
+			wp_mkdir_p( self::tmp_dir_for( $backup_id ) );
+			Job_Store::create( $job_id, $backup_id, $destination );
+			return $job_id;
+		} finally {
+			$wpdb->query( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+		}
 	}
 
 	/**
@@ -234,7 +366,7 @@ class Job_Orchestrator {
 		// .htaccess-protected on Apache but directly web-accessible on
 		// Nginx with no equivalent guard.
 		if ( null !== $job && ! empty( $job['backup_id'] ) ) {
-			self::upload_diagnostic_log( $job['backup_id'], $job['log'] ?? array() );
+			self::upload_diagnostic_log( $job['backup_id'], $job['log'] ?? array(), $job['destination'] ?? 'nextcloud' );
 			self::cleanup_tmp( self::tmp_dir_for( $job['backup_id'] ) );
 		}
 		return $job;
@@ -251,8 +383,13 @@ class Job_Orchestrator {
 	 * on failure -- this must never affect job status, on the success path
 	 * or the failure path that calls it from fail() above.
 	 */
-	private static function upload_diagnostic_log( string $backup_id, array $log ): void {
-		if ( empty( $log ) || ! Settings::has_credentials() ) {
+	private static function upload_diagnostic_log( string $backup_id, array $log, string $destination = 'nextcloud' ): void {
+		// Phase 3, security audit finding LOW-DL-1: proven live -- a failed download job
+		// with Nextcloud ALSO configured fired an authenticated WebDAV PUT
+		// anyway (harmlessly rejected since step_init() skips creating the
+		// remote folder for a download job, but contradicts "no Nextcloud
+		// involvement at all" and is needless outbound credential use).
+		if ( 'download' === $destination || empty( $log ) || ! Settings::has_credentials() ) {
 			return;
 		}
 		try {
@@ -303,6 +440,8 @@ class Job_Orchestrator {
 					return self::step_upload_parts( $job );
 				case 'finalize':
 					return self::step_finalize( $job );
+				case 'bundle_local':
+					return self::step_bundle_local( $job );
 				default:
 					return self::fail( $job_id, $job['step'], 'Unknown job step: ' . $job['step'] );
 			}
@@ -313,6 +452,20 @@ class Job_Orchestrator {
 
 	private static function step_init( array $job ): array {
 		$job_id = $job['job_id'];
+
+		// Phase 3 (downloadable backups): no Nextcloud destination at all
+		// for this job -- skip the remote folder/credential requirement
+		// and the incremental-chain plan entirely (chain detection reads
+		// the Nextcloud destination's own backup history; a local-only
+		// bundle has no persistent location to diff against, so it's
+		// always a full backup, same as the very first backup of a chain).
+		if ( 'download' === ( $job['destination'] ?? 'nextcloud' ) ) {
+			$chain = array( 'mode' => 'full', 'base_backup_id' => null, 'parent_backup_id' => null, 'prior_files_index' => array() );
+			self::log( $job_id, 'init', 'info', 'Local download-only backup (full; no Nextcloud destination configured or selected).' );
+			Job_Store::update( $job_id, array( 'step' => 'export_db', 'checkpoint' => array( 'chain' => $chain ) ) );
+			return Job_Store::get( $job_id );
+		}
+
 		if ( ! Settings::has_credentials() ) {
 			return self::fail( $job_id, 'init', 'Nextcloud URL, username, and app password must all be configured before a backup can run.' );
 		}
@@ -489,7 +642,7 @@ class Job_Orchestrator {
 
 				$archive_abs = $abs;
 				if ( 'wp-config.php' === $relative ) {
-					$redacted = self::redacted_wp_config_copy( $abs, $tmp );
+					$redacted = self::redacted_wp_config_copy( $abs, $tmp, $job['destination'] ?? 'nextcloud' );
 					if ( is_wp_error( $redacted ) ) {
 						if ( null !== $zip ) {
 							Archive_Writer::close_part( $zip );
@@ -608,7 +761,7 @@ class Job_Orchestrator {
 	 * "upgraded" into leaking a value that gets set afterward).
 	 */
 	/** @return string|\WP_Error Path to the redacted copy, or a WP_Error if the credential survived redaction. */
-	private static function redacted_wp_config_copy( string $original_abs, string $tmp ) {
+	private static function redacted_wp_config_copy( string $original_abs, string $tmp, string $destination = 'nextcloud' ) {
 		$redacted = Settings::redact_wp_config_contents( file_get_contents( $original_abs ) );
 
 		// security audit finding LOW-R1 (fail-closed hardening, post H-02 re-review):
@@ -621,6 +774,22 @@ class Job_Orchestrator {
 			$secret = Settings::get_app_password();
 			if ( '' !== $secret && false !== strpos( $redacted, $secret ) ) {
 				return new \WP_Error( 'wpguard_nc_wp_config_redaction_failed', 'wp-config.php redaction did not remove the active credential; refusing to archive it.' );
+			}
+		}
+
+		// Phase 3, security audit finding MEDIUM-DL-1: proven live -- a seeded DB_PASSWORD
+		// survived into the archived wp-config.php unchanged before this
+		// fix. A downloadable bundle leaves the admin's controlled
+		// storage entirely (lands in a Downloads folder, plus sits on
+		// disk here for up to 24h) in a way the Nextcloud path doesn't,
+		// so only the download destination gets this extra strip -- see
+		// Settings::redact_wp_config_db_credentials()'s docblock for why
+		// AUTH_KEY/salts are deliberately left untouched. Same
+		// fail-closed re-check pattern as LOW-R1 above.
+		if ( 'download' === $destination ) {
+			$redacted = Settings::redact_wp_config_db_credentials( $redacted );
+			if ( defined( 'DB_PASSWORD' ) && '' !== DB_PASSWORD && false !== strpos( $redacted, DB_PASSWORD ) ) {
+				return new \WP_Error( 'wpguard_nc_wp_config_db_redaction_failed', 'wp-config.php redaction did not remove the real database credential; refusing to archive it.' );
 			}
 		}
 
@@ -743,6 +912,15 @@ class Job_Orchestrator {
 		$cp['manifest_local_path'] = $manifest_path;
 		$cp['manifest_sha256'] = hash( 'sha256', $manifest_json );
 
+		// Phase 3 (downloadable backups): no Nextcloud destination -- skip
+		// straight to bundling everything into one local zip instead of
+		// queuing a remote upload.
+		if ( 'download' === ( $job['destination'] ?? 'nextcloud' ) ) {
+			self::log( $job_id, 'package_manifest', 'info', 'Manifest built; packaging into a downloadable bundle.' );
+			Job_Store::update( $job_id, array( 'step' => 'bundle_local', 'checkpoint' => $cp ) );
+			return Job_Store::get( $job_id );
+		}
+
 		$to_upload = array();
 		$to_upload[] = array( 'local' => $manifest_path, 'remote' => 'manifest.json', 'label' => 'manifest.json' );
 		$to_upload[] = array( 'local' => $cp['database']['local_path'], 'remote' => 'database.sql.gz', 'label' => 'database.sql.gz' );
@@ -807,6 +985,165 @@ class Job_Orchestrator {
 		$cp['uploaded'][] = $item['label'];
 		self::log( $job_id, 'upload_parts', 'info', "Uploaded and verified: {$item['label']}" );
 		Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+		return Job_Store::get( $job_id );
+	}
+
+	/**
+	 * Phase 3 (downloadable backups): replaces upload_parts + finalize for
+	 * a 'download'-destination job. Packages manifest.json, COMPLETE.json,
+	 * database.sql.gz, and every files.part-*.zip into one flat zip --
+	 * deliberately the exact same layout ajax_upload_restore_bundle()
+	 * already accepts, so a downloaded bundle can be fed straight back
+	 * through the existing "Upload a backup bundle" restore path with no
+	 * new restore code. Every entry stored via CM_STORE (already-
+	 * compressed gz/zip content -- DEFLATE-ing it again would spend CPU
+	 * for ~0 size benefit, same reasoning as Archive_Writer::STORE_ONLY_EXTENSIONS).
+	 * "Verified" here means the same thing it means for a Nextcloud
+	 * upload: every entry re-read back off disk and checked against its
+	 * expected size and sha256 before the job is allowed to reach that
+	 * status, not just trusted because close() returned true.
+	 */
+	private static function step_bundle_local( array $job ): array {
+		$job_id = $job['job_id'];
+		$cp = $job['checkpoint'];
+		$tmp = self::tmp_dir_for( $job['backup_id'] );
+
+		$manifest_json = file_get_contents( $cp['manifest_local_path'] );
+		$complete_json = Manifest::complete_json( $job['backup_id'], $manifest_json );
+		$complete_path = $tmp . 'COMPLETE.json';
+		file_put_contents( $complete_path, $complete_json );
+
+		$entries = array();
+		$entries[] = array( 'local' => $cp['manifest_local_path'], 'name' => 'manifest.json', 'sha256' => $cp['manifest_sha256'], 'bytes' => strlen( $manifest_json ) );
+		$entries[] = array( 'local' => $complete_path, 'name' => 'COMPLETE.json', 'sha256' => hash( 'sha256', $complete_json ), 'bytes' => strlen( $complete_json ) );
+		$entries[] = array( 'local' => $cp['database']['local_path'], 'name' => 'database.sql.gz', 'sha256' => $cp['database']['sha256'], 'bytes' => $cp['database']['bytes'] );
+		foreach ( $cp['parts_meta'] as $part ) {
+			$entries[] = array(
+				'local'  => $part['local_path'],
+				'name'   => sprintf( 'files.part-%04d.zip', $part['index'] ),
+				'sha256' => $part['sha256'],
+				'bytes'  => $part['bytes'],
+			);
+		}
+
+		// Phase 3, security audit finding MEDIUM-DL-4: a fresh token (and therefore a
+		// fresh directory) was allocated on every call into this step,
+		// with no check for one already in progress -- a process killed
+		// mid-assembly (e.g. max_execution_time) orphaned its partial
+		// directory forever while the next poll silently started a new
+		// one, unbounded for as long as the admin's tab kept retrying.
+		// Reusing the token from checkpoint, wiping and rebuilding its
+		// directory rather than allocating a new one, bounds this to
+		// exactly one directory per job; a hard attempt cap stops an
+		// unrecoverable failure (e.g. disk genuinely full) from retrying
+		// forever instead of ever reaching 'failed'.
+		if ( ! empty( $cp['bundle_local_token'] ) ) {
+			$token = $cp['bundle_local_token'];
+			$dir = self::download_dir_for_token( $token );
+			self::cleanup_tmp( $dir );
+		} else {
+			$token = self::new_download_token();
+			$dir = self::download_dir_for_token( $token );
+			$cp['bundle_local_token'] = $token;
+		}
+		$cp['bundle_local_attempts'] = (int) ( $cp['bundle_local_attempts'] ?? 0 ) + 1;
+		Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+		if ( $cp['bundle_local_attempts'] > 3 ) {
+			self::cleanup_tmp( $dir );
+			return self::fail( $job_id, 'bundle_local', 'Could not assemble the downloadable bundle after 3 attempts; giving up. Check available disk space under wp-content/.' );
+		}
+		wp_mkdir_p( $dir );
+
+		$needed_bytes = array_sum( array_column( $entries, 'bytes' ) );
+		$free_bytes = @disk_free_space( $dir );
+		if ( false !== $free_bytes && $free_bytes < $needed_bytes ) {
+			self::cleanup_tmp( $dir );
+			return self::fail( $job_id, 'bundle_local', sprintf( 'Not enough free disk space to assemble the downloadable bundle (need at least %s, have %s).', size_format( $needed_bytes ), size_format( $free_bytes ) ) );
+		}
+
+		$bundle_path = $dir . 'wpguard-' . $job['backup_id'] . '.zip';
+
+		// A failure anywhere below this point means the bundle isn't
+		// trustworthy -- the whole token directory is disposable until
+		// verification actually completes, so every failure path removes
+		// it rather than leaving a partial/corrupt bundle sitting under
+		// download_base_dir() where the download endpoint could otherwise
+		// be pointed at it by a stale checkpoint read.
+		$zip = Archive_Writer::open_part( $bundle_path );
+		if ( is_wp_error( $zip ) ) {
+			self::cleanup_tmp( $dir );
+			return self::fail( $job_id, 'bundle_local', 'Could not create downloadable bundle: ' . $zip->get_error_message() );
+		}
+		foreach ( $entries as $e ) {
+			$added = Archive_Writer::add_file_to( $zip, $e['local'], $e['name'] );
+			if ( is_wp_error( $added ) ) {
+				Archive_Writer::close_part( $zip );
+				self::cleanup_tmp( $dir );
+				return self::fail( $job_id, 'bundle_local', 'Could not build downloadable bundle: ' . $added->get_error_message() );
+			}
+		}
+		$closed = Archive_Writer::close_part( $zip );
+		if ( is_wp_error( $closed ) ) {
+			self::cleanup_tmp( $dir );
+			return self::fail( $job_id, 'bundle_local', $closed->get_error_message() );
+		}
+
+		// Re-open independently (not the same handle that just wrote it)
+		// and verify every entry is actually present, at the right size,
+		// with the right content -- extracting to disk one entry at a
+		// time rather than ZipArchive::getFromName() so this never buffers
+		// a whole database dump or files part in PHP memory (ADR 0004).
+		$verify = new \ZipArchive();
+		if ( true !== $verify->open( $bundle_path, \ZipArchive::CHECKCONS ) ) {
+			self::cleanup_tmp( $dir );
+			return self::fail( $job_id, 'bundle_local', 'Downloadable bundle failed its consistency check after creation.' );
+		}
+		$verify_dir = $dir . 'verify-tmp/';
+		wp_mkdir_p( $verify_dir );
+		foreach ( $entries as $e ) {
+			$stat = $verify->statName( $e['name'] );
+			if ( false === $stat || (int) $stat['size'] !== (int) $e['bytes'] ) {
+				$verify->close();
+				self::cleanup_tmp( $dir );
+				return self::fail( $job_id, 'bundle_local', "Downloadable bundle is missing or has a size mismatch for {$e['name']}." );
+			}
+			if ( ! $verify->extractTo( $verify_dir, $e['name'] ) ) {
+				$verify->close();
+				self::cleanup_tmp( $dir );
+				return self::fail( $job_id, 'bundle_local', "Could not read back {$e['name']} from the downloadable bundle for verification." );
+			}
+			$extracted_path = $verify_dir . $e['name'];
+			$hash = hash_file( 'sha256', $extracted_path );
+			@unlink( $extracted_path );
+			if ( $hash !== $e['sha256'] ) {
+				$verify->close();
+				self::cleanup_tmp( $dir );
+				return self::fail( $job_id, 'bundle_local', "Downloadable bundle entry {$e['name']} does not match its expected checksum -- backup NOT verified." );
+			}
+		}
+		$verify->close();
+		self::cleanup_tmp( $verify_dir );
+
+		$cp['download_token'] = $token;
+		$cp['download_bundle_path'] = $bundle_path;
+		$cp['download_bundle_bytes'] = filesize( $bundle_path );
+		$cp['download_ready_at'] = gmdate( 'Y-m-d\TH:i:s\Z' );
+		unset( $cp['bundle_local_token'], $cp['bundle_local_attempts'] );
+
+		// Everything of value now lives inside the verified bundle under
+		// download_base_dir(); the loose originals in the per-job tmp dir
+		// (keyed by backup_id, only 32 random bits -- not meant to persist)
+		// serve no further purpose.
+		self::cleanup_tmp( $tmp );
+		self::log( $job_id, 'bundle_local', 'info', sprintf( 'Downloadable backup bundle ready (%s).', size_format( $cp['download_bundle_bytes'] ) ) );
+		Job_Store::update( $job_id, array( 'status' => 'verified', 'step' => 'done', 'checkpoint' => $cp ) );
+		// Deliberately NOT calling Backup_Chain::record_result() here --
+		// this job's bytes were never uploaded anywhere persistent,
+		// so recording it as the chain's new parent would let a future
+		// Nextcloud-destined incremental backup believe a file is already
+		// safely stored remotely (via this backup_id/source_part) when it
+		// was only ever local, and has likely already been deleted by the
+		// TTL sweep by the time that incremental tries to rely on it.
 		return Job_Store::get( $job_id );
 	}
 
