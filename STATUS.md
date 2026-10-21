@@ -13,6 +13,14 @@
   directory is always deleted (`cleanup_tmp()`) once a backup
   finishes, success or failure, so nothing persists locally either
   way. Not scoped or started.
+- Other WebDAV-compatible destinations (ownCloud, OpenCloud, and
+  similar): today's `Nextcloud_Client`/OCS app-password flow is
+  Nextcloud-specific, but the actual transport is plain WebDAV
+  (PUT/PROPFIND), which ownCloud and OpenCloud both also speak, since
+  they share Nextcloud's lineage. Likely means a destination
+  abstraction (pluggable transport/auth, not a Nextcloud-only client)
+  rather than a one-off addition. Phase 3 or 4, once base features are
+  settled. Not scoped or started.
 
 ## Phase 2 progress — one-click restore: security re-verification CLEAR TO SHIP, 2026-10-20
 
