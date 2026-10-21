@@ -5,15 +5,16 @@
 
 ## Context
 
-Holt's standing operating contract (`Team/Holt - WordPress Plugin Developer/AGENTS.md`)
-specifies storing the Nextcloud credential as a `wp-config.php` constant,
-never in `wp_options`. The project brief (section 15.2, which carries
-amendment-level precedence for this build) requires the admin to enter the
-URL, username, and app password through the WordPress admin settings screen,
-with no file-edit step, and explicitly describes WordPress-compatible
-server-side settings as the MVP secret storage mechanism.
+A common WordPress-plugin convention stores a credential like this as a
+`wp-config.php` constant, never in `wp_options` — a file-based secret is
+harder to exfiltrate purely through a database compromise. The project
+brief (section 15.2, which carries amendment-level precedence for this
+build) requires the admin to enter the URL, username, and app password
+through the WordPress admin settings screen, with no file-edit step, and
+explicitly describes WordPress-compatible server-side settings as the MVP
+secret storage mechanism.
 
-These two instructions conflict. A file-constant credential cannot be entered,
+These two approaches conflict. A file-constant credential cannot be entered,
 tested, or rotated from an admin screen without either templating
 `wp-config.php` (fragile, often not web-writable on shared hosting, and risky
 to parse/rewrite safely) or falling back to storing it in the database anyway
@@ -27,9 +28,8 @@ checks on every read/write path. Support an **optional** override: if the
 constant `WPGUARD_NC_APP_PASSWORD` (and `WPGUARD_NC_CA_BUNDLE` for the test CA,
 see ADR 0007) is defined in `wp-config.php`, it takes precedence over the
 stored option and the settings field is shown as locked/disabled with a note
-explaining why. This gives operators who want the Holt-contract behavior
-(secret outside the database) a supported path without making it mandatory
-for MVP.
+explaining why. This gives operators who want the file-based-secret
+convention a supported path without making it mandatory for MVP.
 
 ## Consequences
 
@@ -38,9 +38,10 @@ for MVP.
   than a file-based secret under a compromised-database threat model. This is
   documented in `docs/threat-model.md` and in the admin UI help text as a
   known limitation (NFR-04 acknowledges this limit explicitly).
-- The constant-override escape hatch satisfies the file-based-secret pattern
-  Holt's contract prefers, without blocking MVP delivery.
-- **Deviation logged for Vex review:** this is a documented, deliberate
-  departure from Holt's standing "wp-config constant only" rule, made because
-  the task's own instructions (brief section 15, explicit highest precedence)
-  override it for this build. Flag to Vex before any production use.
+- The constant-override escape hatch satisfies the file-based-secret
+  convention described above, without blocking MVP delivery.
+- **Deviation logged for security review:** this is a documented, deliberate
+  departure from the "wp-config constant only" convention, made because the
+  task's own instructions (brief section 15, explicit highest precedence)
+  override it for this build. Flagged during the project's security audit;
+  see `docs/threat-model.md` and `STATUS.md`.

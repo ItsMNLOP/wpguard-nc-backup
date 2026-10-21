@@ -82,7 +82,7 @@ class Update_Checker {
 	}
 
 	/**
-	 * Pure. Vex audit L-001: a cached/API-sourced package URL must be
+	 * Pure. security audit finding L-001: a cached/API-sourced package URL must be
 	 * confirmed to actually point at THIS repo's own release assets
 	 * before it's ever handed to WP core's installer -- a host-only
 	 * check (e.g. "is this github.com?") isn't enough, since any other
@@ -90,7 +90,7 @@ class Update_Checker {
 	 * string (no asset selected) is explicitly allowed through; callers
 	 * already treat that as "nothing to offer."
 	 *
-	 * Vex re-verification, 2026-10-20: a plain strncasecmp() PREFIX
+	 * security re-verification, 2026-10-20: a plain strncasecmp() PREFIX
 	 * check here was proven bypassable with a path-traversal tag
 	 * segment (".." components that curl/the HTTP client normalize
 	 * away before the request is even sent), since a prefix match
@@ -165,7 +165,7 @@ class Update_Checker {
 			return $transient;
 		}
 
-		// Vex audit H-001: this plugin isn't listed on WordPress.org and
+		// security audit finding H-001: this plugin isn't listed on WordPress.org and
 		// (until an `Update URI:` header existed) WP core would still
 		// query api.wordpress.org for this slug and could populate this
 		// same transient key with a WP.org-sourced entry -- including
@@ -204,7 +204,7 @@ class Update_Checker {
 
 		$release = $this->fetch_latest_release();
 		if ( ! $release ) {
-			// Vex audit H-001: $result defaults to false and is only
+			// security audit finding H-001: $result defaults to false and is only
 			// non-false here if some other filter already populated it
 			// for this same slug -- potentially a WP.org plugin_information
 			// lookup, including a squatter's own download link, if WP.org
@@ -219,7 +219,7 @@ class Update_Checker {
 		$info->name          = 'WPGuard Nextcloud Backup';
 		$info->slug          = self::SLUG;
 		$info->version       = $release['version'];
-		$info->author        = 'Holt (WPGuard project)';
+		$info->author        = 'WPGuard project';
 		$info->homepage      = $release['html_url'];
 		$info->requires      = '6.4';
 		$info->requires_php  = '8.1';

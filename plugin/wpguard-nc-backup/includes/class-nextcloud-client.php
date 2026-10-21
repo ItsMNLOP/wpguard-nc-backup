@@ -181,7 +181,7 @@ class Nextcloud_Client {
 		$xml_text = wp_remote_retrieve_body( $response );
 		$previous = libxml_use_internal_errors( true );
 		// LIBXML_NONET: defense in depth against external entity loading
-		// in a server's PROPFIND response (Vex audit L-03). Already
+		// in a server's PROPFIND response (security audit finding L-03). Already
 		// disabled by default on the libxml >=2.9 that ships with this
 		// plugin's required PHP 8.1+, but explicit here so the guarantee
 		// doesn't silently depend on a future runtime's default.
@@ -212,7 +212,7 @@ class Nextcloud_Client {
 		$tolerance = 0;
 		if ( $expected_max_bytes > 0 ) {
 			$tolerance = max( 4096, (int) ( $expected_max_bytes * 0.01 ) );
-			// Vex audit L-02: abort while streaming once the response
+			// security audit finding L-02: abort while streaming once the response
 			// exceeds the manifest's declared size (plus tolerance),
 			// rather than only discovering the overrun after the full
 			// object has already landed on disk.
@@ -272,14 +272,14 @@ class Nextcloud_Client {
 		}
 		$xml_text = wp_remote_retrieve_body( $response );
 		$previous = libxml_use_internal_errors( true );
-		// LIBXML_NONET: same defense-in-depth rationale as propfind_size() (Vex audit L-03).
+		// LIBXML_NONET: same defense-in-depth rationale as propfind_size() (security audit finding L-03).
 		$xml = simplexml_load_string( $xml_text, 'SimpleXMLElement', LIBXML_NONET );
 		libxml_use_internal_errors( $previous );
 		if ( false === $xml ) {
 			return new \WP_Error( 'wpguard_nc_propfind_list_parse_failed', 'Could not parse PROPFIND XML response.' );
 		}
 		$xml->registerXPathNamespace( 'd', 'DAV:' );
-		// Vex delta audit, 2026-10-20 (RETENTION-1): compared encoded, this
+		// the security audit delta audit, 2026-10-20 (RETENTION-1): compared encoded, this
 		// match silently failed whenever the Nextcloud username contained
 		// a character PHP's rawurlencode() (used by url_for()) escapes but
 		// Nextcloud/Sabre's own href encoder does not (confirmed against

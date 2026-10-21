@@ -88,13 +88,13 @@ function test_stored_and_deflated_entries_both_extract_byte_identical() {
 	exec( 'rm -rf ' . escapeshellarg( $dir ) );
 }
 
-// Vex audit HIGH-ZIP-1: ZipArchive::close() failing rolls back the
+// security audit finding HIGH-ZIP-1: ZipArchive::close() failing rolls back the
 // ENTIRE pending batch (every addFile() since the last successful
 // close()), not just the entry whose source actually disappeared --
 // proven here directly against the real libzip behavior, not assumed.
 // This is the exact condition close_part() must now detect and
 // propagate instead of silently discarding close()'s return value.
-// Vex re-verification, LOW-TEST-1: the rollback proof below must not
+// security re-verification, LOW-TEST-1: the rollback proof below must not
 // depend on whether a later ZipArchive::open() of the (possibly now
 // corrupted-on-disk) zip happens to succeed -- that made the key
 // assertion conditional and silently skippable. Two phases instead:

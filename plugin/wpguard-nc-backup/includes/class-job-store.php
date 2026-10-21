@@ -72,7 +72,7 @@ class Job_Store {
 	}
 
 	/**
-	 * Vex audit HIGH-CHECKPOINT-1: the return value was previously
+	 * security audit finding HIGH-CHECKPOINT-1: the return value was previously
 	 * discarded entirely. $wpdb->update() returns false on failure --
 	 * including a checkpoint payload rejected for exceeding the
 	 * server's max_allowed_packet -- and a caller that doesn't know
@@ -157,7 +157,7 @@ class Job_Store {
 	}
 
 	/**
-	 * Non-blocking MySQL advisory lock keyed by job_id (Vex audit H-01):
+	 * Non-blocking MySQL advisory lock keyed by job_id (security audit finding H-01):
 	 * AJAX polling and the WP-Cron fallback can both call
 	 * Job_Orchestrator::advance() for the same job in overlapping
 	 * requests. Without mutual exclusion, two processes race on the same

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vex audit LOW-C1 regression test: cancel() must report lock_contended
+# security audit finding LOW-C1 regression test: cancel() must report lock_contended
 # (and change nothing) when advance() genuinely holds the H-01 lock right
 # now, not silently report success while the job stays running. Exercises
 # the real cancel() against a real concurrent holder, not a mock.

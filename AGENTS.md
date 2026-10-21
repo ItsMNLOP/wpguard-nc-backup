@@ -4,12 +4,12 @@ For a replacement agent (human or AI) picking this up cold.
 
 ## What this is
 
-MVP WordPress plugin + disposable Docker test harness. Built autonomously
-per the brief at the PKA inbox (`CLAUDE_WORDPRESS_NEXTCLOUD_BACKUP_BRIEF.md`,
-v1.3) under the Holt specialist identity. This repo lives at
-`C:\Users\Claude\dev\wpguard`, deliberately **outside** the Nextcloud-synced
-`PKA/` folder — do not move it back in; secrets, generated certs, and test
-archives would otherwise sync to the owner's real Nextcloud.
+MVP WordPress plugin + disposable Docker test harness. Built against a
+written project brief (v1.3) covering scope, phased rollout, and the
+guardrails below. This repo deliberately lives outside any
+cloud-synced folder on the machine it was developed on — do not move
+it into one; secrets, generated certs, and test archives would
+otherwise sync somewhere they shouldn't.
 
 ## Guardrails (do not relax these without a new ADR + explicit approval)
 
@@ -47,9 +47,6 @@ that proves it.
 
 ## Known open items for the next agent/session
 
-- Vex security audit (SOP-023) not yet performed — required before any
-  production use.
 - CI (`.github/workflows/ci.yml`) written, never executed — no CI runner
   connected during this build.
-- Phase 2+ (scheduling, retention, chunked upload v2, encryption) not
-  started, intentionally.
+- Phase 2+ items not yet started are tracked in `STATUS.md`.

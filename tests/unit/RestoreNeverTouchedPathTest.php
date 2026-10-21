@@ -2,13 +2,13 @@
 namespace WPGuard\NCBackup\Tests;
 use WPGuard\NCBackup\Restore_Orchestrator;
 
-// Phase 2 (one-click restore), Vex audit HIGH-PATH-1: the actual
+// Phase 2 (one-click restore), security audit finding HIGH-PATH-1: the actual
 // bypass was in is_never_restored_path()'s own exact-string comparison
 // -- './wp-config.php' and 'wp-content//plugins/wpguard-nc-backup/evil.php'
 // both resolve to exactly the protected target at the filesystem layer,
 // but neither matched the literal prefix/filename strings this method
 // compared against before it normalized first. is_never_restored_path()
-// is private; reached via reflection, the same way Vex's own audit
+// is private; reached via reflection, the same way the security audit
 // verified it.
 
 function invoke_is_never_restored_path( string $relative ): bool {

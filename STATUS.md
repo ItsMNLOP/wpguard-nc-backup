@@ -1,8 +1,8 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
-## Phase 2 progress — one-click restore: Vex re-verification CLEAR TO SHIP, 2026-10-20
+## Phase 2 progress — one-click restore: security re-verification CLEAR TO SHIP, 2026-10-20
 
-Vex independently re-verified every HIGH/MEDIUM/LOW finding from the
+The security audit independently re-verified every HIGH/MEDIUM/LOW finding from the
 audit below against commit `cd816a1`, re-ran the full unit suite
 (86/86) themselves, and judged the new AJAX-safety E2E test adequate.
 **Verdict: CLEAR TO SHIP.** One new LOW found during re-verification —
@@ -17,11 +17,11 @@ failing the job if it can't persist, rather than proceeding with an
 unrecorded restriction. Unit suite re-run clean (86/86) after this
 fix. One-click restore is now shippable.
 
-## Phase 2 progress — one-click restore: Vex audit findings fixed, awaiting re-verification, 2026-10-20
+## Phase 2 progress — one-click restore: the security audit findings fixed, awaiting re-verification, 2026-10-20
 
-Vex's full audit of the first build (commit `6a652d2`, see the entry
+the full security audit of the first build (commit `6a652d2`, see the entry
 below) came back **BLOCKED**: 4 HIGH, 3 MEDIUM, 4 LOW findings. Per
-Mike's standing instruction, moved forward with fixes automatically
+The owner's standing instruction, moved forward with fixes automatically
 rather than waiting for a go-ahead:
 
 - **HIGH-PATH-1** — `is_never_restored_path()` compared paths by
@@ -53,7 +53,7 @@ rather than waiting for a go-ahead:
   quarantined/replaced could fatal the very next bootstrap, stalling
   the restore with no way forward. Fixed by temporarily restricting
   live `active_plugins` to just WPGuard during the file-apply phase,
-  restored on any failure. Vex explicitly asked this be proven via
+  restored on any failure. The security audit explicitly asked this be proven via
   separate fresh-bootstrap processes, not just the CLI's single
   process — built `tests/e2e/run-e2e-restore-ajax-safety.sh` for
   exactly that: a synthetic plugin engineered to require a file an
@@ -95,19 +95,19 @@ confirmation — all 10 green, zero regressions: main drill, cancel-job,
 cancel-lock-contention, const-override, incremental, lock-race,
 retention, scheduling, stale-lock-recovery, update-checker.
 
-Docs updated: `docs/threat-model.md` T20 now documents Vex's findings
+Docs updated: `docs/threat-model.md` T20 now documents the security audit's findings
 and fixes inline, not just the original design. Not yet committed —
-re-dispatching Vex for re-verification before shipping, per established
+re-dispatching the security audit for re-verification before shipping, per established
 pattern (audit → fix → re-verify → repeat until CLEAR TO SHIP).
 
-## Phase 2 progress — one-click restore built, two self-caught bugs fixed, awaiting Vex, 2026-10-20
+## Phase 2 progress — one-click restore built, two self-caught bugs fixed, awaiting the security audit, 2026-10-20
 
 Sixth Phase 2 item, and the highest-stakes one in the whole project:
 one-click, in-place restore (RST-04). The original brief treats this
 differently from the rest of Phase 2 — explicitly listed as an MVP
 non-goal and gated on "threat review and explicit owner approval"
 before any build work, separate from the general autonomy already
-granted. Flagged this distinction to Mike before starting rather than
+granted. Flagged this distinction to the owner before starting rather than
 building on an assumed scope; his answer: build it, test with real
 backup copies already accessible on cloud.tomcat.casa, restored onto
 the local disposable stack — never against a live DB until proven
@@ -167,13 +167,13 @@ non-backup file quarantined not deleted, rollback tables preserved,
 no leftover shadow tables, real content restored and queryable), and
 the complete existing E2E suite (main drill, incremental, retention,
 scheduling, stale-lock, update-checker) all green with no regression.
-Sent to Vex before this is considered shippable — not self-certified,
+Sent to security audit before this is considered shippable — not self-certified,
 and given the stakes, reviewed more heavily than anything else in
 this project so far, not less.
 
 ## Phase 2 progress — incremental backups CLEAR TO SHIP (final), 2026-10-20
 
-Third Vex re-verification: **CLEAR TO SHIP**, no new findings. Traced
+Third the security re-verification: **CLEAR TO SHIP**, no new findings. Traced
 every commit point in `step_export_files()` line by line (the skip
 path and the archive path both now flush into `resolved_files` only
 at the same two confirmed-successful-close points; no path persists
@@ -197,15 +197,15 @@ item in Phase 2 so far, proportionate to being the one feature where
 getting it wrong means a "verified" backup that silently can't be
 restored.
 
-**Phase 2 status: five items fully shipped and Vex-cleared** — JOB-05
+**Phase 2 status: five items fully shipped and security-audit-cleared** — JOB-05
 automatic stale-lock recovery, automatic scheduling, retention
 pruning, the self-hosted update feed, and incremental file backups.
 Remaining, not yet started: one-click restore, WebDAV v2 chunking,
 the CI bash port. Multisite remains parked (2026-10-20 decision).
 
-## Phase 2 progress — incremental backups Vex re-verification: NEW-HIGH-1 found, fixed, 2026-10-20
+## Phase 2 progress — incremental backups the security re-verification: NEW-HIGH-1 found, fixed, 2026-10-20
 
-Vex's re-verification of the HIGH-ZIP-1 fix found the fix itself had
+the security re-verification of the HIGH-ZIP-1 fix found the fix itself had
 introduced a new gap of the exact same class (**NEW-HIGH-1**): the
 unchanged-file fast path in `step_export_files()` committed
 `files_remaining` immediately, which could already be missing an
@@ -226,11 +226,11 @@ size, not just presence; the HIGH-ZIP-1 regression test's rollback
 assertion was conditionally skippable, rewritten as an unconditional
 two-phase proof. 62/62 unit tests and the full incremental/retention/
 scheduling/stale-lock/main-restore E2E suites re-verified green.
-Second re-verification sent to Vex.
+Second re-verification sent for security audit.
 
-## Phase 2 progress — incremental backups Vex audit BLOCKED, fixed same-day, 2026-10-20
+## Phase 2 progress — incremental backups security audit returned BLOCKED, fixed same-day, 2026-10-20
 
-Vex's first audit of incremental backups came back **BLOCKED** with a
+the first security audit of incremental backups came back **BLOCKED** with a
 real HIGH and MEDIUM, both proven (not theoretical): **HIGH-ZIP-1** —
 `ZipArchive::close()`'s return value was discarded entirely, and
 proven live that libzip rolls back the *entire* pending batch (every
@@ -260,12 +260,12 @@ naming, an explicit resurrection warning, and a per-file sha256
 verification step. 62/62 unit tests (including a new test that
 reproduces HIGH-ZIP-1's exact libzip rollback behavior live, not
 assumed) and the full incremental/retention/scheduling/stale-lock/
-main-restore E2E suites all re-verified green. Sent back to Vex for
+main-restore E2E suites all re-verified green. Sent back for
 re-verification before this is considered shippable.
 
 ## Phase 2 progress — update feed CLEAR TO SHIP (final), 2026-10-20
 
-Second Vex re-verification of the L-001 regex fix: **CLEAR TO SHIP**,
+Second the security re-verification of the L-001 regex fix: **CLEAR TO SHIP**,
 no new findings. Independently tried to break the new anchored regex
 (URL-encoded/mixed traversal, query-string/fragment injection, null
 bytes, Unicode lookalike slash characters, ReDOS, case-folding) and
@@ -281,7 +281,7 @@ execution trust boundary.
 
 ## Phase 2 progress — update feed re-verification: H-001 cleared, L-001 still BLOCKED, fixed, 2026-10-20
 
-Vex's re-verification of the H-001/L-001 fixes: **H-001 confirmed
+the security re-verification of the H-001/L-001 fixes: **H-001 confirmed
 cleared** (and caught a misstatement in our own commit message along
 the way — the `Update URI:` header doesn't actually stop this
 plugin's slug from being sent to `api.wordpress.org`; `check_for_update()`'s
@@ -297,7 +297,7 @@ trailing newline). 6 new unit tests, 1 new E2E case (the exact
 proven-live bypass). 57/57 unit tests and the full 7-case update-checker
 E2E suite re-verified green. Full detail: `docs/threat-model.md` T18.
 
-## Phase 2 progress — incremental file backups built, awaiting Vex sign-off, 2026-10-20
+## Phase 2 progress — incremental file backups built, awaiting the security audit sign-off, 2026-10-20
 
 Fifth Phase 2 item: incremental file backups, opt-in (default off).
 Before writing any code, measured the real bottleneck first (per
@@ -345,15 +345,15 @@ retention/scheduling/stale-lock-recovery/main-backup-restore E2E
 suites all re-verified green (the retention E2E fixtures needed a
 real manifest.json added, since the new chain-aware logic reads one
 for every kept backup — a gap caught during this verification pass,
-not shipped). Sent to Vex before considering this shippable — higher
+not shipped). Sent to security audit before considering this shippable — higher
 integrity stakes than any prior Phase 2 item, since getting backup/
 restore correctness wrong is the worst possible failure for a backup
 plugin. Full detail: `docs/operations.md` ("Incremental file
 backups"), `docs/threat-model.md` T19, `docs/restore-manual.md` step 1a.
 
-## Phase 2 progress — update feed Vex audit BLOCKED, fixed same-day, 2026-10-20
+## Phase 2 progress — update feed security audit returned BLOCKED, fixed same-day, 2026-10-20
 
-Vex's audit of the update feed came back **BLOCKED**: a real, externally
+The security audit of the update feed came back **BLOCKED**: a real, externally
 exploitable HIGH (H-001) — the plugin had no `Update URI:` header, so
 WordPress core would still query `api.wordpress.org` for the unclaimed
 `wpguard-nc-backup` slug; a squatter registering that slug there could
@@ -373,14 +373,14 @@ emission points. 5 new unit tests, 2 new E2E cases (E: simulated
 pre-existing WP.org entry correctly stripped; F: cached different-repo
 package URL correctly never offered). 48/48 unit tests, the full
 update-checker E2E suite (6 cases), and the full backup/restore E2E
-drill all re-verified green. Re-sent to Vex for re-verification before
+drill all re-verified green. Re-sent for security audit for re-verification before
 considering this shippable — not self-certified. Full detail:
 `docs/threat-model.md` T18.
 
-## Phase 2 progress — update feed built, awaiting Vex sign-off, 2026-10-20
+## Phase 2 progress — update feed built, awaiting the security audit sign-off, 2026-10-20
 
 Fourth Phase 2 item: self-hosted update feed, built as GitHub Releases
-on the now-public repo (decided with Mike earlier — public repo, no
+on the now-public repo (decided with the owner earlier — public repo, no
 credentials needed). New `Update_Checker` class hooks WP's normal
 `pre_set_site_transient_update_plugins`/`plugins_api` filters. Design
 is fail-closed: never offers an update unless the release has an
@@ -398,12 +398,12 @@ Documented in `docs/operations.md` ("Updates"), a new
 automate it), and `docs/threat-model.md` T18 — this is a
 higher-blast-radius feature than the other three shipped so far (an
 update source is, by nature, a path to full code execution on every
-site running the plugin), so it's being sent to Vex before being
+site running the plugin), so it's being sent for security audit before being
 considered shippable, per standing practice, rather than self-certified.
 
 ## Phase 2 progress — retention re-verified, CLEAR TO SHIP, 2026-10-20
 
-Vex's independent re-verification of the retention fixes below: all
+The security audit's independent re-verification of the retention fixes below: all
 four RETENTION-* findings confirmed fixed by direct source read AND a
 live run against the real Nextcloud test server (not taken on word) —
 **CLEAR TO SHIP**. Found two further non-blocking items, both fixed
@@ -422,7 +422,7 @@ re-verified green.
 
 ## Phase 2 progress — scheduling CLEAR TO SHIP; retention was BLOCKED, now fixed, 2026-10-20
 
-Vex's delta audit of commits `07ab212` (scheduling) and `6a85eb8`
+the follow-up security audit of commits `07ab212` (scheduling) and `6a85eb8`
 (retention): **scheduling CLEAR TO SHIP, no findings.** **Retention
 was initially BLOCKED** — caught two implementation bugs that had
 silently disabled it entirely in production (`maybe_prune_old_backups()`
@@ -469,9 +469,9 @@ listing after pruning independently confirms the result. 34/34 unit
 tests and the full backup/restore E2E drill re-verified green
 afterward. Full detail: `docs/operations.md` ("Retention").
 
-## Phase 2 progress — JOB-05 Vex delta-audit fixes, 2026-10-20
+## Phase 2 progress — JOB-05 security re-audit fixes, 2026-10-20
 
-Vex's delta audit of the stale-lock reaper came back **CLEAR TO SHIP**
+the follow-up security audit of the stale-lock reaper came back **CLEAR TO SHIP**
 with 3 LOWs and 2 non-blocking observations, all fixed same-day per
 standing instruction: corrected the `STALE_LOCK_SECONDS` comment and
 `docs/operations.md`'s claim that it's "comfortably above" the
@@ -501,7 +501,7 @@ WP-Cron array; run_scheduled_backup() starts a job when none is
 running and correctly skips when one already is) — both passed. 31/31
 unit tests and the full backup/restore E2E drill re-verified green
 afterward. Full detail: `docs/operations.md` ("Automatic scheduling").
-Not yet sent to Vex — see CHANGELOG.md "Unreleased".
+Not yet sent for security audit — see CHANGELOG.md "Unreleased".
 
 ## Phase 2 progress — JOB-05 automatic lock-expiry shipped, 2026-10-20
 
@@ -520,7 +520,7 @@ once that lock frees up) — passed against the live disposable stack.
 28/28 unit tests and the full backup/restore E2E drill re-verified green
 afterward (this touches `create_job()`, the entry point for every
 backup). Full detail: `docs/operations.md` ("Stale-lock recovery").
-Not yet sent to Vex for sign-off — see CHANGELOG.md "Unreleased".
+Not yet sent for security audit for sign-off — see CHANGELOG.md "Unreleased".
 
 ## Scope decision — multisite parked, 2026-10-20
 
@@ -538,7 +538,7 @@ Every original Phase 1 gate below is checked and re-verified multiple
 times, including against real production data (the owner's production site) rather
 than only synthetic fixtures — real install, real connection, repeated
 real backups, a real restore with the owner's own account and 2FA state
-confirmed intact. Two full Vex security audits (SOP-023), both **CLEAR TO
+confirmed intact. Two full security audits (SOP-023), both **CLEAR TO
 SHIP**, zero open HIGH/MEDIUM findings. Real-world bugs found via hands-on
 testing (ZIP packaging separators, stuck-job UI visibility, WP-Cron
 reliability, the actual file-count performance bottleneck) were all
@@ -547,7 +547,7 @@ full E2E drill, green.
 
 **One remaining operator action, not code**: revoke the dedicated
 Nextcloud test account's standing read-share on the real backup folder
-once no longer needed for testing (Vex LOW-C2).
+once no longer needed for testing (security-audit LOW-C2).
 
 **Explicitly out of Phase 1, now Phase 2 scope** (not gaps, by design):
 real server-cron trigger (JOB-02), automatic lock-expiry (JOB-05 —
@@ -598,7 +598,7 @@ assumed. Evidence commands are in `tests/e2e/run-e2e.sh`,
 
 ## Second optimization round, delegated — 2026-10-20
 
-the owner delegated choosing and implementing the next round directly (3m17s
+The owner delegated choosing and implementing the next round directly (3m17s
 total, down from ~17 min, after the zip-handle fix below). Picked two
 safe, no-new-attack-surface changes:
 
@@ -618,7 +618,7 @@ safe, no-new-attack-surface changes:
   amortize it further. Still well inside shared-hosting execution limits.
 
 Neither touches security-relevant surface (no new external calls, same
-lock/checkpoint discipline as already Vex-reviewed) — no re-audit
+lock/checkpoint discipline as already security-audit-reviewed) — no re-audit
 dispatched for this round. 28/28 unit tests (3 new), full E2E drill
 green.
 
@@ -645,9 +645,9 @@ before returning to the AJAX/cron caller — still no handle held open
 reopened needlessly within one. Per-file checkpoint persistence is
 unchanged. 25/25 unit tests and the full E2E drill green.
 
-## Vex delta re-audit (commits 93052f3..c9a30bc) — 2026-10-19
+## the follow-up security re-audit (commits 93052f3..c9a30bc) — 2026-10-19
 
-Vex reviewed all four commits since the last sign-off (ZIP packaging fix,
+The security audit reviewed all four commits since the last sign-off (ZIP packaging fix,
 batching, resume-on-load UI, and especially the new Cancel/Reset job
 capability). **Verdict: CLEAR TO SHIP.** No HIGH/MEDIUM findings. Two
 LOWs:
@@ -664,7 +664,7 @@ LOWs:
   should be revoked once no longer needed for testing. Flagged to the owner
   directly.
 
-Vex confirmed by direct code trace: `cancel()` cannot be triggered by a
+The security audit confirmed by direct code trace: `cancel()` cannot be triggered by a
 non-admin/no-nonce request, cannot corrupt a job genuinely mid-advance
 (respects the H-01 lock), never touches anything already uploaded to
 Nextcloud, and `public_job_view()`'s response shape is unchanged (no new
@@ -672,7 +672,7 @@ disclosure).
 
 ## New: diagnostic job-log.json uploaded alongside every backup — 2026-10-19
 
-the owner's request, for the ongoing performance investigation — the admin UI
+The owner's request, for the ongoing performance investigation — the admin UI
 only ever showed the last 10 log entries, and WP-CLI's `status` command
 doesn't print the log at all, so there was no way to see real per-step
 timestamps after the fact. `Job_Orchestrator` now uploads the full
@@ -702,7 +702,7 @@ Cancel/Reset feature built in response is still a legitimate, needed fix
 for the case where a job really doesn't resume, but this specific
 instance resolved on its own.
 
-## Real-production restore drill, performed by Holt — 2026-10-19
+## Real-production restore drill — 2026-10-19
 
 Restored the owner's first real backup (`20261019T232522Z-2469c25c`, real
 the owner's production site content — 142 `wp_posts` rows, 3 users, 12 active plugins)
@@ -720,7 +720,7 @@ per-status breakdown, both real published posts intact (non-empty,
 correct titles), a real media file intact on disk, 3/3 users, correct
 active theme and all 12 active plugins matching the live site.
 
-**the owner's own confirmation, browsing the restored instance himself**: his
+**The owner's own confirmation, browsing the restored instance himself**: his
 real account logged in correctly, **including his 2FA state** (wp-2fa
 plugin) — full fidelity on a genuinely sensitive, stateful security
 feature, not just static content. Strongest restore validation to date —
@@ -766,7 +766,7 @@ proven-safe verification method; no cheaper substitute holds up against
 the real target server. Do not re-attempt this without first re-testing
 live, same as above.
 
-## Vex security audit (SOP-023) — 2026-10-19
+## the security audit (SOP-023) — 2026-10-19
 
 First independent security pass. Verdict was **BLOCKED** pending two HIGH
 findings; both fixed same-day, re-verified (22/22 unit tests, full E2E
@@ -795,7 +795,7 @@ T12, T14) for the updated per-threat detail.
 
 **All findings from the 2026-10-19 audit are now fixed** (both HIGHs,
 the one MEDIUM, all four LOWs) — see commits `0310976`, `31068b6`.
-- **Vex's two re-verification conditions were met** (2026-10-19, same
+- **The security audit's two re-verification conditions were met** (2026-10-19, same
   day): `tests/e2e/run-e2e-lock-race.sh` proves the H-01 lock actually
   excludes a genuinely concurrent second OS process/MySQL connection
   (the waiter blocks for multiple attempts and only acquires at or
@@ -837,12 +837,12 @@ rebuilt `dist/wpguard-nc-backup-0.1.0.zip` — the flat, backslash-named
 files are not a normal plugin folder and a stray leftover could collide
 with the next upload.
 
-- **Vex's final sign-off (2026-10-19): CLEAR TO SHIP** for
+- **the final security sign-off (2026-10-19): CLEAR TO SHIP** for
   testable/controlled deployment, consistent with this document's own
   standing caveats (CI not yet executing, scheduling/retention/
   one-click-restore are Phase 2, JOB-05 manual clear is a known
   limitation). Verified by independent line-by-line code review of
-  commits `0310976`, `4cee50c`, `31068b6` — not taken on Holt's word.
+  commits `0310976`, `4cee50c`, `31068b6` — not taken on the implementer's word.
   Surfaced two non-blocking advisories (LOW-R1: fail-closed check in
   case the wp-config.php redaction regex ever misses a credential;
   LOW-R2: document a MySQL `wait_timeout`/lock-reconnect edge case) —

@@ -1,6 +1,6 @@
 <?php
 /**
- * Vex audit H-01 regression fixture — see lock-holder.php. Retries the
+ * security audit finding H-01 regression fixture — see lock-holder.php. Retries the
  * real Job_Store advisory lock non-blocking (matching try_lock's actual
  * 0-timeout GET_LOCK usage in Job_Orchestrator::advance()) and records
  * how many attempts it took before acquiring, plus the timestamp of

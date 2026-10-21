@@ -22,7 +22,7 @@ class CA_Bundle {
 		if ( ! is_readable( $path ) ) {
 			return __( 'CA bundle path does not exist or is not readable by the web server.', 'wpguard-nc-backup' );
 		}
-		// Vex audit L-04: this is an admin-only path (manage_options +
+		// security audit finding L-04: this is an admin-only path (manage_options +
 		// nonce), but file_get_contents() with no size bound still lets a
 		// misconfigured or malicious path (e.g. a device file or a huge
 		// file) exhaust PHP's memory limit before the content is even

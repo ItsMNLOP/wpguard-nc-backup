@@ -7,7 +7,7 @@
  * Version:           1.0.0
  * Requires at least: 6.4
  * Requires PHP:      8.1
- * Author:            Holt (WPGuard project)
+ * Author:            WPGuard project
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       wpguard-nc-backup
@@ -62,7 +62,7 @@ function activate() {
 }
 
 /**
- * Vex delta audit, 2026-10-20 (OBS-1): register_activation_hook() only
+ * the security audit delta audit, 2026-10-20 (OBS-1): register_activation_hook() only
  * fires on a fresh activation, not on a plugin update while already
  * active -- a site upgrading in place would silently lose the hourly
  * safety-net cron (the create_job()-triggered reap path still works
@@ -162,7 +162,7 @@ function boot() {
 	// happens when that transient is actually being rebuilt, and is
 	// transient-cached for 12h beyond that -- this registration alone adds
 	// no new outbound requests or cron events. No request input of any
-	// kind (Vex audit, 2026-10-20) reaches either hooked method -- the
+	// kind (security audit, 2026-10-20) reaches either hooked method -- the
 	// only data path in is the TLS-authenticated GitHub API response.
 	( new Update_Checker( plugin_basename( __FILE__ ) ) )->register();
 
@@ -194,7 +194,7 @@ function boot() {
  * (ADR 0003). Advances until terminal or until a time budget is spent,
  * then reschedules itself for jobs still in progress.
  *
- * Vex audit HIGH-AJAX-1 (one-click restore): this previously called
+ * security audit finding HIGH-AJAX-1 (one-click restore): this previously called
  * Job_Orchestrator::advance() unconditionally -- fine as long as only
  * backups ever scheduled this event, but restore had no cron fallback
  * registered at all, meaning a closed tab or a network blip during the

@@ -106,7 +106,7 @@ function test_incremental_accepts_enabled() {
 	wpguard_assert( true === Settings::get_incremental_enabled(), 'incremental_enabled must be stored and read back as enabled' );
 }
 
-// Vex audit H-02 regression coverage. redact_wp_config_contents() is a
+// security audit finding H-02 regression coverage. redact_wp_config_contents() is a
 // pure string transform (no WP functions), safe to test directly.
 function test_redact_wp_config_strips_credential_constants() {
 	$content = "<?php\n"
@@ -121,7 +121,7 @@ function test_redact_wp_config_strips_credential_constants() {
 	wpguard_assert( false !== strpos( $redacted, "define('DB_NAME', 'wordpress');" ), 'unrelated defines must be preserved verbatim' );
 }
 
-// Vex audit LOW-R1: documents the regex's known limitation (no fix
+// security audit finding LOW-R1: documents the regex's known limitation (no fix
 // intended here — this is exactly the gap the fail-closed check in
 // Job_Orchestrator::redacted_wp_config_copy() exists to catch at
 // archive time, not something to try to make this regex perfect for).

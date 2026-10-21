@@ -156,7 +156,7 @@ class Settings {
 
 		// App password: blank submission means "leave unchanged" (never clears it).
 		if ( self::is_app_password_locked() ) {
-			// Vex audit H-02: purge any previously option-stored value once
+			// security audit finding H-02: purge any previously option-stored value once
 			// the constant override takes over. Leaving the old value in
 			// wp_options meant switching to the "more secure" constant path
 			// didn't actually revoke the old credential from the database.
@@ -261,7 +261,7 @@ class Settings {
 	/**
 	 * Strips any line defining the app-password or CA-bundle constants
 	 * (ADR 0002's escape hatch) out of wp-config.php content before it is
-	 * archived (Vex audit H-02) — a backup that depends on the
+	 * archived (security audit finding H-02) — a backup that depends on the
 	 * credential protecting it must not also contain that credential.
 	 * Pure string transform, no I/O, so the orchestrator handles reading
 	 * the real file and writing the redacted copy to the job's tmp dir.

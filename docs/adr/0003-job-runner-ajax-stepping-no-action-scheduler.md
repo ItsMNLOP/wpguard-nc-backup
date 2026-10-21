@@ -5,8 +5,8 @@
 
 ## Context
 
-Holt's contract specifies WP_Background_Process or Action Scheduler for
-non-blocking jobs. The brief's MVP scope is manual, on-demand, single-admin
+A common WordPress-plugin convention favors WP_Background_Process or
+Action Scheduler for non-blocking jobs. The brief's MVP scope is manual, on-demand, single-admin
 backups only; no scheduling (JOB-02/04/05 are explicitly deferred to Phase 2).
 Action Scheduler is a ~15 MB third-party library; bundling it only to drive a
 synchronous, admin-initiated, single-user action is disproportionate for

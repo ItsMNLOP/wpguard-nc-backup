@@ -97,7 +97,7 @@ RESULT_D=$(wp_source eval "
 echo "OK  same-version release correctly never offered"
 
 echo
-echo "=== Case E: a WP.org-sourced entry already in the transient must be stripped, never passed through (Vex audit H-001) ==="
+echo "=== Case E: a WP.org-sourced entry already in the transient must be stripped, never passed through (security audit finding H-001) ==="
 wp_source eval "
   delete_transient('wpguard_nc_update_check');
   set_transient('wpguard_nc_update_check', array(), HOUR_IN_SECONDS);
@@ -122,7 +122,7 @@ RESULT_E=$(wp_source eval "
 echo "OK  pre-existing WP.org-sourced entry correctly removed when no trusted GitHub release is available"
 
 echo
-echo "=== Case F: a cached release whose package URL doesn't point at this repo's own release assets must never be offered (Vex audit L-001) ==="
+echo "=== Case F: a cached release whose package URL doesn't point at this repo's own release assets must never be offered (security audit finding L-001) ==="
 wp_source eval "
   set_transient('wpguard_nc_update_check', array(
     'version' => '9.9.9',
@@ -141,7 +141,7 @@ RESULT_F=$(wp_source eval "
 echo "OK  untrusted package URL (wrong repo) correctly never offered, even though cached"
 
 echo
-echo "=== Case G: a cached package URL using path traversal to escape this repo's release path must never be offered (Vex re-verification L-001) ==="
+echo "=== Case G: a cached package URL using path traversal to escape this repo's release path must never be offered (security re-verification finding L-001) ==="
 wp_source eval "
   set_transient('wpguard_nc_update_check', array(
     'version' => '9.9.9',

@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * AJAX, WP-Cron, or WP-CLI (ADR 0003) -- with one deliberate exception:
  * step_export_files() only commits a file (to either resolved_files or
  * files_remaining) once the archive close() that makes the rest of its
- * batch durable has already succeeded (Vex audit HIGH-ZIP-1 and its
+ * batch durable has already succeeded (security audit finding HIGH-ZIP-1 and its
  * re-verification NEW-HIGH-1), so a crash mid-batch there re-does that
  * batch's size/mtime checks on retry rather than losing a file outright.
  * Never buffers an entire backup in memory; the largest single
@@ -47,7 +47,7 @@ class Job_Orchestrator {
 	// the browser tab and the WP-Cron fallback failing to pick it back
 	// up) rather than genuinely in-progress.
 	//
-	// Vex delta audit, 2026-10-20 (LOW-JOB05-2): this value is NOT the
+	// the security audit delta audit, 2026-10-20 (LOW-JOB05-2): this value is NOT the
 	// real protection against reaping an active job -- try_lock() is.
 	// A single step_upload_parts() iteration can legitimately run far
 	// longer than this threshold once every per-attempt timeout and
@@ -116,7 +116,7 @@ class Job_Orchestrator {
 	 * (see wpguard-nc-backup.php) so a stuck job doesn't sit untouched
 	 * indefinitely just because nobody happens to press "Back Up Now".
 	 *
-	 * Uses the same try_lock()/release_lock() pair as cancel() (Vex audit
+	 * Uses the same try_lock()/release_lock() pair as cancel() (security audit
 	 * H-01's primitive) so this can never race a genuinely active
 	 * advance() call: if the lock is held, the process is alive and
 	 * working regardless of how old updated_at looks, and we correctly
@@ -196,7 +196,7 @@ class Job_Orchestrator {
 	 * @return array Job row with an added 'cancel_result' key: 'cancelled',
 	 *   'already_terminal', 'lock_contended' (advance() held the lock right
 	 *   now -- nothing was changed, caller must not report this as success,
-	 *   Vex audit LOW-C1), or 'not_found'.
+	 *   security audit finding LOW-C1), or 'not_found'.
 	 */
 	public static function cancel( string $job_id ): array {
 		if ( ! Job_Store::try_lock( $job_id ) ) {
@@ -228,7 +228,7 @@ class Job_Orchestrator {
 		self::log( $job_id, $step, 'error', $safe );
 		Job_Store::update( $job_id, array( 'status' => 'failed', 'error' => $safe ) );
 		$job = Job_Store::get( $job_id );
-		// Vex audit L-01: cleanup_tmp() previously only ran on the success
+		// security audit finding L-01: cleanup_tmp() previously only ran on the success
 		// path, leaving partial database/archive files under
 		// wp-content/wpguard-nc-backup-tmp/ indefinitely on failure —
 		// .htaccess-protected on Apache but directly web-accessible on
@@ -270,7 +270,7 @@ class Job_Orchestrator {
 	 * @return array Updated job row (see Job_Store::get()).
 	 */
 	public static function advance( string $job_id ): array {
-		// Vex audit H-01: AJAX polling and the WP-Cron fallback can both
+		// security audit finding H-01: AJAX polling and the WP-Cron fallback can both
 		// reach this method for the same job in overlapping requests. If
 		// another process already holds the lock, just report the
 		// current state instead of racing it on the same checkpoint.
@@ -426,7 +426,7 @@ class Job_Orchestrator {
 			// entirely of unchanged (skipped) files must never produce
 			// an empty zip part on disk.
 			$zip = null;
-			// Vex audit HIGH-ZIP-1: ZipArchive::close() failing rolls
+			// security audit finding HIGH-ZIP-1: ZipArchive::close() failing rolls
 			// back the ENTIRE batch since the last successful close --
 			// not just the file that triggered it -- so a file is only
 			// ever recorded into $cp['resolved_files'] / removed from
@@ -465,7 +465,7 @@ class Job_Orchestrator {
 					// forward verbatim. Nothing is archived or uploaded
 					// for this file this run -- no zip/close() of its own
 					// is involved, but it still must NOT be committed
-					// immediately (Vex re-verification, NEW-HIGH-1): an
+					// immediately (security re-verification, NEW-HIGH-1): an
 					// earlier file in this SAME batch may already be
 					// sitting in $pending, archived into the zip but not
 					// yet durably closed -- committing $remaining here
@@ -577,7 +577,7 @@ class Job_Orchestrator {
 			return Job_Store::get( $job_id );
 		}
 
-		// Vex audit MEDIUM-ZIP-2: current_part_bytes alone reads 0 even
+		// security audit finding MEDIUM-ZIP-2: current_part_bytes alone reads 0 even
 		// when the current part genuinely holds content, if every file
 		// added to it since the last rollover happened to be zero bytes
 		// (plausible -- empty .log/.gitkeep/index-guard-style sentinel
@@ -598,7 +598,7 @@ class Job_Orchestrator {
 	}
 
 	/**
-	 * Vex audit H-02: ADR 0002's constant-override escape hatch puts the
+	 * security audit finding H-02: ADR 0002's constant-override escape hatch puts the
 	 * Nextcloud app password directly in wp-config.php — which this same
 	 * backup then archives verbatim, circularly exposing the credential
 	 * that protects the backup inside the backup itself. Strips any line
@@ -611,7 +611,7 @@ class Job_Orchestrator {
 	private static function redacted_wp_config_copy( string $original_abs, string $tmp ) {
 		$redacted = Settings::redact_wp_config_contents( file_get_contents( $original_abs ) );
 
-		// Vex audit LOW-R1 (fail-closed hardening, post H-02 re-review):
+		// security audit finding LOW-R1 (fail-closed hardening, post H-02 re-review):
 		// the redaction regex can't cover every conceivable define()
 		// syntax (multi-line, `const`, mixed-case DEFINE) — none appear
 		// in any real wp-config.php, but if the currently-active
@@ -630,7 +630,7 @@ class Job_Orchestrator {
 	}
 
 	/**
-	 * Pure. Vex audit MEDIUM-ZIP-2: byte count alone can read 0 even when
+	 * Pure. security audit finding MEDIUM-ZIP-2: byte count alone can read 0 even when
 	 * the current (not-yet-finalized) part genuinely holds content, if
 	 * every file added to it since the last rollover happened to be
 	 * zero bytes (real: empty .log/.gitkeep/sentinel-style files) --
@@ -655,7 +655,7 @@ class Job_Orchestrator {
 	}
 
 	/**
-	 * Vex audit HIGH-ZIP-1 (defense in depth, called once before any
+	 * security audit finding HIGH-ZIP-1 (defense in depth, called once before any
 	 * upload begins): confirms every file this job itself claims to
 	 * have archived (source_backup_id === this job's own backup_id) is
 	 * actually present inside the local zip part it claims to live in,
@@ -666,7 +666,7 @@ class Job_Orchestrator {
 	 * exact HIGH-ZIP-1 failure mode, now also fixed at the source in
 	 * step_export_files() -- this is the backstop that verifies the
 	 * manifest's per-file claims against reality rather than trusting
-	 * them). Vex re-verification, LOW-VERIFY-1: presence alone can't
+	 * them). security re-verification, LOW-VERIFY-1: presence alone can't
 	 * catch a source file that changed in the narrow window between
 	 * this job's own hash_file() call and ZipArchive::close() actually
 	 * reading it -- comparing the archived entry's uncompressed size
@@ -857,7 +857,7 @@ class Job_Orchestrator {
 	const RETENTION_ERROR_OPTION = 'wpguard_nc_retention_last_error';
 
 	/**
-	 * Vex audit LOW-RETAIN-1: Retention::prune()'s fail-closed abort (if
+	 * security audit finding LOW-RETAIN-1: Retention::prune()'s fail-closed abort (if
 	 * any kept backup's manifest can't be read, nothing is deleted) is
 	 * the correct behavior, but a per-job log warning alone means an
 	 * admin who isn't reading every job's log line by line has no way

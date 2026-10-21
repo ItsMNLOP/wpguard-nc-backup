@@ -21,7 +21,7 @@ function test_rejects_empty() {
 	wpguard_assert( false === Archive_Writer::is_path_safe( '' ), 'should reject empty path' );
 }
 
-// Vex audit HIGH-PATH-1 (one-click restore): a bare '..' segment was
+// security audit finding HIGH-PATH-1 (one-click restore): a bare '..' segment was
 // the only thing rejected -- a '.' segment or a doubled separator both
 // resolve as a no-op at the filesystem layer and bypassed
 // Restore_Orchestrator::is_never_restored_path()'s exact-string-match
@@ -39,7 +39,7 @@ function test_accepts_doubled_separator_as_equivalent_to_single() {
 	// separator into one split point, so no segment here is ever
 	// actually empty -- correctly treated as equivalent to the
 	// single-separator form, same safe set of real segments either
-	// way. The bypass Vex's audit actually found here was one level
+	// way. The bypass the security audit actually found here was one level
 	// up: Restore_Orchestrator::is_never_restored_path()'s own EXACT
 	// STRING comparison didn't match this form against its normal
 	// single-separator exclusion prefix, even though is_path_safe()

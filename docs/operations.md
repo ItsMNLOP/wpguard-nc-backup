@@ -52,15 +52,15 @@ real site) would otherwise stay stuck forever and block every future
 **Automatic recovery (Phase 2, 2026-10-20)**: `Job_Orchestrator::reap_stale_lock()`
 marks a job `failed` if its checkpoint hasn't been touched in over
 `STALE_LOCK_SECONDS` (600s default, filterable via
-`wpguard_nc_stale_lock_seconds`, floored at 60s — Vex delta audit
+`wpguard_nc_stale_lock_seconds`, floored at 60s — the follow-up security audit
 LOW-JOB05-3 — so a filtered value can't shrink below the one genuinely
 lock-free moment in a job's life, between `create_job()` returning and
 the first `advance()` call acquiring the lock). It uses the same
-`try_lock()`/`release_lock()` pair as `cancel()` (Vex audit H-01's
+`try_lock()`/`release_lock()` pair as `cancel()` (the security audit's H-01
 primitive), so it can never race a genuinely active process: if the
 lock is held, the job is left alone regardless of how stale its
 timestamp looks. **The lock is the actual protection here, not the
-600s margin** (Vex delta audit LOW-JOB05-2, 2026-10-20) — a single
+600s margin** (the follow-up security audit LOW-JOB05-2, 2026-10-20) — a single
 `step_upload_parts()` iteration can legitimately run on the order of
 1800s once every per-attempt timeout and retry in
 `class-nextcloud-client.php` is counted (`put_bytes`: up to 120s x 4;
@@ -90,7 +90,7 @@ job that's healthy but no longer wanted. Same cleanup path as any other
 failure — nothing already uploaded to Nextcloud is touched. Regression
 test: `tests/e2e/run-e2e-cancel-job.sh`.
 
-**Related advisory (Vex re-audit, 2026-10-19, LOW-R2):** the H-01 fix
+**Related advisory (the security re-audit, 2026-10-19, LOW-R2):** the H-01 fix
 (`Job_Store::try_lock()`/`release_lock()`, a MySQL `GET_LOCK`/
 `RELEASE_LOCK` pair keyed by job_id) is session-scoped — it's
 automatically released if the PHP process's MySQL connection drops.
@@ -105,7 +105,7 @@ new condition introduced by the H-01 fix — any session-scoped lock in
 a PHP plugin has the same exposure — but it's worth knowing before
 relying on this plugin under non-default MySQL timeout settings.
 
-**Vex delta audit, 2026-10-20 (LOW-JOB05-1):** the automatic stale-lock
+**the follow-up security audit, 2026-10-20 (LOW-JOB05-1):** the automatic stale-lock
 reaper (above) widens this same condition's practical surface — the
 hourly safety-net cron now provides a second actor that could acquire
 a dropped lock, not only a second concurrent `advance()` call. The
@@ -160,7 +160,7 @@ Default is 0 specifically so no plugin update or activation can ever
 silently start deleting existing backups. Only a folder matching the
 real `backup_id` format *and* carrying a `COMPLETE.json` counts as a
 verified backup for both the keep-N count and as a deletion candidate
-(Vex delta audit, 2026-10-20, RETENTION-2) — a failed/interrupted
+(the follow-up security audit, 2026-10-20, RETENTION-2) — a failed/interrupted
 job's folder is neither counted (so it can't silently consume one of
 the N "keep" slots a real backup should occupy) nor deleted (cleaning
 up non-backup remnants is a separate concern). Regression test:
@@ -170,7 +170,7 @@ against the real server, not a mock, including a failed-job stub that
 must be neither counted nor touched, and a real end-to-end run through
 `step_finalize()` itself, not just a direct call to `prune()`).
 
-**Request cost (Vex re-verification, 2026-10-20):** the COMPLETE.json
+**Request cost (the security re-verification, 2026-10-20):** the COMPLETE.json
 check above adds one PROPFIND (Depth: 0) per candidate folder under
 the backups parent, so a pruning run now costs N+1 HTTP requests (1
 Depth:1 listing + N Depth:0 existence checks) instead of 1. Each is
@@ -260,7 +260,7 @@ reclaiming one that's fully superseded.
 
 ## One-click restore (Phase 2, 2026-10-20)
 
-**RST-04.** Built with Mike's explicit approval given the original
+**RST-04.** Built with the owner's explicit approval given the original
 brief's own gate on this specific feature ("no one-click destructive
 restore" at MVP, requiring "threat review and explicit owner approval"
 before any build work) — see STATUS.md for that decision. Restores
@@ -337,7 +337,7 @@ backup from the owner's own production site (not a synthetic
 fixture), restored in place onto a disposable WordPress install with
 the plugin genuinely active and running on it.
 
-**Vex audit round (findings fixed before ship):** the first build
+**security audit round (findings fixed before ship):** the first build
 (commit `6a652d2`) came back BLOCKED. Fixes, briefly:
 - The path-exclusion check above now normalizes a path (splitting on
   separators, dropping `.`/empty segments, case-insensitive compare)

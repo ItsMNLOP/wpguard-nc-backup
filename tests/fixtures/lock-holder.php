@@ -1,6 +1,6 @@
 <?php
 /**
- * Vex audit H-01 regression fixture. Run via `wp eval-file lock-holder.php
+ * security audit finding H-01 regression fixture. Run via `wp eval-file lock-holder.php
  * <job_id> <hold_seconds>` from a disposable wpcli container. Acquires the
  * real Job_Store advisory lock and holds it for a fixed duration, so a
  * concurrently-running lock-waiter.php process (a genuinely separate OS

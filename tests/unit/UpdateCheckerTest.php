@@ -55,7 +55,7 @@ function test_is_newer_version_false_for_older_or_blank() {
 	wpguard_assert( false === Update_Checker::is_newer_version( '', '1.0.0' ), 'an empty version string (no usable release found) must never be offered as an update' );
 }
 
-// Vex audit L-001: a package URL must be confirmed to point at this
+// security audit finding L-001: a package URL must be confirmed to point at this
 // specific repo's own release assets, not just any github.com URL,
 // before it's trusted enough to hand to WP core's installer.
 function test_is_trusted_package_url_accepts_this_repos_release_asset() {
@@ -78,7 +78,7 @@ function test_is_trusted_package_url_accepts_empty_string() {
 	wpguard_assert( true === Update_Checker::is_trusted_package_url( '' ), 'an empty package URL (no asset selected) must be allowed through -- callers already treat "" as nothing to offer' );
 }
 
-// Vex re-verification, 2026-10-20: the original strncasecmp()-based
+// security re-verification, 2026-10-20: the original strncasecmp()-based
 // prefix check was proven bypassable via path traversal -- a prefix
 // match never inspects what follows it. These cover the exact bypass
 // shapes proven live against the real GitHub CDN, plus adjacent

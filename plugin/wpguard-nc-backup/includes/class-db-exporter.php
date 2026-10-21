@@ -240,7 +240,7 @@ class DB_Exporter {
 	}
 
 	/**
-	 * Pure. Phase 2 (one-click restore). Vex audit MEDIUM-RENAME-1:
+	 * Pure. Phase 2 (one-click restore). security audit finding MEDIUM-RENAME-1:
 	 * restoring a table rename needs to replace an exact backtick-quoted
 	 * table name inside a dump this exporter wrote -- but a plain
 	 * str_replace() across the whole block would also rewrite that same

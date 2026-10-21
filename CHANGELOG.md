@@ -13,7 +13,7 @@ All notable changes to this project are documented here.
   as an immediate manual override). Applied the moment anyone next
   tries to back up, plus a recurring hourly WP-Cron safety net for a
   site nobody visits for a while. Never races a job whose advisory lock
-  is genuinely still held by a live process. Pending Vex security
+  is genuinely still held by a live process. Pending the security audit security
   sign-off before this is considered shippable.
 - Automatic backup scheduling: a Disabled/Daily/Weekly dropdown on the
   settings page, backed by a real recurring WP-Cron event kept in sync
@@ -21,7 +21,7 @@ All notable changes to this project are documented here.
   reap, so a scheduled run clears a genuinely abandoned previous job
   before starting and skips rather than overlaps a healthy one still in
   progress. Defaults to Disabled so no plugin update or activation ever
-  silently starts recurring jobs. Pending Vex sign-off.
+  silently starts recurring jobs. Pending the security audit sign-off.
 - Retention pruning: a "Keep last N backups" setting (default 0 = keep
   all) that deletes the oldest backup folder(s) on Nextcloud once more
   than N exist, right after a new backup verifies. Oldest-first by
@@ -32,7 +32,7 @@ All notable changes to this project are documented here.
   `Retention` class, verified against a real Nextcloud account via
   `tests/e2e/run-e2e-retention.sh`. Defaults to keep-all since pruning
   is destructive and must be an explicit admin opt-in.
-- One-click restore (RST-04): built with Mike's explicit approval given
+- One-click restore (RST-04): built with the owner's explicit approval given
   the brief's own gate on this specific feature. Restores this site,
   in place, from a backup chosen either from the configured Nextcloud
   destination or a single uploaded `.zip` bundle. Two-phase design:
@@ -52,10 +52,10 @@ All notable changes to this project are documented here.
   all. See `docs/operations.md` ("One-click restore") and
   `docs/threat-model.md` T20. New `tests/e2e/run-e2e-restore.sh`,
   verified against a real backup from the owner's own production
-  site, restored onto disposable infrastructure only. Pending Vex
+  site, restored onto disposable infrastructure only. Pending the security audit
   sign-off before this is considered shippable — the highest-stakes
   feature in this project, reviewed accordingly.
-  - Vex's full audit of the first build came back BLOCKED (4 HIGH, 3
+  - the full security audit of the first build came back BLOCKED (4 HIGH, 3
     MEDIUM, 4 LOW); all fixed — path-exclusion normalization (a
     bypass via `./wp-config.php` or a doubled separator into the
     plugin's own directory), externalizing large per-job state out of
@@ -97,7 +97,7 @@ All notable changes to this project are documented here.
   restore reconstruction from the final manifest alone succeeds
   across a real 3-backup chain. See `docs/operations.md` ("Incremental
   file backups"), `docs/threat-model.md` T19, and `docs/restore-manual.md`
-  step 1a. Pending Vex sign-off before this is considered shippable.
+  step 1a. Pending the security audit sign-off before this is considered shippable.
 - Self-hosted update feed: `Update_Checker` polls the now-public
   `github.com/ItsMNLOP/wpguard-nc-backup` Releases (no credentials
   needed) through WP's normal `pre_set_site_transient_update_plugins`/
@@ -109,10 +109,10 @@ All notable changes to this project are documented here.
   just the plugin folder. See `docs/releasing.md` for the (currently
   manual, pending the CI bash port) release process and
   `docs/threat-model.md` T18 for the trust-boundary discussion. Pending
-  Vex sign-off before this is considered shippable.
+  the security audit sign-off before this is considered shippable.
 
 ### Fixed
-- Incremental backups, Vex re-verification (2026-10-20): the HIGH-ZIP-1
+- Incremental backups, the security re-verification (2026-10-20): the HIGH-ZIP-1
   fix had introduced **NEW-HIGH-1**, a gap of the same class -- the
   unchanged-file fast path in `step_export_files()` committed
   `files_remaining` immediately, which could already be missing an
@@ -125,7 +125,7 @@ All notable changes to this project are documented here.
   entirely on an incremental restore. Fixed. Two LOWs also fixed
   (size check added to the pre-upload invariant check; a test
   assertion made unconditional).
-- Incremental backups, Vex audit (2026-10-20): **BLOCKED, then fixed
+- Incremental backups, the security audit (2026-10-20): **BLOCKED, then fixed
   same-day. HIGH-ZIP-1**: `ZipArchive::close()`'s return value was
   discarded entirely; proven live that libzip rolls back the *entire*
   pending batch (not just the file that triggered it) if any one
@@ -155,13 +155,13 @@ All notable changes to this project are documented here.
   snapshot; `Retention::prune()`'s fail-closed abort had no visible
   symptom beyond a per-job log line (added a persistent admin
   notice); `Archive_Writer::open_part()` had a dead-code ternary.
-- Update feed, Vex re-verification (2026-10-20): L-001 was **still
+- Update feed, the security re-verification (2026-10-20): L-001 was **still
   BLOCKED** after the first fix — the `strncasecmp()` prefix check on
   the package URL was proven bypassable with a `../` path-traversal
   tag segment (confirmed live with a real HTTP 302 to an unrelated
   repo's release asset). Replaced with a full anchored regex. H-001
   confirmed cleared on re-verification.
-- Update feed, Vex audit (2026-10-20): **BLOCKED, then fixed same-day.**
+- Update feed, the security audit (2026-10-20): **BLOCKED, then fixed same-day.**
   H-001 (HIGH, proven exploitable): no `Update URI:` header meant
   WordPress core still queried `api.wordpress.org` for this plugin's
   unclaimed slug; a squatter registering it there could have had a
@@ -174,7 +174,7 @@ All notable changes to this project are documented here.
   this repo's own release path — added
   `Update_Checker::is_trusted_package_url()`, applied at cache-read and
   both emission points.
-- Corrected two Vex delta-audit documentation findings on the JOB-05
+- Corrected two the security audit delta-audit documentation findings on the JOB-05
   stale-lock reaper (LOW-JOB05-1/2): `STALE_LOCK_SECONDS`'s "comfortably
   above worst-case" comment understated the real worst case by roughly
   10x once `class-nextcloud-client.php`'s actual per-attempt timeouts
@@ -188,7 +188,7 @@ All notable changes to this project are documented here.
   `boot()`, not only on fresh plugin activation, so an in-place plugin
   update doesn't silently lose the safety-net cron until a deactivate/
   reactivate cycle (OBS-1).
-- Vex delta audit of scheduling and retention: **scheduling CLEAR TO
+- the follow-up security audit of scheduling and retention: **scheduling CLEAR TO
   SHIP, no findings. Retention was initially BLOCKED** — two
   implementation bugs had silently disabled it entirely
   (`maybe_prune_old_backups()` called `Retention::prune()` with the
@@ -280,4 +280,4 @@ real restore with the owner's own account and 2FA state confirmed intact.
 - No Nextcloud chunked-upload v2 — upload parts are bounded (default
   64 MiB) but read fully into memory per part.
 - No at-rest archive encryption.
-- Not yet independently security-audited (Vex / SOP-023 pending).
+- Not yet independently security-audited (the security audit / SOP-023 pending).

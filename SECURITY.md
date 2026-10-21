@@ -1,20 +1,20 @@
 # Security policy
 
-**Status: MVP, not yet independently audited.** This plugin has not had
-Vex's independent security review (SOP-023 in the PKA knowledge base) and
-has not been used on any production site. Do not deploy it to a real
-WordPress site before that review happens. See `docs/threat-model.md` for
-the self-review performed during build, and `docs/adr/0002-*.md` for a
-known, deliberate deviation (credential stored in `wp_options` rather than
-a `wp-config.php` constant, with an optional constant-override escape
-hatch).
+**Status: MVP, independently security-reviewed feature by feature.** Each
+shipped feature has gone through an independent security audit before
+release — findings fixed and re-verified before the feature is marked
+shippable; see `STATUS.md` for the audit history per feature and
+`docs/threat-model.md` for the running threat model. That process does
+not substitute for your own review before production use on infrastructure
+you depend on. See `docs/adr/0002-*.md` for a known, deliberate deviation
+(credential stored in `wp_options` rather than a `wp-config.php` constant,
+with an optional constant-override escape hatch).
 
 ## Reporting a vulnerability
 
-This is a personal/internal project at MVP stage, not yet published. If
-you are the project owner: route findings to the project's security
-reviewer (Vex) before any public release. There is no public disclosure
-process yet because there is no public release yet.
+This is a personal/internal project at MVP stage, not yet published. There
+is no public disclosure process yet because there is no public release
+yet.
 
 ## Known limitations at this stage
 

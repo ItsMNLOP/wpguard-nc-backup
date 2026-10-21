@@ -71,7 +71,7 @@ function test_keeps_trailing_statement_with_no_final_semicolon() {
 	wpguard_assert_equals( 2, count( $result ), 'a trailing statement with no final semicolon must still be returned, not silently dropped' );
 }
 
-// Phase 2 (one-click restore), Vex audit MEDIUM-RENAME-1:
+// Phase 2 (one-click restore), security audit finding MEDIUM-RENAME-1:
 // replace_outside_strings() is what prepare_db_statements() uses to
 // rewrite a backtick-quoted table name to its shadow equivalent
 // without corrupting a string literal value that happens to contain
@@ -100,7 +100,7 @@ function test_replace_outside_strings_handles_escaped_quote_before_match() {
 	wpguard_assert( false !== strpos( $result, "it\\'s `wp_posts`-related" ), 'the occurrence inside the string literal, even after an escaped quote, must survive untouched' );
 }
 
-// Phase 2 (one-click restore), Vex audit LOW-TEST-1: round-trips
+// Phase 2 (one-click restore), security audit finding LOW-TEST-1: round-trips
 // DB_Exporter's OWN write_inserts() output through split_statements()
 // rather than only hand-crafted strings, closing the gap between the
 // two methods silently drifting apart.

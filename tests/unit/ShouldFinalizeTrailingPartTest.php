@@ -2,7 +2,7 @@
 namespace WPGuard\NCBackup\Tests;
 use WPGuard\NCBackup\Job_Orchestrator;
 
-// Vex audit MEDIUM-ZIP-2: a part holding only zero-byte files after a
+// security audit finding MEDIUM-ZIP-2: a part holding only zero-byte files after a
 // size-based rollover could read current_part_bytes === 0 and never get
 // finalized/uploaded/restored, while still being referenced by a
 // resolved_files entry. These cover the exact boundary directly,

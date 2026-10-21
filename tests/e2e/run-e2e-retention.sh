@@ -151,7 +151,7 @@ wp_source eval "
 " > /dev/null
 wp_source db query "UPDATE wp_wpguard_nc_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
 
-# Vex re-verification note: seed enough old-looking verified fixtures
+# security re-verification note: seed enough old-looking verified fixtures
 # directly under the real site-id/backups/ parent (deterministic,
 # regardless of whatever leftover history other test runs may have
 # left there) so retention_count=2 is GUARANTEED to have more than 2
@@ -181,7 +181,7 @@ echo "OK  real backup reached 'verified'"
 
 REAL_LOG=$(wp_source eval "echo wp_json_encode(\WPGuard\NCBackup\Job_Store::get('$REAL_JOB_ID')['log']);")
 
-# Vex re-verification note: the original assertion here only checked
+# security re-verification note: the original assertion here only checked
 # for the ABSENCE of an error, which can't tell a genuine success
 # apart from a different silently-swallowed failure reaching the same
 # catch block -- exactly the shape that let RETENTION-3 through the

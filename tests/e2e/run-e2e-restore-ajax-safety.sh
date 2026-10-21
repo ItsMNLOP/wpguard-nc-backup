@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 2 one-click restore, Vex audit HIGH-AJAX-2: the CLI restore
+# Phase 2 one-click restore, security audit finding HIGH-AJAX-2: the CLI restore
 # command drives the whole restore in ONE continuous PHP process/
 # WordPress bootstrap, which is how the main run-e2e-restore.sh test
 # necessarily exercises it. The real AJAX (and WP-Cron) path is

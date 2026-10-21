@@ -1,6 +1,6 @@
 <?php
 /**
- * Vex audit LOW-C1 regression fixture. Run via `wp eval-file
+ * security audit finding LOW-C1 regression fixture. Run via `wp eval-file
  * lock-canceller.php <job_id>` while a concurrent lock-holder.php process
  * holds the real Job_Store advisory lock. Calls Job_Orchestrator::cancel()
  * and reports what it got back -- proves cancel() correctly reports

@@ -38,7 +38,7 @@ class Archive_Writer {
 		if ( '/' === $relative_name[0] || preg_match( '#^[A-Za-z]:[\\\\/]#', $relative_name ) ) {
 			return false;
 		}
-		// Vex audit HIGH-PATH-1 (one-click restore): a bare '..' segment
+		// security audit finding HIGH-PATH-1 (one-click restore): a bare '..' segment
 		// was the only thing rejected. A '.' (single-dot) segment or an
 		// empty segment from a doubled separator ('wp-content//plugins/...')
 		// both resolve as a no-op at the filesystem layer, but neither
@@ -77,7 +77,7 @@ class Archive_Writer {
 	 */
 	public static function open_part( string $zip_path ) {
 		$zip = new \ZipArchive();
-		// Vex audit LOW-ARCH-1: `0 ?: ZipArchive::CREATE` always evaluates
+		// security audit finding LOW-ARCH-1: `0 ?: ZipArchive::CREATE` always evaluates
 		// to CREATE (0 is falsy), so the file_exists() ternary never
 		// actually influenced the flag passed to open() -- harmless in
 		// practice (ZipArchive::open() with CREATE on an existing file
@@ -109,7 +109,7 @@ class Archive_Writer {
 	}
 
 	/**
-	 * Vex audit HIGH-ZIP-1: ZipArchive::close()'s return value was
+	 * security audit finding HIGH-ZIP-1: ZipArchive::close()'s return value was
 	 * previously discarded entirely. libzip rolls back the ENTIRE
 	 * pending batch -- every addFile() since the last successful
 	 * close(), not just the one that triggered the failure -- if any

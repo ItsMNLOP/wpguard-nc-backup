@@ -60,7 +60,7 @@ file currently on the site, each naming `source_backup_id` and
 "apply" on top of anything; it's a complete, resolved list of exactly what
 the site looked like at backup time.
 
-**Vex audit, 2026-10-20 (MEDIUM-RESTORE-1): every `source_part` is named
+**The security audit, 2026-10-20 (MEDIUM-RESTORE-1): every `source_part` is named
 `files.part-NNNN.zip` the same way in every backup** — two different
 ancestor backups' parts both named `files.part-0001.zip` will silently
 overwrite each other if downloaded to that bare filename. Step 3 below
@@ -100,7 +100,7 @@ available; any tool that can read JSON works identically.
    backups elsewhere by hand, the same rule applies there too.
 4. **Extract only the individual named files you need — never the whole
    contents of an ancestor part — and handle `wp-config.php` separately,
-   never through this generic loop (Vex re-verification, MEDIUM-RESTORE-2).**
+   never through this generic loop (the security re-verification, MEDIUM-RESTORE-2).**
    Step 6's `unzip files.part-NNNN.zip -d /target/` does **not** apply here:
    an ancestor part is itself a complete snapshot of whatever existed when
    *it* was taken, including files this backup's own `manifest.json` no

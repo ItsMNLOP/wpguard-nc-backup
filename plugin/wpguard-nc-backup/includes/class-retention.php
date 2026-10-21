@@ -58,7 +58,7 @@ class Retention {
 	 * to any particular site/backups path here) so this can be pointed
 	 * at an isolated folder in tests without touching real backups.
 	 *
-	 * Vex delta audit, 2026-10-20 (RETENTION-2): a folder only counts
+	 * the security audit delta audit, 2026-10-20 (RETENTION-2): a folder only counts
 	 * as a real backup -- for the keep-N count, and as a deletion
 	 * candidate -- if its name matches the backup_id format AND it has
 	 * a COMPLETE.json (same completion signal step_finalize() itself

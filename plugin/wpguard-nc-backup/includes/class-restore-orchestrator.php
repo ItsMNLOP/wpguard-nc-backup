@@ -6,7 +6,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * One-click restore (Phase 2, RST-04 -- built with Mike's explicit
+ * One-click restore (Phase 2, RST-04 -- built with the owner's explicit
  * approval given the brief's own gate on this specific feature; see
  * STATUS.md). Reuses Job_Orchestrator's exact job-state-machine shape
  * (same wp_wpguard_nc_jobs table, same status vocabulary, same
@@ -48,7 +48,7 @@ class Restore_Orchestrator {
 	}
 
 	/**
-	 * Vex audit HIGH-CHECKPOINT-1: large, per-job data (the manifest,
+	 * security audit finding HIGH-CHECKPOINT-1: large, per-job data (the manifest,
 	 * the full remaining-file/remaining-statement lists) must never
 	 * live inside the checkpoint column itself -- for a real site with
 	 * thousands of files and a multi-megabyte SQL dump, that column
@@ -123,7 +123,7 @@ class Restore_Orchestrator {
 	}
 
 	/**
-	 * Vex audit HIGH-PATH-1: a path like './wp-config.php' or
+	 * security audit finding HIGH-PATH-1: a path like './wp-config.php' or
 	 * 'wp-content//plugins/wpguard-nc-backup/evil.php' resolves to
 	 * exactly the protected target at the filesystem layer (PHP/the OS
 	 * both treat '.' segments and doubled separators as no-ops), but
@@ -154,7 +154,7 @@ class Restore_Orchestrator {
 	}
 
 	/**
-	 * Vex audit MEDIUM-UPLOAD-1: a fixed, guessable upload path with no
+	 * security audit finding MEDIUM-UPLOAD-1: a fixed, guessable upload path with no
 	 * cleanup meant an uploaded bundle's database.sql.gz (full DB dump:
 	 * user password hashes, session tokens) and files.part-*.zip
 	 * (wp-config.php, including real DB credentials) sat at a
@@ -219,7 +219,7 @@ class Restore_Orchestrator {
 	 * @return string New restore job_id, or '' if a backup or restore is already running.
 	 */
 	public static function create_restore_job( array $source, string $source_backup_id, bool $confirm_url_mismatch = false ): string {
-		// Vex audit LOW-RACE-1: create_job() (backups) reaps a stale
+		// security audit finding LOW-RACE-1: create_job() (backups) reaps a stale
 		// lock before checking has_running_job() so an abandoned job
 		// doesn't block new work indefinitely; create_restore_job()
 		// had skipped this, so a stuck restore nobody manually
@@ -342,7 +342,7 @@ class Restore_Orchestrator {
 	private static function fail( string $job_id, string $step, string $message ): array {
 		$safe = self::logger()->redact( $message );
 		self::log( $job_id, $step, 'error', $safe );
-		// Vex audit HIGH-AJAX-2: if restore_apply_files already restricted
+		// security audit finding HIGH-AJAX-2: if restore_apply_files already restricted
 		// `active_plugins` down to just this plugin (to stop any OTHER
 		// plugin's code -- genuinely restored to disk by this same job --
 		// from executing during an intermediate AJAX/cron bootstrap before
@@ -488,7 +488,7 @@ class Restore_Orchestrator {
 			}
 		}
 
-		// Vex audit HIGH-CHECKPOINT-1: an incremental backup's manifest
+		// security audit finding HIGH-CHECKPOINT-1: an incremental backup's manifest
 		// can carry one files[] entry per file on the whole site --
 		// kept on disk, not in the checkpoint column, same reasoning as
 		// target_files/db_statements_remaining below. Readers fetch it
@@ -876,7 +876,7 @@ class Restore_Orchestrator {
 				);
 			}
 			$cp['db_statements_cursor']++;
-			// Vex audit HIGH-CHECKPOINT-1: a checkpoint write failure
+			// security audit finding HIGH-CHECKPOINT-1: a checkpoint write failure
 			// here must stop the job -- re-running from a stale cursor
 			// would re-execute a statement that already succeeded
 			// (duplicate INSERTs, or a CREATE TABLE erroring against a
@@ -947,7 +947,7 @@ class Restore_Orchestrator {
 			}
 
 			$shadow_table_name = $cp['shadow_prefix'] . $suffix;
-			// Vex audit MEDIUM-RENAME-1: a plain str_replace() ran across
+			// security audit finding MEDIUM-RENAME-1: a plain str_replace() ran across
 			// the WHOLE block, including every INSERT statement's string
 			// literal values -- a post_content value that happened to
 			// contain the literal substring (backtick-quoted table name)
@@ -982,7 +982,7 @@ class Restore_Orchestrator {
 		if ( ! isset( $cp['quarantine_cursor'] ) ) {
 			$cp['quarantine_cursor'] = 0;
 			$cp['files_cursor'] = 0;
-			// Vex audit HIGH-AJAX-2: unlike the CLI path (one continuous
+			// security audit finding HIGH-AJAX-2: unlike the CLI path (one continuous
 			// bootstrap for the whole restore), the AJAX/cron path
 			// bootstraps WordPress FRESH for every batch. Quarantining or
 			// replacing one plugin's files in an earlier batch, while
@@ -990,7 +990,7 @@ class Restore_Orchestrator {
 			// NEXT bootstrap if that plugin's code now expects a file
 			// this batch hasn't applied yet -- found as a real,
 			// reachable failure mode (not merely a theoretical one) in
-			// Vex's audit. Restricting `active_plugins` down to just
+			// the security audit. Restricting `active_plugins` down to just
 			// this plugin for the remainder of apply_files (restored on
 			// any failure via fail(), or superseded entirely once
 			// restore_swap's own wp_options row takes over) means no
@@ -999,7 +999,7 @@ class Restore_Orchestrator {
 			$captured = get_option( 'active_plugins', array() );
 			$cp['captured_active_plugins'] = $captured;
 			update_option( 'active_plugins', array( plugin_basename( WPGUARD_NC_DIR . 'wpguard-nc-backup.php' ) ) );
-			// Vex re-verification NEW-LOW-1: persist captured_active_plugins
+			// security re-verification finding NEW-LOW-1: persist captured_active_plugins
 			// before entering either loop below. If this specific write
 			// fails, fail()'s own DB-reload won't see it (the checkpoint on
 			// disk still lacks it), so restore directly here rather than
@@ -1046,7 +1046,7 @@ class Restore_Orchestrator {
 					return self::fail( $job_id, 'restore_apply_files', $result->get_error_message() );
 				}
 				$cp['files_cursor']++;
-				// Vex audit HIGH-CHECKPOINT-1: apply_one_file() has
+				// security audit finding HIGH-CHECKPOINT-1: apply_one_file() has
 				// already moved the live file into the rollback
 				// directory (if one existed) and written the backup's
 				// content in its place BEFORE this point -- a checkpoint
@@ -1098,7 +1098,7 @@ class Restore_Orchestrator {
 		}
 		$zip = $open_zips[ $key ];
 
-		// Vex-informed defense in depth: re-check path safety at
+		// the security audit-informed defense in depth: re-check path safety at
 		// extraction time too, not only at archive-write time -- these
 		// bytes came over the network (or from an uploaded file) and
 		// could in principle have been tampered with between backup and
@@ -1123,7 +1123,7 @@ class Restore_Orchestrator {
 		if ( file_exists( $target_abs ) || is_link( $target_abs ) ) {
 			$dest = $cp['rollback_dir'] . 'replaced/' . $entry['path'];
 			wp_mkdir_p( dirname( $dest ) );
-			// Vex audit MEDIUM-RENAME-2: the original @-suppressed
+			// security audit finding MEDIUM-RENAME-2: the original @-suppressed
 			// failure here (plausible on shared hosting -- an
 			// FTP-deployed file's directory owned by a different user
 			// than the PHP process that just created the rollback
@@ -1162,7 +1162,7 @@ class Restore_Orchestrator {
 		global $wpdb;
 
 		$shadow_tables = $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $cp['shadow_prefix'] ) . '%' ) );
-		// Vex audit LOW-SWAP-1: finding zero shadow tables here should
+		// security audit finding LOW-SWAP-1: finding zero shadow tables here should
 		// never happen after a successful restore_apply_db (which fails
 		// the job outright on any import error), but if it somehow did,
 		// the old code would skip the rename entirely and still mark
@@ -1176,7 +1176,7 @@ class Restore_Orchestrator {
 		foreach ( (array) $shadow_tables as $shadow_table ) {
 			$suffix = substr( $shadow_table, strlen( $cp['shadow_prefix'] ) );
 			$live_table = $wpdb->prefix . $suffix;
-			// Vex audit LOW-LIKE-1: $live_table was passed to a LIKE
+			// security audit finding LOW-LIKE-1: $live_table was passed to a LIKE
 			// pattern unescaped -- '_' in LIKE matches any single
 			// character, so (e.g.) a table literally named "wp1options"
 			// would also match a pattern for "wp_options". No real

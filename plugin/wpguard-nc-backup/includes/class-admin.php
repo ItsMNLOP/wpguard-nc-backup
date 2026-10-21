@@ -153,7 +153,7 @@ class Admin {
 		}
 		$job = $this->is_restore_job( Job_Store::get( $job_id ) ) ? Restore_Orchestrator::cancel( $job_id ) : Job_Orchestrator::cancel( $job_id );
 
-		// Vex audit LOW-C1: a lock-contended cancel (advance() is actively
+		// security audit finding LOW-C1: a lock-contended cancel (advance() is actively
 		// running right now) changes nothing, and must not be reported as
 		// success -- the admin would otherwise see "success" from the
 		// fetch call while the job silently stayed running.
@@ -214,7 +214,7 @@ class Admin {
 			return;
 		}
 
-		// Vex audit MEDIUM-UPLOAD-1: a fresh, random-token subdirectory
+		// security audit finding MEDIUM-UPLOAD-1: a fresh, random-token subdirectory
 		// per upload (never the fixed, guessable path this used to be),
 		// deleted by Restore_Orchestrator once its content has been
 		// staged into the job's own tmp dir (or on an earlier failure)
@@ -250,7 +250,7 @@ class Admin {
 		}
 		$zip->close();
 
-		// Vex audit LOW-HTACCESS-1: a legitimate backup bundle contains
+		// security audit finding LOW-HTACCESS-1: a legitimate backup bundle contains
 		// its own .htaccess (Inventory::enumerate() always captures it),
 		// which the loop above just wrote over the access guard with the
 		// SITE's own rewrite rules, not a deny-all. Rewritten last,
@@ -300,7 +300,7 @@ class Admin {
 			wp_send_json_error( array( 'message' => __( 'A backup or restore is already running.', 'wpguard-nc-backup' ) ) );
 			return;
 		}
-		// Vex audit HIGH-AJAX-1: backups get a WP-Cron fallback so a
+		// security audit finding HIGH-AJAX-1: backups get a WP-Cron fallback so a
 		// closed browser tab doesn't strand them; restore had none at
 		// all until now, the one place a stranded job matters most.
 		wp_schedule_single_event( time() + 5, 'wpguard_nc_cron_advance', array( $job_id ) );
@@ -329,7 +329,7 @@ class Admin {
 		$locked_pw = Settings::is_app_password_locked();
 		$locked_ca = Settings::is_ca_bundle_locked();
 		$latest_verified = Job_Store::get_latest_verified();
-		// Vex audit LOW-RETAIN-1: a chain-aware retention prune that
+		// security audit finding LOW-RETAIN-1: a chain-aware retention prune that
 		// keeps failing (e.g. a kept backup's manifest.json went
 		// missing) fails closed -- correctly deletes nothing -- but
 		// that's invisible unless someone reads job logs line by line.
@@ -532,7 +532,7 @@ class Admin {
 						setTimeout(function(){ pollRestoreJob(jobId); }, 500);
 					}
 				}).catch(function(){
-					// Vex audit HIGH-AJAX-1: a single failed poll (a
+					// security audit finding HIGH-AJAX-1: a single failed poll (a
 					// transient error response, a timed-out request --
 					// plausible mid-restore, when apply_files can
 					// legitimately take a while) must not silently stop

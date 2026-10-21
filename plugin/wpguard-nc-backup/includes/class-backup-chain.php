@@ -108,7 +108,7 @@ class Backup_Chain {
 		$prior_index = array();
 		foreach ( $parent_manifest['files'] as $entry ) {
 			if ( empty( $entry['path'] ) || empty( $entry['source_backup_id'] ) || empty( $entry['source_part'] ) ) {
-				// Vex-grade paranoia: a manifest whose shape we can't fully
+				// the security audit-grade paranoia: a manifest whose shape we can't fully
 				// trust must not be partially trusted -- fall back whole.
 				return self::full_plan();
 			}
@@ -145,7 +145,7 @@ class Backup_Chain {
 	 * local chain state, same discipline as retention pruning only ever
 	 * running post-verification.
 	 *
-	 * Vex audit LOW-CHAIN-1: previously re-read the option here for
+	 * security audit finding LOW-CHAIN-1: previously re-read the option here for
 	 * base_created_at instead of using the value already captured in
 	 * $chain_plan at plan() time (step_init(), earlier in this same
 	 * job) -- if the option were lost in between (an aggressive

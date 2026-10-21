@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vex audit H-02 regression test: the constant-override credential path
+# security audit finding H-02 regression test: the constant-override credential path
 # (ADR 0002's "more secure" escape hatch — define('WPGUARD_NC_APP_PASSWORD',
 # ...) in wp-config.php instead of storing it in wp_options) is the one
 # the main E2E drill (run-e2e.sh) never exercises, because it always

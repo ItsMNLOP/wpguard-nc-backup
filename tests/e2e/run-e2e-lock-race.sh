@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vex audit H-01 regression test: AJAX polling and the WP-Cron fallback
+# security audit finding H-01 regression test: AJAX polling and the WP-Cron fallback
 # could both call Job_Orchestrator::advance() for the same job in
 # overlapping requests, racing on the same checkpoint with no mutual
 # exclusion (fixed with a GET_LOCK/RELEASE_LOCK-backed Job_Store::try_lock()
@@ -11,7 +11,7 @@
 # release_lock) under two genuinely concurrent OS processes, each with
 # its own separate MySQL connection — the same contention shape AJAX vs.
 # cron produces. See docs/operations.md and STATUS.md for this test's
-# documented scope versus Vex's original ask.
+# documented scope versus the security audit's original ask.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DOCKER_DIR="$ROOT/docker"
