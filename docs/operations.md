@@ -267,7 +267,13 @@ before any build work) — see STATUS.md for that decision. Restores
 this site, **in place**, from a chosen backup — either picked from the
 configured Nextcloud destination, or a single uploaded `.zip` bundle
 (a self-contained/full backup only; an incremental chain needs the
-Nextcloud source to reach its ancestor backups). Reuses the exact same
+Nextcloud source to reach its ancestor backups). The upload path has
+no Nextcloud dependency at all — `ajax_start_restore()` never checks
+`Settings::has_credentials()` for it, and nothing in that path ever
+touches `Nextcloud_Client` — so a site can be restored from a
+downloaded bundle even with no Nextcloud connection configured, or a
+connection that's since broken, lost its credentials, or been
+rotated. Reuses the exact same
 job-state-machine shape backups use (same table, same status
 vocabulary, same `try_lock()`/`release_lock()` mutual exclusion via
 `Job_Store`), so a restore in progress blocks a new backup from
