@@ -102,10 +102,17 @@ wp_restore "$TABLE_PREFIX" core install \
 
 docker compose -p wpguard-test exec -T db-restore mariadb -u wp_restore -p"$WP_RESTORE_DB_PASSWORD" wp_restore < "$SCRATCH/database.sql"
 
-SCRATCH_WIN="$(cygpath -w "$SCRATCH")"
+# cygpath (Git Bash/MSYS on Windows) rewrites the host bind-mount path
+# into a form Docker Desktop for Windows understands; on Linux, where
+# docker consumes the native path directly, it doesn't exist at all.
+if command -v cygpath >/dev/null 2>&1; then
+  SCRATCH_MOUNT="$(cygpath -w "$SCRATCH")"
+else
+  SCRATCH_MOUNT="$SCRATCH"
+fi
 MSYS_NO_PATHCONV=1 docker run --rm --user 0:0 --entrypoint sh \
   -v wpguard-test_wp_restore_html:/target \
-  -v "$SCRATCH_WIN:/backup:ro" \
+  -v "$SCRATCH_MOUNT:/backup:ro" \
   wordpress:cli -c "rm -rf /target/wp-content && cd /target && for p in /backup/files.part-*.zip; do unzip -o \"\$p\" > /dev/null; done && chown -R 33:33 /target/wp-content"
 
 wp_restore "$TABLE_PREFIX" search-replace 'http://127.0.0.1:8081' 'http://127.0.0.1:8082' --all-tables --precise
