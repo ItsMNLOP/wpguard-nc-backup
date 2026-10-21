@@ -80,6 +80,38 @@ All notable changes to this project are documented here.
     New unit tests directly reproduce each of the three fixable-in-code
     findings. 110/110 unit tests; both E2E suites and the full
     existing 9-suite regression set re-run clean.
+  - Re-verification (commit `45738a7`): BLOCKED again -- one HIGH
+    that was a genuine regression introduced by the MEDIUM-MIG-2 fix
+    itself, one MEDIUM pre-existing gap the fix round hadn't touched:
+    - HIGH (regression): the subdirectory-migration refusal's bare
+      string-prefix check also wrongly refused four safe shapes that
+      merely share a long prefix for unrelated reasons -- an
+      ordinary scheme-only migration (producing an identity pair the
+      check misclassified as unsafe), a port being added, a longer
+      but unrelated hostname, and a ccTLD extension. Each got
+      silently refused, silently no-opping the whole migration and,
+      for three of the four shapes, leaving the restored site's
+      siteurl/home pointing at the backup's old host -- broken in
+      exactly the way this feature exists to prevent, with the job
+      still reporting verified. Fixed by dropping identity pairs
+      outright rather than checking them, and by checking
+      specifically for a `/` or `?` continuation (an actual
+      path/query extension) rather than a bare string prefix. A
+      refusal now surfaces as an explicit WP_Error, failing the
+      restore at restore_preflight (still read-only) instead of
+      silently falling through past the point of no return.
+    - MEDIUM (pre-existing): a string leaf inside a serialized
+      structure can itself be a serialized value -- WordPress's own
+      maybe_serialize() does this deliberately for a caller that
+      mistakenly pre-serializes before calling update_option().
+      Treating that leaf as a plain string left its own
+      length-prefixed encoding stale while only the outer wrapper's
+      length got recomputed, corrupting it invisibly until something
+      unserializes it a second time. Fixed by having the string-leaf
+      case recurse back into the same serialization-aware check the
+      top-level value already gets.
+    Six new unit tests. 115/115 unit tests; both E2E suites re-run
+    clean again.
   Pending security audit sign-off before this is considered
   shippable.
 

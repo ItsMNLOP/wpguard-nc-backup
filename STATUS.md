@@ -124,6 +124,58 @@ and the real-backup `run-e2e-restore.sh` re-run clean afterward, plus
 the full existing 9-suite E2E regression set. Re-dispatched for
 re-verification.
 
+**Re-verification (commit `45738a7`): BLOCKED again**, two more real
+findings — one a genuine HIGH *regression introduced by the
+MEDIUM-MIG-2 fix itself*, one a MEDIUM pre-existing gap that fix round
+hadn't touched:
+
+- **HIGH (regression)**: the subdirectory-migration refusal's bare
+  `strpos()`-prefix check also wrongly refused four *safe* shapes
+  that merely happen to share a long string prefix for unrelated
+  reasons — an ordinary scheme-only migration
+  (`http://example.com` → `https://example.com`, where
+  `swap_scheme()` produces an identity pair that the check
+  misclassified as unsafe), a port being added
+  (`http://localhost` → `http://localhost:8080`), a longer but
+  unrelated hostname (`https://example.co` → `https://example.com`),
+  and a ccTLD extension (`https://example.com` → `https://example.com.au`).
+  Each of these got silently refused — meaning `migrate_pairs` came
+  back empty, the whole migration silently no-opped, and (for three
+  of the four shapes) the restored site ended up with `siteurl`/`home`
+  still pointing at the *backup's* old host, broken in exactly the
+  way this entire feature exists to prevent, with the job still
+  reporting `verified`. Fixed two ways: identity pairs
+  (search equals replace) are now dropped outright rather than
+  checked at all; and the refusal condition now specifically checks
+  for the old URL being extended by a `/` or `?` (an actual
+  path/query continuation), not a bare string-prefix match — which
+  the boundary-aware regex already makes safe to replay for all four
+  of the previously-misclassified shapes. A refusal now also
+  surfaces as an explicit `WP_Error`, failing the restore at
+  `restore_preflight` (still entirely read-only) rather than silently
+  falling through to an unmigrated restore past the point of no
+  return, which is what the first version of this fix did.
+- **MEDIUM (pre-existing)**: a string *leaf* inside a serialized
+  structure can itself be a serialized value — WordPress's own
+  `maybe_serialize()` does this deliberately whenever a caller passes
+  `update_option()` an already-serialized-looking string (a real,
+  common mistake: `update_option($key, serialize($data))` instead of
+  `update_option($key, $data)`). Treating that leaf as a plain string
+  and doing a raw byte replace on it left its own length-prefixed
+  encoding stale while only the *outer* wrapper's length got
+  recomputed — corruption invisible until something unserializes it
+  a second time. Fixed by having the string-leaf case recurse back
+  into the same serialization-aware check the top-level value already
+  gets, rather than going straight to a raw replace.
+
+Both fixed. Six new unit tests (scheme-only, port-addition,
+longer-unrelated-hostname, and ccTLD migrations must all still
+produce real pairs; the subdirectory case must now fail with a
+`WP_Error`; a double-serialized value must survive migration
+correctly on both unserialize passes) — 115/115 unit tests passing.
+Both E2E suites, including the real-backup regression test, re-run
+clean again. Re-dispatched for a second re-verification.
+
 ## Phase 3 candidates (not yet scoped, for later discussion)
 
 - Nextcloud-free backup: let a site with no configured Nextcloud

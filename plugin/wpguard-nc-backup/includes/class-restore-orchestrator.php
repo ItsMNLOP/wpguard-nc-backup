@@ -707,9 +707,21 @@ class Restore_Orchestrator {
 		// covers both the ordinary same-site restore and a same-URL
 		// different-install restore (e.g. a fresh install at the same,
 		// now-dead domain the backup came from) -- see docs/operations.md.
-		$cp['migrate_pairs'] = ! empty( $cp['confirm_url_mismatch'] )
-			? DB_Migrator::replace_pairs_for( $source_home, $current_home )
-			: array();
+		if ( ! empty( $cp['confirm_url_mismatch'] ) ) {
+			$migrate_pairs = DB_Migrator::replace_pairs_for( $source_home, $current_home );
+			// Security audit re-verification: a pair DB_Migrator judges
+			// unsafe to replay on a checkpoint resume (see
+			// replace_pairs_for()) must stop the restore here, while
+			// everything is still entirely read-only -- not silently
+			// fall through to an unmigrated restore past the point of
+			// no return, which the first version of this fix did.
+			if ( is_wp_error( $migrate_pairs ) ) {
+				return self::fail( $job_id, 'restore_preflight', $migrate_pairs->get_error_message() );
+			}
+			$cp['migrate_pairs'] = $migrate_pairs;
+		} else {
+			$cp['migrate_pairs'] = array();
+		}
 
 		$source_wp_version = $manifest['source']['wp_version'] ?? '';
 		$current_wp_version = get_bloginfo( 'version' );

@@ -40,34 +40,65 @@ class DB_Migrator {
 	const BATCH_SIZE = 200;
 	const TEXT_DATA_TYPES = array( 'char', 'varchar', 'tinytext', 'text', 'mediumtext', 'longtext' );
 
-	/** @return array{0:string,1:string}[] Search/replace pairs to apply, longest first. */
-	public static function replace_pairs_for( string $old_home_url, string $new_home_url ): array {
+	/** @return array{0:string,1:string}[]|\WP_Error Search/replace pairs to apply, longest first, or a WP_Error if a pair would be unsafe to apply (see below). */
+	public static function replace_pairs_for( string $old_home_url, string $new_home_url ) {
 		$old_home_url = rtrim( $old_home_url, '/' );
 		$new_home_url = rtrim( $new_home_url, '/' );
 		if ( '' === $old_home_url || '' === $new_home_url || $old_home_url === $new_home_url ) {
 			return array();
 		}
-		$pairs = array( array( $old_home_url, $new_home_url ) );
+		$candidates = array( array( $old_home_url, $new_home_url ) );
 		$swapped = self::swap_scheme( $old_home_url );
 		if ( null !== $swapped && $swapped !== $old_home_url ) {
-			$pairs[] = array( $swapped, $new_home_url );
+			$candidates[] = array( $swapped, $new_home_url );
 		}
-		foreach ( $pairs as $pair ) {
-			// Security audit MEDIUM-MIG-2: a replacement is only safe to
-			// replay on a stale/resumed checkpoint (the whole premise
-			// migrate_table_batch()'s per-batch, not per-row, checkpoint
-			// write relies on) when applying it twice produces the same
-			// result as applying it once. That breaks the instant the
-			// new URL is itself prefixed by the old one -- e.g. migrating
-			// to a subdirectory install (https://example.com ->
+		$pairs = array();
+		foreach ( $candidates as $pair ) {
+			// Security audit NEW-HIGH-1 (re-verification of MEDIUM-MIG-2's
+			// first fix): an identity pair -- search and replace are the
+			// same string -- is a guaranteed no-op, not unsafe, and must
+			// never be refused. This arises for an ordinary scheme-only
+			// migration (http://example.com -> https://example.com):
+			// swap_scheme('http://example.com') already equals
+			// $new_home_url, producing the pair
+			// ['https://example.com', 'https://example.com'] -- the first
+			// version of the idempotency check below wrongly refused the
+			// ENTIRE migration over this harmless pair.
+			if ( $pair[0] === $pair[1] ) {
+				continue;
+			}
+			// A replacement is only safe to replay on a stale/resumed
+			// checkpoint (the whole premise migrate_table_batch()'s
+			// per-batch, not per-row, checkpoint write relies on) when
+			// applying it twice produces the same result as applying it
+			// once. That breaks when the new URL continues the old one
+			// with a further PATH or QUERY segment -- migrating to a
+			// subdirectory install (https://example.com ->
 			// https://example.com/wordpress) -- where a second pass
 			// would match its own first pass's output and append the
-			// suffix again. Refusing to generate any pair shaped like
-			// that is simpler and safer than trying to make the replace
-			// itself idempotent against its own prior output.
-			if ( '' !== $pair[0] && 0 === strpos( $pair[1], $pair[0] ) ) {
-				return array();
+			// suffix again. Checking specifically for a `/` or `?`
+			// right after the old URL (not a bare string-prefix check)
+			// is what the re-verification found missing: a bare prefix
+			// check also wrongly refused safe, non-extending cases that
+			// merely happen to share a long string prefix for unrelated
+			// reasons -- a port being added (http://localhost ->
+			// http://localhost:8080), a longer but unrelated hostname
+			// (https://example.co -> https://example.com), or a ccTLD
+			// extension (https://example.com -> https://example.com.au)
+			// -- none of which are actually unsafe to replay, since the
+			// boundary-aware regex in str_replace_pairs() already
+			// prevents a second pass from matching its own first pass's
+			// output in every one of those shapes.
+			if ( '' !== $pair[0] && ( 0 === strpos( $pair[1], $pair[0] . '/' ) || 0 === strpos( $pair[1], $pair[0] . '?' ) ) ) {
+				return new \WP_Error(
+					'wpguard_nc_migrate_unsafe_pair',
+					"Migrating to {$pair[1]} from {$pair[0]} would extend the old URL with a path this replacement can't safely repeat if a restore batch is ever retried (e.g. moving into a subdirectory). Refusing to migrate URLs for this restore rather than risk corrupting them on a retry."
+				);
 			}
+			$pairs[] = $pair;
+		}
+		if ( empty( $pairs ) ) {
+			return array();
 		}
 		// Longest search string first: with http/https variants of the
 		// same host, neither is ever a substring of the other (they
@@ -264,7 +295,24 @@ class DB_Migrator {
 	/** @param array{0:string,1:string}[] $pairs */
 	private static function replace_recursive( $data, array $pairs ) {
 		if ( is_string( $data ) ) {
-			return self::str_replace_pairs( $data, $pairs );
+			// Security audit NEW-MEDIUM-1: a string LEAF can itself be a
+			// serialized value -- WordPress's own maybe_serialize() does
+			// this on purpose whenever a caller passes update_option()
+			// an already-serialized-looking string (a common mistake:
+			// calling update_option($key, serialize($data)) instead of
+			// update_option($key, $data)), to disambiguate "a literal
+			// string that happens to look serialized" from "real array
+			// data" on a later read. Recursing back into
+			// replace_in_scalar_or_serialized() here, instead of going
+			// straight to a raw str_replace_pairs() on the leaf's bytes,
+			// is what makes that inner layer's own length-prefixed
+			// encoding get correctly recomputed too, rather than left
+			// stale while only the OUTER wrapper's length gets fixed --
+			// proven live by the security audit to otherwise corrupt the
+			// inner structure undetectably (it still looks like valid,
+			// unserializable bytes one level up; only unserializing a
+			// second time reveals the corruption).
+			return self::replace_in_scalar_or_serialized( $data, $pairs );
 		}
 		if ( is_array( $data ) ) {
 			$out = array();
