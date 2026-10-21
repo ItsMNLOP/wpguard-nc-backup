@@ -73,8 +73,56 @@ too.
 
 All three bugs were caught by this work's own tests before anything
 shipped — exactly the point of writing them. Unit suite, both new E2E
-suites, and the full existing E2E suite all green. Pending Vex's
-security audit before this is considered shippable.
+suites, and the full existing E2E suite all green.
+
+**Sent to the security audit (commit `c7564d6`): BLOCKED.** 1 HIGH, 2
+MEDIUM, 1 LOW, every one proven live via direct probes against the
+deployed code, not just theoretical review:
+
+- **HIGH**: a `C:`-format object (the `Serializable` interface,
+  common before its PHP 8.1 deprecation — WooCommerce, Gravity Forms,
+  ACF, and others all had classes using it) loses its entire inner
+  payload through the unserialize/reserialize round trip whenever its
+  class isn't loaded — `replace_recursive()` correctly left the
+  resulting `__PHP_Incomplete_Class` stand-in itself untouched, but
+  `serialize()` at the top of the call chain still emitted a
+  corrupted, empty `O:ClassName:0:{}` in its place, silently
+  destroying data on any row containing one regardless of whether it
+  even held a URL. Fixed with a lossless-round-trip guard: before any
+  replacement, `serialize()`-ing the just-unserialized value straight
+  back is compared byte-for-byte against the original; a mismatch
+  means the round trip already lost something, so the value is left
+  completely untouched.
+- **MEDIUM**: the plain `str_replace()` had no concept of a URL
+  boundary — proven to wrongly match `https://example.com` inside the
+  unrelated, longer domains `https://example.community` and
+  `https://example.com.evil.net`. Fixed with a boundary-aware regex.
+  Took two tries to get right: the first version's single-character
+  lookahead also rejected the ordinary, legitimate case of a URL
+  ending a sentence with a trailing period (`https://example.com.`,
+  indistinguishable from `https://example.com.au` by looking only one
+  character ahead) — fixed by looking two characters ahead instead,
+  rejecting only when a `.` is itself followed by another
+  alphanumeric domain-label character.
+- **MEDIUM**: the replacement was not idempotent when the new URL is
+  itself prefixed by the old one (the documented subdirectory-migration
+  case, `https://example.com` -> `https://example.com/wordpress`) —
+  replaying an already-migrated value on a checkpoint resume would
+  append the suffix again every time, breaking the exact safety
+  property `migrate_table_batch()`'s per-batch (not per-row) checkpoint
+  relies on. Fixed by refusing to generate any pair shaped that way at
+  all, rather than trying to make the replace safe to double-apply.
+- **LOW**: `$wpdb->update()`'s return value was discarded, so a
+  failed write silently counted as success with the old value left in
+  place. Fixed by failing the job outright on any write error, same
+  discipline already used everywhere else in this destructive phase.
+
+All four fixed. New unit tests directly reproduce the `C:`-format
+corruption, the boundary overmatch, and the subdirectory-migration
+refusal (110/110 unit tests passing). Both `run-e2e-restore-migration.sh`
+and the real-backup `run-e2e-restore.sh` re-run clean afterward, plus
+the full existing 9-suite E2E regression set. Re-dispatched for
+re-verification.
 
 ## Phase 3 candidates (not yet scoped, for later discussion)
 

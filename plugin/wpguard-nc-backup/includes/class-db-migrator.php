@@ -52,6 +52,23 @@ class DB_Migrator {
 		if ( null !== $swapped && $swapped !== $old_home_url ) {
 			$pairs[] = array( $swapped, $new_home_url );
 		}
+		foreach ( $pairs as $pair ) {
+			// Security audit MEDIUM-MIG-2: a replacement is only safe to
+			// replay on a stale/resumed checkpoint (the whole premise
+			// migrate_table_batch()'s per-batch, not per-row, checkpoint
+			// write relies on) when applying it twice produces the same
+			// result as applying it once. That breaks the instant the
+			// new URL is itself prefixed by the old one -- e.g. migrating
+			// to a subdirectory install (https://example.com ->
+			// https://example.com/wordpress) -- where a second pass
+			// would match its own first pass's output and append the
+			// suffix again. Refusing to generate any pair shaped like
+			// that is simpler and safer than trying to make the replace
+			// itself idempotent against its own prior output.
+			if ( '' !== $pair[0] && 0 === strpos( $pair[1], $pair[0] ) ) {
+				return array();
+			}
+		}
 		// Longest search string first: with http/https variants of the
 		// same host, neither is ever a substring of the other (they
 		// differ at the very start), so order doesn't actually change
@@ -129,7 +146,7 @@ class DB_Migrator {
 				), ARRAY_A );
 			}
 			if ( empty( $rows ) ) {
-				return array( 'last_pk' => null, 'examined' => $examined, 'changed' => $changed );
+				return array( 'last_pk' => null, 'examined' => $examined, 'changed' => $changed, 'error' => '' );
 			}
 			foreach ( $rows as $row ) {
 				$after_pk = $row[ $pk ];
@@ -147,15 +164,25 @@ class DB_Migrator {
 					}
 				}
 				if ( ! empty( $updates ) ) {
-					$wpdb->update( $table, $updates, array( $pk => $row[ $pk ] ) );
+					// Security audit LOW-MIG-1: $wpdb->update()'s return value
+					// was previously discarded, so a failed write (e.g. the
+					// migrated value exceeding a column's declared width)
+					// silently left the old value in place while still
+					// counting as "changed" -- the job would reach verified
+					// having actually migrated nothing for that row, with no
+					// trace of the failure anywhere.
+					$result = $wpdb->update( $table, $updates, array( $pk => $row[ $pk ] ) );
+					if ( false === $result ) {
+						return array( 'last_pk' => $last_pk, 'examined' => $examined, 'changed' => $changed, 'error' => (string) $wpdb->last_error );
+					}
 					$changed++;
 				}
 				if ( microtime( true ) >= $deadline ) {
-					return array( 'last_pk' => $last_pk, 'examined' => $examined, 'changed' => $changed );
+					return array( 'last_pk' => $last_pk, 'examined' => $examined, 'changed' => $changed, 'error' => '' );
 				}
 			}
 		} while ( count( $rows ) === self::BATCH_SIZE && microtime( true ) < $deadline );
-		return array( 'last_pk' => $last_pk, 'examined' => $examined, 'changed' => $changed );
+		return array( 'last_pk' => $last_pk, 'examined' => $examined, 'changed' => $changed, 'error' => '' );
 	}
 
 	/** @param array{0:string,1:string}[] $pairs */
@@ -176,6 +203,26 @@ class DB_Migrator {
 			// ever running a real class's __wakeup().
 			$data = @unserialize( $value, array( 'allowed_classes' => false ) );
 			if ( false !== $data || 'b:0;' === $value ) {
+				// Security audit HIGH-MIG-1: a `C:`-format object (the
+				// `Serializable` interface, common before its PHP 8.1
+				// deprecation -- WooCommerce, Gravity Forms, ACF, and
+				// others all have classes that used it) loses its entire
+				// inner payload when unserialize() can't instantiate the
+				// real class: PHP has nowhere to put that payload on a
+				// __PHP_Incomplete_Class stand-in, so re-serializing it
+				// silently emits an empty `O:ClassName:0:{}` in its place
+				// -- proven live by the security audit. Caught generically
+				// (not just for this one shape) by checking whether
+				// serialize()-ing straight back, with NO replacement
+				// applied at all, reproduces the original bytes exactly;
+				// if it doesn't, the round trip through unserialize()
+				// already lost something before replace_recursive() ever
+				// ran, so it's left completely untouched rather than
+				// written back in a lossy form no replacement actually
+				// required.
+				if ( serialize( $data ) !== $value ) {
+					return $value;
+				}
 				return serialize( self::replace_recursive( $data, $pairs ) );
 			}
 			// Looked serialized by shape but failed to actually
@@ -188,7 +235,28 @@ class DB_Migrator {
 
 	private static function str_replace_pairs( string $value, array $pairs ): string {
 		foreach ( $pairs as $pair ) {
-			$value = str_replace( $pair[0], $pair[1], $value );
+			// Security audit MEDIUM-MIG-1: a plain str_replace() has no
+			// concept of a URL boundary, so searching for
+			// "https://example.com" wrongly matches inside
+			// "https://example.community/..." or
+			// "https://example.com.evil.net/..." too -- proven live by
+			// the security audit. Two negative lookaheads: the first
+			// rejects a match immediately followed by a direct
+			// domain-continuation character (alphanumeric, `-`, `:`,
+			// `_`); the second rejects one followed by `.` that itself
+			// continues into another domain label (`.au`, `.com`) --
+			// but, deliberately, NOT a bare trailing `.` with nothing
+			// alphanumeric after it, since that's an ordinary
+			// sentence-ending period on a URL at the end of a sentence,
+			// not a longer domain, and must still match.
+			$replaced = preg_replace( '/' . preg_quote( $pair[0], '/' ) . '(?![a-zA-Z0-9\-:_])(?!\.[a-zA-Z0-9])/', $pair[1], $value );
+			// preg_replace() can return null on a PCRE-level failure
+			// (e.g. hitting the backtrack limit on a very large value) --
+			// keep the value as it stood rather than let a null silently
+			// wipe it out.
+			if ( null !== $replaced ) {
+				$value = $replaced;
+			}
 		}
 		return $value;
 	}
@@ -254,6 +322,7 @@ class DB_Migrator {
 				return '"' === substr( $value, -2, 1 );
 			case 'a':
 			case 'O':
+			case 'C':
 			case 'b':
 			case 'i':
 			case 'd':

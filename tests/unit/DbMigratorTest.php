@@ -123,6 +123,65 @@ function test_replace_in_scalar_incomplete_class_object_does_not_crash() {
 	wpguard_assert( $unserialized['nested'] instanceof \__PHP_Incomplete_Class, 'the incomplete-class object must survive, left alone rather than crashing the whole migration' );
 }
 
+function test_replace_pairs_for_refuses_subdirectory_migration_pair() {
+	// Security audit MEDIUM-MIG-2: migrating to a subdirectory install
+	// (https://example.com -> https://example.com/wordpress) makes the
+	// new URL a literal prefix-extension of the old one -- replaying
+	// this pair on an already-migrated value (exactly what a stale
+	// checkpoint resume does, relying on the replace being idempotent)
+	// would append the suffix again every time. Must refuse the pair
+	// entirely rather than risk that.
+	wpguard_assert_equals(
+		array(),
+		DB_Migrator::replace_pairs_for( 'https://example.com', 'https://example.com/wordpress' ),
+		'a new URL that is itself prefixed by the old URL must produce no pairs at all -- not idempotent to replay on a checkpoint resume'
+	);
+}
+
+function test_replace_pairs_for_allows_ordinary_different_domain_migration() {
+	wpguard_assert( ! empty( DB_Migrator::replace_pairs_for( 'https://old.example', 'https://new.example' ) ), 'an ordinary different-domain migration (the whole point of this feature) must still produce real pairs' );
+}
+
+function test_str_replace_does_not_overmatch_domain_suffix() {
+	// Security audit MEDIUM-MIG-1: a plain str_replace() has no concept
+	// of a URL boundary. Proven live: searching for "https://example.com"
+	// wrongly matched inside "https://example.community/...".
+	$pairs = array( array( 'https://old.example', 'https://new.example' ) );
+	wpguard_assert_equals(
+		'Visit https://old.example.evil.net/attack',
+		DB_Migrator::replace_in_scalar_or_serialized( 'Visit https://old.example.evil.net/attack', $pairs ),
+		'a domain that merely starts with the old URL as a substring (a longer, unrelated domain) must never be touched'
+	);
+}
+
+function test_str_replace_still_matches_at_a_real_url_boundary() {
+	$pairs = array( array( 'https://old.example', 'https://new.example' ) );
+	wpguard_assert_equals(
+		'Visit https://new.example/page and https://new.example.',
+		DB_Migrator::replace_in_scalar_or_serialized( 'Visit https://old.example/page and https://old.example.', $pairs ),
+		'the ordinary cases -- a URL ending at a slash, or at a sentence-ending period -- must still match and replace correctly'
+	);
+}
+
+function test_replace_in_scalar_c_format_serializable_object_left_unchanged_not_corrupted() {
+	// Security audit HIGH-MIG-1: a `C:`-format object (the Serializable
+	// interface, common before its PHP 8.1 deprecation -- WooCommerce,
+	// Gravity Forms, ACF, and others all had classes using it) loses its
+	// entire inner payload when unserialize() can't instantiate the real
+	// class -- proven live: re-serializing the resulting
+	// __PHP_Incomplete_Class silently emitted an empty "O:ClassName:0:{}"
+	// in place of the real payload, corrupting data on every row it
+	// touched regardless of whether it even contained a URL.
+	$class_name = 'WPGuard_Test_Never_Declared_Serializable';
+	$payload = 'url=https://old-site.example&other=data';
+	$fixture = sprintf( 'a:1:{i:0;C:%d:"%s":%d:{%s}}', strlen( $class_name ), $class_name, strlen( $payload ), $payload );
+
+	$pairs = array( array( 'https://old-site.example', 'https://new-site.example' ) );
+	$result = DB_Migrator::replace_in_scalar_or_serialized( $fixture, $pairs );
+
+	wpguard_assert_equals( $fixture, $result, 'a value containing a C:-format object that cannot be losslessly round-tripped must be left completely untouched, not silently corrupted with an empty payload' );
+}
+
 function test_replace_in_scalar_no_pairs_is_a_no_op() {
 	wpguard_assert_equals( 'https://old.example/page', DB_Migrator::replace_in_scalar_or_serialized( 'https://old.example/page', array() ), 'no pairs (the ordinary same-site restore) must leave the value completely untouched' );
 }
@@ -141,5 +200,10 @@ return array(
 	'test_replace_in_scalar_serialized_nested_structure',
 	'test_replace_in_scalar_corrupt_serialized_value_falls_back_to_plain_replace',
 	'test_replace_in_scalar_incomplete_class_object_does_not_crash',
+	'test_replace_pairs_for_refuses_subdirectory_migration_pair',
+	'test_replace_pairs_for_allows_ordinary_different_domain_migration',
+	'test_str_replace_does_not_overmatch_domain_suffix',
+	'test_str_replace_still_matches_at_a_real_url_boundary',
+	'test_replace_in_scalar_c_format_serializable_object_left_unchanged_not_corrupted',
 	'test_replace_in_scalar_no_pairs_is_a_no_op',
 );

@@ -993,6 +993,14 @@ class Restore_Orchestrator {
 				$target['table'], $target['columns'], $target['pk'],
 				$cp['migrate_pk_cursor'], $cp['migrate_pairs'], $deadline
 			);
+			// Security audit LOW-MIG-1: a write that failed (e.g. the
+			// migrated value exceeding a column's declared width) must
+			// stop the job, not be silently counted as success -- same
+			// "fail outright on an unexpected error during a destructive
+			// step" discipline the rest of restore already uses.
+			if ( ! empty( $result['error'] ) ) {
+				return self::fail( $job_id, 'restore_migrate_urls', 'A database write failed while migrating URLs on ' . $target['table'] . ': ' . self::logger()->redact( $result['error'] ) );
+			}
 			$cp['migrate_rows_changed'] += $result['changed'];
 			if ( null === $result['last_pk'] ) {
 				$cp['migrate_table_cursor']++;

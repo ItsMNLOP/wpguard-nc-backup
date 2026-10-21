@@ -52,6 +52,34 @@ All notable changes to this project are documented here.
     that stand-in the guaranteed outcome regardless of which classes
     happen to be loaded at that moment) and by never writing to one --
     it survives unchanged instead.
+  - Sent to the security audit (commit `c7564d6`): BLOCKED, 1 HIGH,
+    2 MEDIUM, 1 LOW, every one proven live via direct probes, not
+    theoretical review. All four fixed:
+    - HIGH: a `C:`-format object (the `Serializable` interface,
+      common before PHP 8.1) loses its entire payload through the
+      unserialize/reserialize round trip, silently corrupting any
+      row containing one. Fixed with a lossless-round-trip guard --
+      the value is left completely untouched if re-serializing it
+      straight back (no replacement applied) doesn't reproduce the
+      original bytes exactly.
+    - MEDIUM: plain `str_replace()` had no URL-boundary awareness,
+      wrongly matching `https://example.com` inside
+      `https://example.community` or `https://example.com.evil.net`.
+      Fixed with a boundary-aware regex (two negative lookaheads --
+      reject a direct domain-continuation character, or a `.`
+      followed by another domain-label character, while still
+      matching an ordinary sentence-ending period).
+    - MEDIUM: the replacement wasn't idempotent when the new URL is
+      itself prefixed by the old one (subdirectory migration, e.g.
+      `https://example.com` -> `https://example.com/wordpress`) --
+      replaying an already-migrated value on a checkpoint resume
+      would append the suffix again. Fixed by refusing to generate
+      any pair shaped that way at all.
+    - LOW: a failed `$wpdb->update()` was silently counted as
+      success. Fixed by failing the job outright on any write error.
+    New unit tests directly reproduce each of the three fixable-in-code
+    findings. 110/110 unit tests; both E2E suites and the full
+    existing 9-suite regression set re-run clean.
   Pending security audit sign-off before this is considered
   shippable.
 
