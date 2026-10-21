@@ -5,6 +5,7 @@
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL="*"
+mkdir -p "$(dirname "${BASH_SOURCE[0]}")/../certs"
 cd "$(dirname "${BASH_SOURCE[0]}")/../certs"
 
 if [[ -f wpguard-test-ca.crt && -f nc-proxy.pem && -f nc-proxy.key ]]; then
