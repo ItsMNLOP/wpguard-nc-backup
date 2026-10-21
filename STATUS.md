@@ -538,7 +538,7 @@ Every original Phase 1 gate below is checked and re-verified multiple
 times, including against real production data (the owner's production site) rather
 than only synthetic fixtures — real install, real connection, repeated
 real backups, a real restore with the owner's own account and 2FA state
-confirmed intact. Two full security audits (SOP-023), both **CLEAR TO
+confirmed intact. Two full security audits, both **CLEAR TO
 SHIP**, zero open HIGH/MEDIUM findings. Real-world bugs found via hands-on
 testing (ZIP packaging separators, stuck-job UI visibility, WP-Cron
 reliability, the actual file-count performance bottleneck) were all
@@ -766,7 +766,7 @@ proven-safe verification method; no cheaper substitute holds up against
 the real target server. Do not re-attempt this without first re-testing
 live, same as above.
 
-## the security audit (SOP-023) — 2026-10-19
+## Security audit — 2026-10-19
 
 First independent security pass. Verdict was **BLOCKED** pending two HIGH
 findings; both fixed same-day, re-verified (22/22 unit tests, full E2E

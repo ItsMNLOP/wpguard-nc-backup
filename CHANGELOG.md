@@ -13,15 +13,14 @@ All notable changes to this project are documented here.
   as an immediate manual override). Applied the moment anyone next
   tries to back up, plus a recurring hourly WP-Cron safety net for a
   site nobody visits for a while. Never races a job whose advisory lock
-  is genuinely still held by a live process. Pending the security audit security
-  sign-off before this is considered shippable.
+  is genuinely still held by a live process. Security-audit-cleared.
 - Automatic backup scheduling: a Disabled/Daily/Weekly dropdown on the
   settings page, backed by a real recurring WP-Cron event kept in sync
   with the stored setting. Reuses `create_job()`'s JOB-05 stale-lock
   reap, so a scheduled run clears a genuinely abandoned previous job
   before starting and skips rather than overlaps a healthy one still in
   progress. Defaults to Disabled so no plugin update or activation ever
-  silently starts recurring jobs. Pending the security audit sign-off.
+  silently starts recurring jobs. Security-audit-cleared.
 - Retention pruning: a "Keep last N backups" setting (default 0 = keep
   all) that deletes the oldest backup folder(s) on Nextcloud once more
   than N exist, right after a new backup verifies. Oldest-first by
@@ -52,10 +51,10 @@ All notable changes to this project are documented here.
   all. See `docs/operations.md` ("One-click restore") and
   `docs/threat-model.md` T20. New `tests/e2e/run-e2e-restore.sh`,
   verified against a real backup from the owner's own production
-  site, restored onto disposable infrastructure only. Pending the security audit
-  sign-off before this is considered shippable — the highest-stakes
-  feature in this project, reviewed accordingly.
-  - the full security audit of the first build came back BLOCKED (4 HIGH, 3
+  site, restored onto disposable infrastructure only. Security-audit-
+  cleared — the highest-stakes feature in this project, reviewed
+  accordingly.
+  - The full security audit of the first build came back BLOCKED (4 HIGH, 3
     MEDIUM, 4 LOW); all fixed — path-exclusion normalization (a
     bypass via `./wp-config.php` or a doubled separator into the
     plugin's own directory), externalizing large per-job state out of
@@ -97,7 +96,7 @@ All notable changes to this project are documented here.
   restore reconstruction from the final manifest alone succeeds
   across a real 3-backup chain. See `docs/operations.md` ("Incremental
   file backups"), `docs/threat-model.md` T19, and `docs/restore-manual.md`
-  step 1a. Pending the security audit sign-off before this is considered shippable.
+  step 1a. Security-audit-cleared.
 - Self-hosted update feed: `Update_Checker` polls the now-public
   `github.com/ItsMNLOP/wpguard-nc-backup` Releases (no credentials
   needed) through WP's normal `pre_set_site_transient_update_plugins`/
@@ -108,8 +107,8 @@ All notable changes to this project are documented here.
   auto-generated zipball, which contains the whole repo rather than
   just the plugin folder. See `docs/releasing.md` for the (currently
   manual, pending the CI bash port) release process and
-  `docs/threat-model.md` T18 for the trust-boundary discussion. Pending
-  the security audit sign-off before this is considered shippable.
+  `docs/threat-model.md` T18 for the trust-boundary discussion.
+  Security-audit-cleared.
 
 ### Fixed
 - Incremental backups, the security re-verification (2026-10-20): the HIGH-ZIP-1
@@ -211,7 +210,7 @@ All notable changes to this project are documented here.
 
 ## [1.0.0] — 2026-10-20 (Phase 1 MVP complete)
 
-Two full independent security audits (SOP-023), both **CLEAR TO SHIP**,
+Two full independent security audits, both **CLEAR TO SHIP**,
 zero open HIGH/MEDIUM findings. Verified against real production
 WordPress/Nextcloud data (not just synthetic fixtures), including a full
 real restore with the owner's own account and 2FA state confirmed intact.
@@ -280,4 +279,3 @@ real restore with the owner's own account and 2FA state confirmed intact.
 - No Nextcloud chunked-upload v2 — upload parts are bounded (default
   64 MiB) but read fully into memory per part.
 - No at-rest archive encryption.
-- Not yet independently security-audited (the security audit / SOP-023 pending).
