@@ -1,9 +1,5 @@
 name: CI
 
-# NOTE: written during MVP build, NOT executed in any CI runner yet (no
-# repository connected to a CI provider this session). Report this
-# honestly rather than claiming green CI. See STATUS.md / docs/adr/0008.
-
 on:
   push:
   pull_request:
@@ -46,11 +42,72 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Bring up disposable stack
+      - name: Bring up and provision disposable stack
+        # This is the bash/CI equivalent of docker/scripts/bootstrap.ps1
+        # (which is written against Windows PowerShell 5.1's legacy
+        # ICertificatePolicy cert-bypass API and isn't safely portable to
+        # pwsh on the Linux runner). Same steps, same order: generate
+        # secrets/certs, bring up containers (gated on DB healthchecks),
+        # install WordPress + activate the plugin + seed fixtures on the
+        # source site, provision a dedicated non-admin Nextcloud backup
+        # account, and configure the plugin with its app password -- all
+        # of which run-e2e.sh assumes already happened, same as it does
+        # against the long-lived local dev stack bootstrap.ps1 maintains.
         run: |
           cd docker
           cp .env.example .env  # CI uses throwaway generated-in-CI secrets, never real ones
+          bash scripts/gen-certs.sh
           docker compose -f docker-compose.yml up -d
+
+          env_val() { grep "^$1=" .env | cut -d= -f2-; }
+          WP_SOURCE_DB_NAME=$(env_val WP_SOURCE_DB_NAME)
+          WP_SOURCE_DB_USER=$(env_val WP_SOURCE_DB_USER)
+          WP_SOURCE_DB_PASSWORD=$(env_val WP_SOURCE_DB_PASSWORD)
+          WP_ADMIN_USER=$(env_val WP_ADMIN_USER)
+          WP_ADMIN_PASSWORD=$(env_val WP_ADMIN_PASSWORD)
+          WP_ADMIN_EMAIL=$(env_val WP_ADMIN_EMAIL)
+          NC_BACKUP_USER=$(env_val NC_BACKUP_USER)
+          NC_BACKUP_USER_PASSWORD=$(env_val NC_BACKUP_USER_PASSWORD)
+
+          wp_source() {
+            docker compose run --rm \
+              -e WORDPRESS_DB_HOST=db-source -e WORDPRESS_DB_NAME="$WP_SOURCE_DB_NAME" \
+              -e WORDPRESS_DB_USER="$WP_SOURCE_DB_USER" -e WORDPRESS_DB_PASSWORD="$WP_SOURCE_DB_PASSWORD" \
+              wpcli wp --path=/var/www/html-source "$@"
+          }
+
+          echo "Installing WordPress (source)..."
+          wp_source core install --url="http://127.0.0.1:8081" --title="WPGuard Source Test Site" \
+            --admin_user="$WP_ADMIN_USER" --admin_password="$WP_ADMIN_PASSWORD" --admin_email="$WP_ADMIN_EMAIL" --skip-email
+
+          echo "Activating plugin on source site..."
+          wp_source plugin activate wpguard-nc-backup
+
+          echo "Seeding fixture content on source site..."
+          wp_source eval-file /fixtures/seed-fixtures.php
+
+          echo "Trusting the dotted internal hostname in Nextcloud..."
+          docker compose exec -T nextcloud php occ config:system:set trusted_domains 2 --value="nc-proxy.wpguard-test.local"
+
+          echo "Creating dedicated non-admin Nextcloud backup account..."
+          docker compose exec -T -e OC_PASS="$NC_BACKUP_USER_PASSWORD" nextcloud php occ user:add \
+            --password-from-env --display-name="WPGuard Backup (dedicated, non-admin)" "$NC_BACKUP_USER"
+
+          echo "Generating Nextcloud app password for the backup account via OCS API..."
+          APP_PASSWORD=$(curl -sk --cacert certs/wpguard-test-ca.crt -u "$NC_BACKUP_USER:$NC_BACKUP_USER_PASSWORD" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            https://127.0.0.1:8443/ocs/v2.php/core/getapppassword | sed -n 's/.*"apppassword":"\([^"]*\)".*/\1/p')
+          if [ -z "$APP_PASSWORD" ]; then echo "failed to obtain Nextcloud app password" >&2; exit 1; fi
+
+          echo "Configuring plugin settings on source site..."
+          docker compose run --rm \
+            -e WORDPRESS_DB_HOST=db-source -e WORDPRESS_DB_NAME="$WP_SOURCE_DB_NAME" \
+            -e WORDPRESS_DB_USER="$WP_SOURCE_DB_USER" -e WORDPRESS_DB_PASSWORD="$WP_SOURCE_DB_PASSWORD" \
+            -e WPGUARD_TEST_NC_URL="https://nc-proxy.wpguard-test.local" \
+            -e WPGUARD_TEST_NC_USER="$NC_BACKUP_USER" \
+            -e WPGUARD_TEST_NC_APP_PASSWORD="$APP_PASSWORD" \
+            -e WPGUARD_TEST_NC_FOLDER="wpguard-backups" \
+            wpcli wp --path=/var/www/html-source eval-file /fixtures/configure-plugin.php
       - name: Run full backup + restore E2E drill
         run: bash tests/e2e/run-e2e.sh
       - name: Tear down
