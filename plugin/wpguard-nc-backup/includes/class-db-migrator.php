@@ -216,11 +216,50 @@ class DB_Migrator {
 		return array( 'last_pk' => $last_pk, 'examined' => $examined, 'changed' => $changed, 'error' => '' );
 	}
 
+	// Security audit MEDIUM-RECURSE-1: a serialized value can contain a
+	// PHP backreference (`R:N;`) -- unserialize() reconstructs this as
+	// a real circular (or merely deeply shared) reference, e.g. an
+	// array whose own first element refers back to itself. The
+	// HIGH-MIG-1 round-trip guard doesn't catch this shape (such a
+	// value DOES survive serialize(unserialize($value)) === $value
+	// losslessly), so replace_recursive() would otherwise walk it
+	// forever -- proven live to exhaust PHP's memory limit and fatal,
+	// which (unlike an exception) skips every finally block, leaving
+	// the restore's advisory lock held with no automatic release. A
+	// depth cap, threaded through every recursive entry point, is the
+	// fail-safe: past it, a value is left completely unchanged rather
+	// than letting a cycle recurse unbounded.
+	const MAX_RECURSION_DEPTH = 100;
+
 	/** @param array{0:string,1:string}[] $pairs */
-	public static function replace_in_scalar_or_serialized( string $value, array $pairs ): string {
+	public static function replace_in_scalar_or_serialized( string $value, array $pairs, int $depth = 0 ): string {
 		if ( empty( $pairs ) ) {
 			return $value;
 		}
+		// The depth-exceeded signal from replace_recursive() is only
+		// ever caught here, at the OUTERMOST call (depth 0) -- a
+		// nested re-entry (the string-leaf case below, depth > 0) lets
+		// it propagate all the way up instead of catching it locally.
+		// Catching it partway through would still leave an array
+		// level above it freshly rebuilt from a (by-then-finite,
+		// non-circular) reconstruction, which no longer round-trips to
+		// the exact original circular/self-referencing bytes even
+		// though no leaf value was actually corrupted -- only
+		// unwinding all the way back to the original, completely
+		// untouched raw string guarantees a true byte-for-byte
+		// passthrough for a value shaped like that.
+		if ( 0 === $depth ) {
+			try {
+				return self::replace_in_scalar_or_serialized_inner( $value, $pairs, $depth );
+			} catch ( \RuntimeException $e ) {
+				return $value;
+			}
+		}
+		return self::replace_in_scalar_or_serialized_inner( $value, $pairs, $depth );
+	}
+
+	/** @param array{0:string,1:string}[] $pairs */
+	private static function replace_in_scalar_or_serialized_inner( string $value, array $pairs, int $depth ): string {
 		if ( self::is_serialized_value( $value ) ) {
 			// allowed_classes => false: found live, restoring a real
 			// backup with Action Scheduler data (used by WooCommerce and
@@ -254,7 +293,7 @@ class DB_Migrator {
 				if ( serialize( $data ) !== $value ) {
 					return $value;
 				}
-				return serialize( self::replace_recursive( $data, $pairs ) );
+				return serialize( self::replace_recursive( $data, $pairs, $depth + 1 ) );
 			}
 			// Looked serialized by shape but failed to actually
 			// unserialize (corrupt/legacy value) -- fall through to a
@@ -293,7 +332,17 @@ class DB_Migrator {
 	}
 
 	/** @param array{0:string,1:string}[] $pairs */
-	private static function replace_recursive( $data, array $pairs ) {
+	private static function replace_recursive( $data, array $pairs, int $depth = 0 ) {
+		if ( $depth >= self::MAX_RECURSION_DEPTH ) {
+			// Deliberately thrown, not returned -- see
+			// replace_in_scalar_or_serialized()'s depth-0 catch for why
+			// a value this deeply nested (in practice, a PHP
+			// backreference the unserialized structure already turned
+			// into a real circular or deeply-shared reference) must
+			// unwind all the way back to the original raw bytes rather
+			// than returning a partially-rebuilt structure from here.
+			throw new \RuntimeException( 'wpguard_nc_migrate_recursion_depth_exceeded' );
+		}
 		if ( is_string( $data ) ) {
 			// Security audit NEW-MEDIUM-1: a string LEAF can itself be a
 			// serialized value -- WordPress's own maybe_serialize() does
@@ -312,13 +361,13 @@ class DB_Migrator {
 			// inner structure undetectably (it still looks like valid,
 			// unserializable bytes one level up; only unserializing a
 			// second time reveals the corruption).
-			return self::replace_in_scalar_or_serialized( $data, $pairs );
+			return self::replace_in_scalar_or_serialized( $data, $pairs, $depth + 1 );
 		}
 		if ( is_array( $data ) ) {
 			$out = array();
 			foreach ( $data as $key => $value ) {
 				$new_key = is_string( $key ) ? self::str_replace_pairs( $key, $pairs ) : $key;
-				$out[ $new_key ] = self::replace_recursive( $value, $pairs );
+				$out[ $new_key ] = self::replace_recursive( $value, $pairs, $depth + 1 );
 			}
 			return $out;
 		}
@@ -335,7 +384,7 @@ class DB_Migrator {
 		}
 		if ( is_object( $data ) ) {
 			foreach ( $data as $key => $value ) {
-				$data->$key = self::replace_recursive( $value, $pairs );
+				$data->$key = self::replace_recursive( $value, $pairs, $depth + 1 );
 			}
 			return $data;
 		}

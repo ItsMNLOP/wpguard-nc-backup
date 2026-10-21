@@ -112,6 +112,24 @@ All notable changes to this project are documented here.
       top-level value already gets.
     Six new unit tests. 115/115 unit tests; both E2E suites re-run
     clean again.
+  - Second re-verification (commit `42e2ccb`): BLOCKED a third time --
+    a fresh adversarial pass, not a re-check of what was already
+    fixed, found a PHP serialization backreference (`R:N;`) producing
+    a genuinely circular reference that unserialize() reconstructs
+    faithfully and that survives the HIGH-MIG-1 round-trip guard
+    losslessly, so the recursive replace walked it forever -- proven
+    live to exhaust PHP's memory limit and fatal. A PHP Fatal error
+    isn't a catchable exception and skips every `finally` block, so
+    the restore's advisory lock stayed held, unrecoverable without
+    manual intervention. Fixed with a depth cap threaded through
+    every recursive entry point; the cap alone stopped the fatal but
+    initially still returned a differently-shaped (though finite)
+    reconstruction rather than the untouched original bytes a
+    circular, URL-less value should get back -- corrected by
+    unwinding all the way back to the outermost call on a depth-cap
+    hit, rather than returning from wherever in the structure the cap
+    was reached. One new unit test. 116/116 unit tests; both E2E
+    suites and the full existing 9-suite regression set re-run clean.
   Pending security audit sign-off before this is considered
   shippable.
 

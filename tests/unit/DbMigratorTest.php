@@ -243,6 +243,27 @@ function test_replace_in_scalar_double_serialized_value_survives_intact() {
 	wpguard_assert_equals( 'https://a-much-longer-new-domain.example/page', $twice['url'], 'the URL inside the double-serialized value must still be correctly migrated' );
 }
 
+function test_replace_in_scalar_circular_reference_does_not_fatal() {
+	// Security audit MEDIUM-RECURSE-1: a serialized value can contain
+	// a PHP backreference (R:N;) -- unserialize() reconstructs this as
+	// a real circular reference (an array whose own element refers
+	// back to itself). This survives the HIGH-MIG-1 round-trip guard
+	// losslessly (serialize(unserialize($v)) === $v), so without a
+	// depth cap replace_recursive() walks it forever -- proven live to
+	// exhaust PHP's memory limit and fatal, which (unlike a catchable
+	// exception) skips every finally block, leaving the restore's
+	// advisory lock held with no automatic release.
+	$circular = array();
+	$circular[0] = &$circular;
+	$fixture = serialize( $circular );
+	wpguard_assert( false !== @unserialize( $fixture ), 'the fixture itself must actually be a valid circular-reference serialization, or this test proves nothing' );
+
+	$pairs = array( array( 'https://old-site.example', 'https://new-site.example' ) );
+	$result = DB_Migrator::replace_in_scalar_or_serialized( $fixture, $pairs );
+
+	wpguard_assert_equals( $fixture, $result, 'a circular-reference value must be returned completely unchanged once the recursion depth cap is hit, not recursed into forever' );
+}
+
 function test_replace_in_scalar_no_pairs_is_a_no_op() {
 	wpguard_assert_equals( 'https://old.example/page', DB_Migrator::replace_in_scalar_or_serialized( 'https://old.example/page', array() ), 'no pairs (the ordinary same-site restore) must leave the value completely untouched' );
 }
@@ -271,5 +292,6 @@ return array(
 	'test_str_replace_still_matches_at_a_real_url_boundary',
 	'test_replace_in_scalar_c_format_serializable_object_left_unchanged_not_corrupted',
 	'test_replace_in_scalar_double_serialized_value_survives_intact',
+	'test_replace_in_scalar_circular_reference_does_not_fatal',
 	'test_replace_in_scalar_no_pairs_is_a_no_op',
 );

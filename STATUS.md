@@ -174,7 +174,41 @@ produce real pairs; the subdirectory case must now fail with a
 `WP_Error`; a double-serialized value must survive migration
 correctly on both unserialize passes) — 115/115 unit tests passing.
 Both E2E suites, including the real-backup regression test, re-run
-clean again. Re-dispatched for a second re-verification.
+clean again.
+
+**Second re-verification (commit `42e2ccb`): BLOCKED a third time**,
+one more real finding — the kind the re-verification process exists
+to catch: a fresh adversarial pass, not a re-check of what was already
+fixed.
+
+- **MEDIUM**: a PHP serialization backreference (`R:N;` — `$x[0] = &$x;`
+  then `serialize($x)`) reconstructs via `unserialize()` as a genuinely
+  circular (or merely deeply shared) reference. This survives the
+  HIGH-MIG-1 round-trip guard losslessly — `serialize(unserialize($v)) === $v`
+  holds for this shape even though the structure is self-referential —
+  so without any further check, `replace_recursive()` walked it
+  forever: proven live to exhaust PHP's memory limit and fatal. A PHP
+  Fatal error is not a catchable exception and skips every `finally`
+  block, so `Restore_Orchestrator::advance()`'s own
+  `try { ... } finally { Job_Store::release_lock(...) }` never runs —
+  the restore's advisory lock stays held, unrecoverable without manual
+  intervention. Fixed with a depth cap (100) threaded through every
+  recursive entry point. First attempt at the fix stopped the
+  unbounded recursion (no more fatal) but didn't fully solve it:
+  returning a plain, depth-capped value from deep inside the
+  recursion still meant 100 freshly-rebuilt array layers replaced what
+  had been a single, compact `R:` backreference — not corrupted, not
+  unbounded, but not byte-identical to the original either, which a
+  circular/self-referential value (containing no URL to migrate in
+  the first place) should be. Corrected by throwing when the cap is
+  hit and catching only at the outermost call, so the *entire* original
+  value unwinds back out byte-for-byte untouched, rather than a
+  partially-rebuilt reconstruction of it.
+
+New unit test reproduces the exact circular-reference shape and
+confirms the result is the original value, completely unchanged —
+116/116 unit tests passing. Both E2E suites re-run clean again.
+Re-dispatched for a third re-verification.
 
 ## Phase 3 candidates (not yet scoped, for later discussion)
 
