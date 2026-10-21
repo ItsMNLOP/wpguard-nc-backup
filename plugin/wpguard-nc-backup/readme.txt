@@ -4,7 +4,7 @@ Tags: backup, nextcloud, webdav, restore, disaster-recovery
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -31,8 +31,11 @@ A backup is never reported successful until every uploaded component has been re
 
 == Changelog ==
 
+= 1.1.0 =
+Phase 2 release: automatic stale-lock recovery, scheduled (daily/weekly) backups, retention pruning, incremental file backups, a self-hosted update feed via GitHub Releases, and one-click in-place restore (from either the configured Nextcloud destination or an uploaded backup bundle). Every feature went through an independent security audit, fixes applied, and re-verification before shipping — see this project's STATUS.md and docs/threat-model.md for the full history. Verified against real production WordPress/Nextcloud data throughout, including full real restores with 2FA state intact.
+
 = 1.0.0 =
-Phase 1 MVP release. Two full independent security audits (SOP-023), both CLEAR TO SHIP. Verified against real production WordPress/Nextcloud data, including a full real restore with 2FA state intact. Fixes and additions since the initial 0.1.0 build: concurrent job-advance mutual exclusion; wp-config.php credential redaction before archiving; WebDAV redirect/streaming/CA-bundle hardening; ZIP packaging fixed to use spec-compliant path separators; batched file/table export to cut AJAX round trips; a manual Cancel/Reset action for a stuck job; a diagnostic per-backup job-log.json; archive-writer performance fixes (no longer reopens the ZIP per file; skips recompressing already-compressed file types).
+Phase 1 MVP release. Two full independent security audits, both CLEAR TO SHIP. Verified against real production WordPress/Nextcloud data, including a full real restore with 2FA state intact. Fixes and additions since the initial 0.1.0 build: concurrent job-advance mutual exclusion; wp-config.php credential redaction before archiving; WebDAV redirect/streaming/CA-bundle hardening; ZIP packaging fixed to use spec-compliant path separators; batched file/table export to cut AJAX round trips; a manual Cancel/Reset action for a stuck job; a diagnostic per-backup job-log.json; archive-writer performance fixes (no longer reopens the ZIP per file; skips recompressing already-compressed file types).
 
 = 0.1.0 =
 Initial MVP: manual backup, versioned manifest, SHA-256 verified WebDAV transfer, no retention/scheduling.

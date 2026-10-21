@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased] — Phase 2, in progress
+## [1.1.0] — 2026-10-20 — Phase 2
 
 ### Added
 - Automatic stale-lock recovery (JOB-05): a genuinely abandoned backup
