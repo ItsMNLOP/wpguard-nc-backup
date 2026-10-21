@@ -1,5 +1,19 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 3 candidates (not yet scoped, for later discussion)
+
+- Nextcloud-free backup: let a site with no configured Nextcloud
+  destination still create a backup and download it straight to the
+  browser, rather than requiring Nextcloud credentials just to run
+  one at all. Raised during real-world Phase 2 testing: restore
+  already works with zero Nextcloud dependency when driven from an
+  uploaded bundle (see docs/operations.md, "One-click restore"); the
+  backup side has no equivalent today — `ajax_start_backup()` requires
+  `Settings::has_credentials()` unconditionally, and the local staging
+  directory is always deleted (`cleanup_tmp()`) once a backup
+  finishes, success or failure, so nothing persists locally either
+  way. Not scoped or started.
+
 ## Phase 2 progress — one-click restore: security re-verification CLEAR TO SHIP, 2026-10-20
 
 The security audit independently re-verified every HIGH/MEDIUM/LOW finding from the
