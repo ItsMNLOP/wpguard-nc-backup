@@ -130,6 +130,23 @@ All notable changes to this project are documented here.
     hit, rather than returning from wherever in the structure the cap
     was reached. One new unit test. 116/116 unit tests; both E2E
     suites and the full existing 9-suite regression set re-run clean.
+  - Third re-verification (commit `d1f8c94`): the circular-reference
+    fix confirmed working, but found one more related issue (a fresh
+    adversarial pass, not a re-check) -- a SHARED (not circular)
+    reference, the same array referenced from two different parent
+    slots, never exceeds the recursion depth cap on any single path,
+    but a plain recursive walk still visits it once per parent,
+    doubling total work at every level of sharing. Proven live: an
+    18-level-deep version (a few hundred bytes) exhausted a 256MB
+    memory limit, same fatal/stuck-lock consequence via a different
+    mechanism the depth cap alone can't catch. Fixed with a node-visit
+    budget (50,000), independent of depth, reusing the same
+    throw/catch-at-depth-0 unwind already built for the depth cap.
+    One new unit test (built via real PHP reference assignment, to
+    avoid a serialization-format mistake that made the audit's own
+    first proof attempt look like a false pass), verified under a
+    constrained 128MB PHP memory limit. 117/117 unit tests; both E2E
+    suites re-run clean again.
   Pending security audit sign-off before this is considered
   shippable.
 

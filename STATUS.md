@@ -208,7 +208,30 @@ fixed.
 New unit test reproduces the exact circular-reference shape and
 confirms the result is the original value, completely unchanged —
 116/116 unit tests passing. Both E2E suites re-run clean again.
-Re-dispatched for a third re-verification.
+
+**Third re-verification (commit `d1f8c94`): the circular-reference fix
+confirmed working, but found a fourth, related finding (MEDIUM-DAG-1)
+via a fresh adversarial pass** — a *shared* (not circular) reference,
+the same array referenced from two different parent slots, is a real
+PHP serialization shape `unserialize()` faithfully reconstructs. It
+never exceeds `MAX_RECURSION_DEPTH` on any single path, but a plain
+recursive walk still visits the shared sub-tree once per parent,
+doubling total work at every level of sharing — proven live: an
+18-level-deep version of this shape (a few hundred bytes) exhausted a
+256MB memory limit, same fatal/stuck-lock consequence as the original
+circular-reference bug, via a different mechanism the depth cap alone
+can't catch. Fixed with a node-visit budget (50,000), independent of
+recursion depth, reusing the exact same throw/catch-at-depth-0 unwind
+path already built for the depth cap — no new exception
+infrastructure needed. New unit test (built via real PHP reference
+assignment, not a hand-rolled serialized string, specifically to
+avoid the R:-slot-numbering mistake that made the audit's own first
+attempt at proving this look like a false pass) reproduces the shape
+and confirms the result is unchanged, verified under a constrained
+128MB PHP memory limit to prove the budget genuinely aborts before
+exhausting it rather than merely running fast enough not to notice —
+117/117 unit tests passing. Both E2E suites re-run clean again.
+Re-dispatched for a fourth re-verification.
 
 ## Phase 3 candidates (not yet scoped, for later discussion)
 

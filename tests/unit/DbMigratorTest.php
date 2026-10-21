@@ -264,6 +264,34 @@ function test_replace_in_scalar_circular_reference_does_not_fatal() {
 	wpguard_assert_equals( $fixture, $result, 'a circular-reference value must be returned completely unchanged once the recursion depth cap is hit, not recursed into forever' );
 }
 
+function test_replace_in_scalar_shared_reference_dag_does_not_exhaust_memory() {
+	// Security audit MEDIUM-DAG-1: a shared (not circular) reference --
+	// the SAME array referenced from two different parent slots -- is
+	// a real PHP serialization shape (R:N; targeting an array that
+	// legitimately has more than one parent), reconstructed faithfully
+	// by unserialize(). It never exceeds MAX_RECURSION_DEPTH on any
+	// single path, but a plain recursive walk still visits the shared
+	// sub-tree once per parent, doubling total work at every level of
+	// sharing -- proven live by the security audit: an 18-level-deep
+	// version of exactly this shape (a few hundred bytes) exhausted a
+	// 256MB memory limit. Built here via real PHP reference
+	// assignment, not a hand-rolled serialized string, to avoid
+	// exactly the R:-slot-numbering mistake that made the audit's own
+	// first attempt at this proof look like a false pass.
+	$shared = array( 'leaf' => true );
+	for ( $i = 0; $i < 20; $i++ ) {
+		$next = array( 'a' => &$shared, 'b' => &$shared );
+		$shared = $next;
+	}
+	$fixture = serialize( $shared );
+	wpguard_assert( false !== @unserialize( $fixture ), 'the fixture itself must actually be a valid shared-reference serialization, or this test proves nothing' );
+
+	$pairs = array( array( 'https://old-site.example', 'https://new-site.example' ) );
+	$result = DB_Migrator::replace_in_scalar_or_serialized( $fixture, $pairs );
+
+	wpguard_assert_equals( $fixture, $result, 'a shared-reference DAG deep enough to exceed the node-visit budget must be returned completely unchanged, not expanded node-by-node until memory is exhausted' );
+}
+
 function test_replace_in_scalar_no_pairs_is_a_no_op() {
 	wpguard_assert_equals( 'https://old.example/page', DB_Migrator::replace_in_scalar_or_serialized( 'https://old.example/page', array() ), 'no pairs (the ordinary same-site restore) must leave the value completely untouched' );
 }
@@ -293,5 +321,6 @@ return array(
 	'test_replace_in_scalar_c_format_serializable_object_left_unchanged_not_corrupted',
 	'test_replace_in_scalar_double_serialized_value_survives_intact',
 	'test_replace_in_scalar_circular_reference_does_not_fatal',
+	'test_replace_in_scalar_shared_reference_dag_does_not_exhaust_memory',
 	'test_replace_in_scalar_no_pairs_is_a_no_op',
 );

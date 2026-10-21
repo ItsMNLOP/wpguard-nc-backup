@@ -231,6 +231,24 @@ class DB_Migrator {
 	// than letting a cycle recurse unbounded.
 	const MAX_RECURSION_DEPTH = 100;
 
+	// Security audit MEDIUM-DAG-1: a PHP serialized value can share one
+	// array/object by reference across multiple parent slots (not
+	// circular -- a genuine DAG) without ever exceeding
+	// MAX_RECURSION_DEPTH, since the depth only tracks the longest
+	// single path, not the total node count. unserialize() faithfully
+	// reconstructs the shared structure, but a plain recursive walk (a
+	// foreach over each array, which copies each element) processes
+	// each shared sub-tree once PER PARENT rather than once overall --
+	// doubling the work at every level a share occurs. Proven live: a
+	// ~390-byte serialized value with 18 levels of sharing exhausted a
+	// 256MB memory limit (2^18 node visits), well within what fits in
+	// any ordinary text column. A node-visit budget, independent of
+	// recursion depth, is what actually bounds this -- reusing the
+	// exact same throw/catch-at-depth-0 unwind path MAX_RECURSION_DEPTH
+	// already established, rather than inventing a second mechanism.
+	const MAX_NODE_BUDGET = 50000;
+	private static int $node_budget = 0;
+
 	/** @param array{0:string,1:string}[] $pairs */
 	public static function replace_in_scalar_or_serialized( string $value, array $pairs, int $depth = 0 ): string {
 		if ( empty( $pairs ) ) {
@@ -249,6 +267,11 @@ class DB_Migrator {
 		// untouched raw string guarantees a true byte-for-byte
 		// passthrough for a value shaped like that.
 		if ( 0 === $depth ) {
+			// Fresh budget for this top-level value -- a DAG's shared
+			// sub-tree must be bounded relative to THIS one column
+			// value's own structure, not leak over from (or into) a
+			// previous or subsequent call.
+			self::$node_budget = self::MAX_NODE_BUDGET;
 			try {
 				return self::replace_in_scalar_or_serialized_inner( $value, $pairs, $depth );
 			} catch ( \RuntimeException $e ) {
@@ -342,6 +365,17 @@ class DB_Migrator {
 			// unwind all the way back to the original raw bytes rather
 			// than returning a partially-rebuilt structure from here.
 			throw new \RuntimeException( 'wpguard_nc_migrate_recursion_depth_exceeded' );
+		}
+		if ( is_array( $data ) || is_object( $data ) ) {
+			// Security audit MEDIUM-DAG-1: counts actual node visits,
+			// not recursion depth -- a shared (not circular) sub-tree
+			// stays within MAX_RECURSION_DEPTH on any single path, but
+			// a plain recursive walk still visits it once per parent,
+			// doubling total work at every level of sharing. Same
+			// throw/catch-at-depth-0 unwind as the depth cap above.
+			if ( --self::$node_budget <= 0 ) {
+				throw new \RuntimeException( 'wpguard_nc_migrate_recursion_depth_exceeded' );
+			}
 		}
 		if ( is_string( $data ) ) {
 			// Security audit NEW-MEDIUM-1: a string LEAF can itself be a
