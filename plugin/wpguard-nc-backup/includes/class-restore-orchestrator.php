@@ -148,6 +148,24 @@ class Restore_Orchestrator {
 		return implode( '/', $normalized );
 	}
 
+	/**
+	 * Keeps this install's own, already-proven-working URL scheme on a
+	 * restored siteurl/home value, touching nothing else about it
+	 * (host/path always come from the backup, unchanged). A no-op
+	 * whenever the schemes already match, which covers the ordinary
+	 * same-site restore -- this only ever does something on a
+	 * deliberate cross-site restore where the backup's own site used a
+	 * different scheme than this one does.
+	 */
+	private static function reconcile_url_scheme( string $pre_restore_url, string $restored_url ): string {
+		$pre_scheme = wp_parse_url( $pre_restore_url, PHP_URL_SCHEME );
+		$restored_scheme = wp_parse_url( $restored_url, PHP_URL_SCHEME );
+		if ( empty( $pre_scheme ) || empty( $restored_scheme ) || $pre_scheme === $restored_scheme ) {
+			return $restored_url;
+		}
+		return $pre_scheme . substr( $restored_url, strlen( $restored_scheme ) );
+	}
+
 	private static function is_never_restored_path( string $relative ): bool {
 		$relative = self::normalize_relative_path( $relative );
 		return 0 === strcasecmp( 'wp-config.php', $relative ) || 0 === strpos( $relative, self::own_plugin_dir_prefix() );
@@ -703,6 +721,21 @@ class Restore_Orchestrator {
 			Job_Orchestrator::RETENTION_ERROR_OPTION   => get_option( Job_Orchestrator::RETENTION_ERROR_OPTION, '' ),
 		);
 
+		// Found live, restoring a real cross-site backup onto a plain-HTTP
+		// disposable instance: WordPress core itself (default-constants.php,
+		// since 2.6) infers FORCE_SSL_ADMIN from whatever scheme `siteurl`
+		// currently has. A backup from an https:// site restored onto an
+		// http-only target otherwise leaves wp-admin force-redirecting to a
+		// scheme this install can't actually serve -- an effective lockout
+		// with no clear error, not a security control anyone intended to
+		// land on here. Captured separately from captured_options above
+		// because this is a scheme-only reconciliation (keep this site's
+		// own proven-working scheme), not a blind overwrite -- it must
+		// never touch the host/path the backup brought in, since that's
+		// the entire point of a deliberate cross-site restore.
+		$cp['captured_siteurl'] = get_option( 'siteurl', '' );
+		$cp['captured_home']    = get_option( 'home', '' );
+
 		$quarantine_candidates = self::compute_quarantine_candidates( $job_id );
 		self::write_blob( $job_id, 'quarantine_candidates', $quarantine_candidates );
 		$cp['quarantine_candidates_count'] = count( $quarantine_candidates );
@@ -1209,6 +1242,12 @@ class Restore_Orchestrator {
 
 		foreach ( $cp['captured_options'] as $key => $value ) {
 			update_option( $key, $value, false );
+		}
+		if ( ! empty( $cp['captured_siteurl'] ) ) {
+			update_option( 'siteurl', self::reconcile_url_scheme( $cp['captured_siteurl'], get_option( 'siteurl', '' ) ), false );
+		}
+		if ( ! empty( $cp['captured_home'] ) ) {
+			update_option( 'home', self::reconcile_url_scheme( $cp['captured_home'], get_option( 'home', '' ) ), false );
 		}
 
 		self::log( $job_id, 'restore_swap', 'info', sprintf(
