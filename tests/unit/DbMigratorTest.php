@@ -1,0 +1,145 @@
+<?php
+namespace WPGuard\NCBackup\Tests;
+use WPGuard\NCBackup\DB_Migrator;
+
+// Phase 2.5 (migration on restore): checking "this backup is from a
+// different site" now means migration, not merely "proceed anyway" --
+// every URL in the backup gets rewritten to this site's own address,
+// serialization-safe, before anything is promoted live.
+
+function test_replace_pairs_for_same_url_is_a_no_op() {
+	wpguard_assert_equals( array(), DB_Migrator::replace_pairs_for( 'https://example.com', 'https://example.com' ), 'identical old/new home_url must produce nothing to replace -- the ordinary same-site restore, and a fresh install at the same, now-dead domain' );
+}
+
+function test_replace_pairs_for_empty_urls_is_a_no_op() {
+	wpguard_assert_equals( array(), DB_Migrator::replace_pairs_for( '', 'https://example.com' ), 'an empty old URL must never produce a pair (would otherwise match -- and corrupt -- every string in the database)' );
+}
+
+function test_replace_pairs_for_includes_scheme_swapped_variant() {
+	$pairs = DB_Migrator::replace_pairs_for( 'https://old.example', 'https://new.example' );
+	$searches = array_column( $pairs, 0 );
+	wpguard_assert( in_array( 'https://old.example', $searches, true ), 'the exact recorded old home_url must be one of the search terms' );
+	wpguard_assert( in_array( 'http://old.example', $searches, true ), 'the http variant of the old home_url must also be covered -- pre-TLS-migration content on the old site may still link that way' );
+	foreach ( $pairs as $pair ) {
+		wpguard_assert_equals( 'https://new.example', $pair[1], 'every pair must replace with the same, single new home_url' );
+	}
+}
+
+function test_replace_pairs_for_strips_trailing_slash() {
+	$pairs = DB_Migrator::replace_pairs_for( 'https://old.example/', 'https://new.example/' );
+	wpguard_assert_equals( 'https://new.example', $pairs[0][1], 'a trailing slash on either URL must not produce a distinct, narrower search/replace pair than the bare form' );
+}
+
+function test_is_serialized_value_recognizes_array() {
+	wpguard_assert( true === DB_Migrator::is_serialized_value( serialize( array( 'a' => 1 ) ) ), 'a serialized array must be recognized' );
+}
+
+function test_is_serialized_value_recognizes_string() {
+	wpguard_assert( true === DB_Migrator::is_serialized_value( serialize( 'hello' ) ), 'a serialized string must be recognized' );
+}
+
+function test_is_serialized_value_rejects_plain_url() {
+	wpguard_assert( false === DB_Migrator::is_serialized_value( 'https://example.com/some/path' ), 'an ordinary URL must never be mistaken for a serialized value' );
+}
+
+function test_is_serialized_value_rejects_empty_string() {
+	wpguard_assert( false === DB_Migrator::is_serialized_value( '' ), 'an empty string is not serialized' );
+}
+
+function test_replace_in_scalar_plain_string() {
+	$pairs = array( array( 'https://old.example', 'https://new.example' ) );
+	wpguard_assert_equals(
+		'https://new.example/page',
+		DB_Migrator::replace_in_scalar_or_serialized( 'https://old.example/page', $pairs ),
+		'a plain (non-serialized) string must have the URL replaced directly'
+	);
+}
+
+function test_replace_in_scalar_serialized_array_without_corrupting_length() {
+	// The exact corruption this feature exists to avoid: a serialized
+	// array whose replacement text is a DIFFERENT length than the
+	// original -- a naive str_replace() on the raw bytes would leave
+	// the string's byte-length prefix wrong, making it unparseable.
+	$original = array( 'url' => 'https://old.example', 'label' => 'Visit old.example' );
+	$serialized = serialize( $original );
+	$pairs = array( array( 'https://old.example', 'https://a-much-longer-new-domain.example' ) );
+
+	$result = DB_Migrator::replace_in_scalar_or_serialized( $serialized, $pairs );
+	$unserialized = @unserialize( $result );
+
+	wpguard_assert( false !== $unserialized, 'the result must still be valid, unserializable PHP serialization after a length-changing replacement' );
+	wpguard_assert_equals( 'https://a-much-longer-new-domain.example', $unserialized['url'], 'the URL value inside the serialized array must be replaced' );
+	wpguard_assert_equals( 'Visit old.example', $unserialized['label'], 'a bare-hostname mention (no scheme) inside unrelated text must NOT be touched -- only full, scheme-qualified URL occurrences are replaced' );
+}
+
+function test_replace_in_scalar_serialized_nested_structure() {
+	$original = array(
+		'widgets' => array(
+			array( 'link' => 'http://old.example/a' ),
+			array( 'link' => 'https://old.example/b' ),
+		),
+	);
+	$pairs = DB_Migrator::replace_pairs_for( 'https://old.example', 'https://new.example' );
+	$result = @unserialize( DB_Migrator::replace_in_scalar_or_serialized( serialize( $original ), $pairs ) );
+
+	wpguard_assert_equals( 'https://new.example/a', $result['widgets'][0]['link'], 'the http variant must be canonicalized to the new site\'s one real (https) home_url, not an invented http variant of the new domain' );
+	wpguard_assert_equals( 'https://new.example/b', $result['widgets'][1]['link'], 'the exact-scheme occurrence inside a nested array must be migrated' );
+}
+
+function test_replace_in_scalar_corrupt_serialized_value_falls_back_to_plain_replace() {
+	// Shaped like a serialized string but with a byte count that
+	// doesn't match its actual content -- unserialize() fails. Must
+	// fall back to a plain replace rather than silently dropping the
+	// value or throwing.
+	$corrupt = 's:999:"https://old.example";';
+	$pairs = array( array( 'https://old.example', 'https://new.example' ) );
+	$result = DB_Migrator::replace_in_scalar_or_serialized( $corrupt, $pairs );
+	wpguard_assert( false !== strpos( $result, 'https://new.example' ), 'a corrupt serialized-looking value must still have the plain URL text replaced, not be left untouched or dropped' );
+}
+
+function test_replace_in_scalar_incomplete_class_object_does_not_crash() {
+	// Found live, restoring a real backup with Action Scheduler data
+	// (used by WooCommerce and many other plugins): an object whose
+	// class isn't loaded at this point in the restore unserializes
+	// safely as __PHP_Incomplete_Class, but PHP forbids WRITING a
+	// property on one -- a fatal error, not a catchable exception.
+	// Simulated here with a class name that was never declared in this
+	// test's own process, same mechanism a real unloaded plugin class
+	// would hit.
+	$class_name = 'WPGuard_Test_Never_Declared_Class';
+	$url = 'https://old-site.example';
+	$fixture = sprintf( 'O:%d:"%s":1:{s:3:"url";s:%d:"%s";}', strlen( $class_name ), $class_name, strlen( $url ), $url );
+	$never_declared_object = unserialize( $fixture );
+	wpguard_assert( $never_declared_object instanceof \__PHP_Incomplete_Class, 'the fixture itself must actually produce an incomplete-class object, or this test proves nothing' );
+
+	$wrapper = array( 'nested' => $never_declared_object, 'plain' => 'https://old-site.example/page' );
+	$pairs = array( array( 'https://old-site.example', 'https://new-site.example' ) );
+
+	$result = DB_Migrator::replace_in_scalar_or_serialized( serialize( $wrapper ), $pairs );
+	$unserialized = @unserialize( $result );
+
+	wpguard_assert( false !== $unserialized, 'the overall result must still be valid, unserializable data -- not a fatal error and not corrupted' );
+	wpguard_assert_equals( 'https://new-site.example/page', $unserialized['plain'], 'a sibling plain string must still be migrated normally' );
+	wpguard_assert( $unserialized['nested'] instanceof \__PHP_Incomplete_Class, 'the incomplete-class object must survive, left alone rather than crashing the whole migration' );
+}
+
+function test_replace_in_scalar_no_pairs_is_a_no_op() {
+	wpguard_assert_equals( 'https://old.example/page', DB_Migrator::replace_in_scalar_or_serialized( 'https://old.example/page', array() ), 'no pairs (the ordinary same-site restore) must leave the value completely untouched' );
+}
+
+return array(
+	'test_replace_pairs_for_same_url_is_a_no_op',
+	'test_replace_pairs_for_empty_urls_is_a_no_op',
+	'test_replace_pairs_for_includes_scheme_swapped_variant',
+	'test_replace_pairs_for_strips_trailing_slash',
+	'test_is_serialized_value_recognizes_array',
+	'test_is_serialized_value_recognizes_string',
+	'test_is_serialized_value_rejects_plain_url',
+	'test_is_serialized_value_rejects_empty_string',
+	'test_replace_in_scalar_plain_string',
+	'test_replace_in_scalar_serialized_array_without_corrupting_length',
+	'test_replace_in_scalar_serialized_nested_structure',
+	'test_replace_in_scalar_corrupt_serialized_value_falls_back_to_plain_replace',
+	'test_replace_in_scalar_incomplete_class_object_does_not_crash',
+	'test_replace_in_scalar_no_pairs_is_a_no_op',
+);

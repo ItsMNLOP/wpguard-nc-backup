@@ -2,6 +2,59 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] — Phase 2.5, in progress
+
+### Changed
+- **One-click restore's "this backup is from a different site" checkbox
+  now means migration, not merely "proceed anyway".** Previously it
+  only suppressed the `home_url` mismatch refusal; the restored site
+  was left thinking it was still the backup's original site, so every
+  URL it generated for itself (login redirects, form actions) pointed
+  back at the old domain -- confirmed live during real cross-site
+  restore testing as a genuine inability to complete a browser login
+  on the new site. Checking the box now runs a new
+  `restore_migrate_urls` step (`DB_Migrator`) between
+  `restore_apply_db` and `restore_apply_files`, still against the
+  shadow tables only, still before anything is promoted live: every
+  scheme-qualified occurrence of the backup's own `home_url` (and its
+  opposite-scheme variant, to catch pre-TLS-migration links the
+  backup's own content might still carry) is rewritten to this site's
+  own `home_url`, across every text column of every table.
+  Serialization-safe -- a value is unserialized, walked recursively
+  (replacing only string leaves/keys), and re-serialized rather than
+  ever touched at the byte level, since a naive replace would corrupt
+  any PHP-serialized value (widget settings, several core options)
+  whose replacement text is a different length than the original.
+  Deliberately scoped to literal URL occurrences only, never a bare
+  hostname, which would also mangle an unrelated plain-text mention of
+  the same domain. A table with no usable single-column primary key is
+  skipped and logged rather than risk an ambiguous `UPDATE`. A no-op
+  whenever the backup's own `home_url` already matches this site's --
+  unchanged behavior for the ordinary same-site restore, confirmed by
+  the existing real-backup E2E suite staying green. See
+  `docs/operations.md` ("Checking... means migration"),
+  `docs/threat-model.md` T20, and the new
+  `tests/e2e/run-e2e-restore-migration.sh`, which seeds a real
+  https:// link, a scheme-mismatched legacy http:// link, a
+  PHP-serialized widget option, and a bare-hostname plain-text mention
+  all referencing the same old domain, then asserts every URL
+  occurrence migrates correctly while the bare-hostname mention
+  survives completely untouched. Checkbox label and help text updated
+  to state this explicitly.
+  - Found live by the existing real-backup regression test, not a
+    synthetic one: a real site's own Action Scheduler data (used by
+    WooCommerce and many other plugins) stores a serialized object
+    whose class isn't loaded at this point in a restore; the first
+    version of this feature crashed the entire migration trying to
+    write a property on PHP's safe `__PHP_Incomplete_Class` stand-in
+    for it, which PHP forbids outright. Fixed with
+    `allowed_classes => false` on every `unserialize()` call (makes
+    that stand-in the guaranteed outcome regardless of which classes
+    happen to be loaded at that moment) and by never writing to one --
+    it survives unchanged instead.
+  Pending security audit sign-off before this is considered
+  shippable.
+
 ## [1.1.0] — 2026-10-20 — Phase 2
 
 ### Added

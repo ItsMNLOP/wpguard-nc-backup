@@ -20,7 +20,12 @@ if ( ! defined( 'ABSPATH' ) ) {
  * not a backup this job produces.
  *
  * Steps: restore_acquire -> restore_preflight -> restore_apply_db ->
- * restore_apply_files -> restore_swap -> done (status verified|failed).
+ * restore_migrate_urls -> restore_apply_files -> restore_swap -> done
+ * (status verified|failed). restore_migrate_urls (Phase 2.5) is a no-op
+ * unless the admin confirmed a home_url mismatch at preflight -- doing
+ * so means migration, not merely "proceed anyway": every URL in the
+ * backup gets rewritten to this site's own address before anything is
+ * promoted live. See DB_Migrator and docs/operations.md.
  *
  * Two-phase design (advisor consult, 2026-10-20): restore_acquire and
  * restore_preflight are entirely read-only with respect to the live
@@ -283,6 +288,8 @@ class Restore_Orchestrator {
 					return self::step_preflight( $job );
 				case 'restore_apply_db':
 					return self::step_apply_db( $job );
+				case 'restore_migrate_urls':
+					return self::step_migrate_urls( $job );
 				case 'restore_apply_files':
 					return self::step_apply_files( $job );
 				case 'restore_swap':
@@ -306,7 +313,7 @@ class Restore_Orchestrator {
 	 * actively misleading here.
 	 */
 	public static function reap_stale( array $job ): ?array {
-		$destructive = in_array( $job['step'], array( 'restore_apply_db', 'restore_apply_files', 'restore_swap' ), true );
+		$destructive = in_array( $job['step'], array( 'restore_apply_db', 'restore_migrate_urls', 'restore_apply_files', 'restore_swap' ), true );
 		return self::fail(
 			$job['job_id'],
 			$job['step'],
@@ -342,7 +349,7 @@ class Restore_Orchestrator {
 				$job['cancel_result'] = 'already_terminal';
 				return $job;
 			}
-			$destructive = in_array( $job['step'], array( 'restore_apply_db', 'restore_apply_files', 'restore_swap' ), true );
+			$destructive = in_array( $job['step'], array( 'restore_apply_db', 'restore_migrate_urls', 'restore_apply_files', 'restore_swap' ), true );
 			$job = self::fail(
 				$job_id,
 				$job['step'],
@@ -689,9 +696,20 @@ class Restore_Orchestrator {
 			return self::fail(
 				$job_id,
 				'restore_preflight',
-				"This backup was taken from {$source_home}, but this site is {$current_home}. Restoring it here would overwrite this site's content with a different site's. If this is intentional, re-run with explicit confirmation of the mismatch."
+				"This backup was taken from {$source_home}, but this site is {$current_home}. Restoring it here would overwrite this site's content with a different site's. If this is intentional, re-run with explicit confirmation of the mismatch -- doing so migrates every URL in the backup to this site's own address."
 			);
 		}
+		// Phase 2.5 (migration on restore): confirming the mismatch above
+		// means migration, not merely "I know, proceed anyway" -- every
+		// occurrence of the backup's own home_url gets rewritten to this
+		// site's, serialization-safe, before anything is promoted live.
+		// A no-op (empty pairs) whenever there's nothing to migrate, which
+		// covers both the ordinary same-site restore and a same-URL
+		// different-install restore (e.g. a fresh install at the same,
+		// now-dead domain the backup came from) -- see docs/operations.md.
+		$cp['migrate_pairs'] = ! empty( $cp['confirm_url_mismatch'] )
+			? DB_Migrator::replace_pairs_for( $source_home, $current_home )
+			: array();
 
 		$source_wp_version = $manifest['source']['wp_version'] ?? '';
 		$current_wp_version = get_bloginfo( 'version' );
@@ -923,6 +941,78 @@ class Restore_Orchestrator {
 
 		if ( $cp['db_statements_cursor'] >= count( $statements ) ) {
 			self::log( $job_id, 'restore_apply_db', 'info', 'Database staged into shadow tables and verified importable.' );
+			Job_Store::update( $job_id, array( 'step' => 'restore_migrate_urls', 'checkpoint' => $cp ) );
+			return Job_Store::get( $job_id );
+		}
+		return Job_Store::get( $job_id );
+	}
+
+	// ------------------------------------------------------------------
+	// Step: restore_migrate_urls -- Phase 2.5. Still entirely against
+	// the shadow-prefixed tables, still before restore_swap; a failure
+	// here leaves the live site exactly as untouched as a failure in
+	// restore_apply_db would. A no-op in the ordinary case (empty
+	// migrate_pairs from preflight).
+	// ------------------------------------------------------------------
+
+	private static function step_migrate_urls( array $job ): array {
+		$job_id = $job['job_id'];
+		$cp = $job['checkpoint'];
+
+		if ( empty( $cp['migrate_pairs'] ) ) {
+			Job_Store::update( $job_id, array( 'step' => 'restore_apply_files' ) );
+			return Job_Store::get( $job_id );
+		}
+
+		if ( ! isset( $cp['migrate_table_cursor'] ) ) {
+			$targets = DB_Migrator::discover_targets( $cp['shadow_prefix'] );
+			self::write_blob( $job_id, 'migrate_targets', $targets );
+			$cp['migrate_table_cursor'] = 0;
+			$cp['migrate_pk_cursor'] = null;
+			$cp['migrate_rows_changed'] = 0;
+			$persisted = Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+			if ( ! $persisted ) {
+				return self::fail( $job_id, 'restore_migrate_urls', 'Could not persist job progress (checkpoint write failed) -- stopping before migrating anything.' );
+			}
+			return Job_Store::get( $job_id );
+		}
+
+		$targets = self::read_blob( $job_id, 'migrate_targets' ) ?? array();
+		$deadline = microtime( true ) + self::STEP_TIME_BUDGET_SECONDS;
+		while ( $cp['migrate_table_cursor'] < count( $targets ) && microtime( true ) < $deadline ) {
+			$target = $targets[ $cp['migrate_table_cursor'] ];
+			if ( null === $target['pk'] ) {
+				// No usable single-column primary key -- skip rather than
+				// risk targeting the wrong row with an ambiguous WHERE.
+				self::log( $job_id, 'restore_migrate_urls', 'info', "Skipped {$target['table']}: no single-column primary key, so URL occurrences there (if any) were not migrated." );
+				$cp['migrate_table_cursor']++;
+				$cp['migrate_pk_cursor'] = null;
+				continue;
+			}
+			$result = DB_Migrator::migrate_table_batch(
+				$target['table'], $target['columns'], $target['pk'],
+				$cp['migrate_pk_cursor'], $cp['migrate_pairs'], $deadline
+			);
+			$cp['migrate_rows_changed'] += $result['changed'];
+			if ( null === $result['last_pk'] ) {
+				$cp['migrate_table_cursor']++;
+				$cp['migrate_pk_cursor'] = null;
+			} else {
+				$cp['migrate_pk_cursor'] = $result['last_pk'];
+			}
+			// Idempotent by construction -- replaying this exact batch
+			// again on a stale checkpoint just finds nothing left to
+			// replace the second time, so persisting per batch (not
+			// per row) is safe, matching the cost/safety balance the
+			// rest of this job already strikes.
+			$persisted = Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+			if ( ! $persisted ) {
+				return self::fail( $job_id, 'restore_migrate_urls', 'Could not persist job progress (checkpoint write failed) -- stopping rather than lose track of how far migration got.' );
+			}
+		}
+
+		if ( $cp['migrate_table_cursor'] >= count( $targets ) ) {
+			self::log( $job_id, 'restore_migrate_urls', 'info', sprintf( 'Migration complete: %d row(s) updated across %d table(s).', $cp['migrate_rows_changed'], count( $targets ) ) );
 			Job_Store::update( $job_id, array( 'step' => 'restore_apply_files', 'checkpoint' => $cp ) );
 			return Job_Store::get( $job_id );
 		}

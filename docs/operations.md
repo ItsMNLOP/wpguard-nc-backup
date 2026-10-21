@@ -338,6 +338,60 @@ dump's own `wp_options` table (which only ever excludes the single
 `Settings::OPTION_KEY` row, nothing else plugin-related) would
 silently replace them wholesale.
 
+**Checking "this backup is from a different site" means migration,
+not merely "proceed anyway" (Phase 2.5, 2026-10-21).** Earlier in
+Phase 2, that checkbox only suppressed the `home_url` mismatch refusal
+below — the restored site was left thinking it was still the backup's
+original site, which meant every URL it generates for itself (login
+redirects, form actions) pointed at the old domain, confirmed live
+during real cross-site restore testing: logging into the *new* site's
+wp-admin kept bouncing back toward the *old* site's login screen.
+Checking the box now runs a full migration step
+(`restore_migrate_urls`, `DB_Migrator`) between `restore_apply_db` and
+`restore_apply_files`: every text column of every table under the
+restore's own shadow-table prefix is scanned, and every occurrence of
+the backup's own `home_url` — both its recorded scheme and the
+opposite one, to also catch any pre-TLS-migration links the backup's
+own content might still carry — is rewritten to this site's own
+`home_url`, before anything is promoted live. A naive byte-level
+find/replace would corrupt any PHP-serialized value (widget settings,
+several core options) whose replacement text is a different length
+than the original, since a serialized string carries an explicit
+byte-length prefix a naive replace never updates — every value is
+checked for being serialized first, and if so, unserialized, walked
+recursively (replacing only string leaves/keys), and re-serialized,
+which recomputes every length prefix correctly, rather than ever
+touching the serialized bytes directly. Deliberately scoped to
+literal, scheme-qualified URL occurrences only, never a bare hostname
+— replacing a bare hostname would also mangle an unrelated plain-text
+mention of the same domain (an email address, a quoted sentence),
+which a URL occurrence never would. A table with no usable
+single-column primary key is skipped (logged, not guessed at) rather
+than risk an ambiguous `UPDATE` targeting the wrong row. A no-op
+whenever the backup's own `home_url` already matches this site's
+(the ordinary same-site restore, and restoring onto a fresh install at
+the same, now-dead domain the backup came from) — unchanged behavior,
+confirmed by the existing real-backup E2E suite staying green.
+Leaving the box unchecked, as always, restores this backup only onto
+the exact site it came from, refusing outright on any `home_url`
+mismatch. See `tests/e2e/run-e2e-restore-migration.sh`.
+
+**Found live, by the existing real-backup regression test, not a synthetic one:**
+a real site's own Action Scheduler data (used by WooCommerce and many
+other plugins) stores a serialized object (`ActionScheduler_IntervalSchedule`)
+whose class isn't loaded at this point in a restore. `unserialize()`
+safely falls back to a `__PHP_Incomplete_Class` stand-in for that --
+but PHP forbids writing a property on one outright (a fatal error),
+which the first version of this feature did anyway, crashing the
+whole migration on any real site with Action Scheduler installed.
+Fixed by calling `unserialize()` with `allowed_classes => false`
+(makes that stand-in the guaranteed outcome for every object,
+regardless of which classes happen to be loaded at this exact moment)
+and by never attempting to write to one -- it survives the migration
+completely unchanged, a narrow and documented limitation (a URL
+embedded inside such an object's own property isn't migrated) rather
+than a crash.
+
 Regression test: `tests/e2e/run-e2e-restore.sh`, run against a real
 backup from the owner's own production site (not a synthetic
 fixture), restored in place onto a disposable WordPress install with

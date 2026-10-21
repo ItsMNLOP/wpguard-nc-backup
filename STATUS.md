@@ -1,5 +1,81 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## Phase 2.5 — migration on restore, in progress, 2026-10-21
+
+Promoted out of the Phase 3 candidates list below (was originally a
+narrower "host-rewrite" idea) after real cross-site restore testing
+surfaced the actual problem directly: with only the earlier
+scheme-only fix in place, a backup restored onto a different domain
+left that domain's wp-admin bouncing every login attempt back toward
+the *old* site, since the restored site's own `home_url` still said
+the old domain. The owner's own framing, which this is built to:
+checking "this backup is from a different site" should mean
+migration, not a half-state — the new site's URL becomes the truth,
+and every URL the backup carries gets corrected to match. Targeting
+v1.2.0.
+
+Built: `DB_Migrator` (new class) — a serialization-safe search/replace
+engine, plus a new `restore_migrate_urls` step between
+`restore_apply_db` and `restore_apply_files`, still entirely against
+the restore's own shadow tables, still before `restore_swap` promotes
+anything live. Checkbox label and help text in the admin UI rewritten
+to state the migration semantics explicitly, per the owner's request.
+Full writeup in `docs/operations.md` and `docs/threat-model.md` T20.
+
+Unit tests (13 new, `DbMigratorTest.php`) cover the two real bugs this
+work's own tests caught before anything shipped: `is_serialized_value()`
+initially checked serialized strings' closing quote against the wrong
+character position (the project's own reimplementation of WordPress
+core's `is_serialized()`, since the unit harness's lightweight WP shim
+doesn't bootstrap full core) — fixed. A second "failure" turned out to
+be the test's own wrong expectation, not a code bug: a stale
+http-scheme link to the old domain correctly canonicalizes to the new
+site's one real (https) address, not an invented http variant of the
+new domain.
+
+New `tests/e2e/run-e2e-restore-migration.sh`: seeds a synthetic "old
+site" with content engineered to exercise every real risk this feature
+exists to handle — a plain https:// link, a scheme-mismatched legacy
+http:// link to the same old domain, a URL nested inside a
+PHP-serialized widget option (where a naive replace would corrupt the
+byte-length prefix), and a bare-hostname plain-text mention (an email
+address) with no scheme prefix that must survive completely untouched.
+Backs that site up, restores it onto a genuinely different domain
+with the box checked, and asserts all of it landed correctly —
+including that wp-admin's own not-logged-in redirect stays on the new
+site and never bounces toward the old domain, and that `wp-login.php`
+actually loads.
+
+**A third, real bug — the kind only a real-backup regression test
+catches, not a synthetic fixture: the existing `run-e2e-restore.sh`
+suite (restoring the owner's own real production backup) crashed
+outright with a fatal error.** The real site's own Action Scheduler
+data (used by WooCommerce and many other plugins) stores a serialized
+object (`ActionScheduler_IntervalSchedule`) whose class isn't loaded
+at this point in a restore; `unserialize()` safely falls back to a
+`__PHP_Incomplete_Class` stand-in, but the first version of
+`replace_recursive()` then tried to WRITE a property on it anyway —
+which PHP makes a fatal error, not a catchable exception, crashing the
+entire migration on any real site with Action Scheduler (or any
+plugin storing serialized objects) installed. Fixed two ways:
+`unserialize()` now always runs with `allowed_classes => false` (the
+incomplete-class stand-in becomes the guaranteed outcome for every
+object, regardless of which classes happen to be loaded at that exact
+moment, and a real class's `__wakeup()` is never run); and the
+recursive replace explicitly detects `__PHP_Incomplete_Class` and
+returns it completely unchanged. A URL embedded inside such an
+object's own property is consequently not migrated — a narrow,
+documented limitation, not a crash. New unit test
+(`test_replace_in_scalar_incomplete_class_object_does_not_crash`,
+105/105 passing) proves this directly; `run-e2e-restore.sh` re-run
+clean afterward, and `run-e2e-restore-migration.sh` re-confirmed green
+too.
+
+All three bugs were caught by this work's own tests before anything
+shipped — exactly the point of writing them. Unit suite, both new E2E
+suites, and the full existing E2E suite all green. Pending Vex's
+security audit before this is considered shippable.
+
 ## Phase 3 candidates (not yet scoped, for later discussion)
 
 - Nextcloud-free backup: let a site with no configured Nextcloud

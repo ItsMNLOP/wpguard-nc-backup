@@ -494,7 +494,8 @@ class Admin {
 					<td>
 						<input type="text" id="wpguard_nc_restore_confirm_text" class="regular-text" placeholder="RESTORE">
 						<p class="description"><?php esc_html_e( 'Type RESTORE to enable the button below.', 'wpguard-nc-backup' ); ?></p>
-						<label><input type="checkbox" id="wpguard_nc_restore_confirm_url"> <?php esc_html_e( 'This backup is from a different site than this one, and I am deliberately restoring it here anyway', 'wpguard-nc-backup' ); ?></label>
+						<label><input type="checkbox" id="wpguard_nc_restore_confirm_url"> <?php esc_html_e( 'Migrate this backup to this site: this backup is from a different site, and I want every URL in it rewritten to this site\'s own address', 'wpguard-nc-backup' ); ?></label>
+						<p class="description"><?php esc_html_e( 'Checking this does not just skip the mismatch warning -- it rewrites every occurrence of the backup\'s own domain (in post content, widget settings, and everywhere else WordPress stores a URL) to this site\'s domain, before anything is restored live. Leave unchecked to restore this backup onto the exact site it came from.', 'wpguard-nc-backup' ); ?></p>
 					</td>
 				</tr>
 			</table>
