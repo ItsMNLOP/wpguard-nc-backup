@@ -228,16 +228,64 @@ class Admin {
 			wp_send_json_error( array( 'message' => __( 'Uploaded file is not a valid .zip archive.', 'wpguard-nc-backup' ) ) );
 			return;
 		}
+
+		// A bundle is expected flat (manifest.json, database.sql.gz,
+		// files.part-NNNN.zip directly at the zip root). In practice,
+		// the most common way an admin actually gets this file is
+		// downloading the backup_id-named folder straight from
+		// Nextcloud's own web UI, which naturally zips it WITH that
+		// folder name wrapping every entry -- found live, not
+		// theoretical. If every real (non-directory) entry shares the
+		// exact same single leading path segment, treat that segment
+		// as that wrapper and strip it before validating/extracting;
+		// anything else (no common wrapper, or a genuinely mixed/deeper
+		// layout) still refuses exactly as before.
+		$entry_names = array();
 		for ( $i = 0; $i < $zip->numFiles; $i++ ) {
 			$name = $zip->getNameIndex( $i );
 			if ( false === $name || '/' === substr( $name, -1 ) ) {
 				continue;
 			}
-			if ( ! Archive_Writer::is_path_safe( $name ) || false !== strpos( $name, '/' ) ) {
-				// Flat bundle only -- a backup_id folder's own contents,
-				// not a nested structure. Refusing anything with a
-				// directory separator at all is simpler and safer than
-				// trying to validate an arbitrary nested layout.
+			$entry_names[] = $name;
+		}
+		$wrapper = null;
+		if ( ! empty( $entry_names ) ) {
+			$all_nested = true;
+			$first_segment = null;
+			foreach ( $entry_names as $name ) {
+				$slash = strpos( $name, '/' );
+				if ( false === $slash ) {
+					$all_nested = false;
+					break;
+				}
+				$segment = substr( $name, 0, $slash );
+				if ( null === $first_segment ) {
+					$first_segment = $segment;
+				} elseif ( $segment !== $first_segment ) {
+					$all_nested = false;
+					break;
+				}
+			}
+			if ( $all_nested && null !== $first_segment && Archive_Writer::is_path_safe( $first_segment . '/x' ) ) {
+				$wrapper = $first_segment . '/';
+			}
+		}
+
+		foreach ( $entry_names as $name ) {
+			$relative = $name;
+			if ( null !== $wrapper ) {
+				if ( 0 !== strpos( $name, $wrapper ) ) {
+					// Can't happen given how $wrapper was derived above, but
+					// never extract anything outside the detected wrapper.
+					continue;
+				}
+				$relative = substr( $name, strlen( $wrapper ) );
+			}
+			if ( '' === $relative || ! Archive_Writer::is_path_safe( $relative ) || false !== strpos( $relative, '/' ) ) {
+				// Flat bundle contents only -- refusing anything with a
+				// directory separator left (after stripping at most one
+				// common wrapper above) is simpler and safer than trying
+				// to validate an arbitrary nested layout.
 				$zip->close();
 				wp_send_json_error( array( 'message' => sprintf( __( 'Refusing to extract unexpected nested path in uploaded bundle: %s', 'wpguard-nc-backup' ), $name ) ) );
 				return;
@@ -246,7 +294,7 @@ class Admin {
 			if ( false === $content ) {
 				continue;
 			}
-			file_put_contents( $holding . $name, $content );
+			file_put_contents( $holding . $relative, $content );
 		}
 		$zip->close();
 
