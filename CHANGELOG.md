@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased] — Phase 2.5, in progress
+## [1.2.0] — 2026-10-21 — Phase 2.5
 
 ### Changed
 - **One-click restore's "this backup is from a different site" checkbox
@@ -147,8 +147,16 @@ All notable changes to this project are documented here.
     first proof attempt look like a false pass), verified under a
     constrained 128MB PHP memory limit. 117/117 unit tests; both E2E
     suites re-run clean again.
-  Pending security audit sign-off before this is considered
-  shippable.
+  - Fourth re-verification (commit `288ba7e`): **CLEAR TO SHIP.** The
+    depth cap and node-visit budget together form a complete
+    two-dimensional bound on PHP serialization amplification -- depth
+    bounds any single root-to-leaf path (circular references), the
+    node budget bounds total node visits regardless of path length
+    (shared-reference DAGs). Confirmed across DAG depths 18-50, all
+    correctly aborted well short of memory exhaustion; confirmed the
+    budget resets cleanly between independent calls; a dedicated
+    search for a third distinct amplification vector found none.
+  Migration on restore is shippable.
 
 ## [1.1.0] — 2026-10-20 — Phase 2
 

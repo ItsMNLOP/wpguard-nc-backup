@@ -4,7 +4,7 @@ Tags: backup, nextcloud, webdav, restore, disaster-recovery
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.1.0
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -30,6 +30,9 @@ A backup is never reported successful until every uploaded component has been re
 5. Click Back Up Now.
 
 == Changelog ==
+
+= 1.2.0 =
+Phase 2.5 release: checking "this backup is from a different site" on restore now means migration, not just "proceed anyway" — every URL in the backup (including inside PHP-serialized data) is rewritten to match this site's own address before anything is restored live, so logging into the restored site actually works. Four rounds of independent security audit findings, all fixed and re-verified, including two distinct PHP serialization-amplification attack shapes found via live adversarial testing against real production backup data. See this project's STATUS.md and docs/threat-model.md for the full history.
 
 = 1.1.0 =
 Phase 2 release: automatic stale-lock recovery, scheduled (daily/weekly) backups, retention pruning, incremental file backups, a self-hosted update feed via GitHub Releases, and one-click in-place restore (from either the configured Nextcloud destination or an uploaded backup bundle). Every feature went through an independent security audit, fixes applied, and re-verification before shipping — see this project's STATUS.md and docs/threat-model.md for the full history. Verified against real production WordPress/Nextcloud data throughout, including full real restores with 2FA state intact.

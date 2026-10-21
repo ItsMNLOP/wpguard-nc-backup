@@ -231,7 +231,31 @@ and confirms the result is unchanged, verified under a constrained
 128MB PHP memory limit to prove the budget genuinely aborts before
 exhausting it rather than merely running fast enough not to notice —
 117/117 unit tests passing. Both E2E suites re-run clean again.
-Re-dispatched for a fourth re-verification.
+**Fourth re-verification (commit `288ba7e`): CLEAR TO SHIP.** The
+depth cap and node-visit budget together form a complete
+two-dimensional bound on PHP serialization amplification — depth caps
+any single root-to-leaf path (circular references), the node budget
+caps total node visits regardless of path length (shared-reference
+DAGs). Confirmed across DAG depths 18/20/25/30/50 (all correctly
+aborted well short of memory exhaustion at every depth), confirmed
+the budget resets cleanly between independent top-level calls (no
+cross-contamination across `migrate_table_batch()`'s per-row loop),
+and a dedicated search for a third distinct amplification vector
+found none — a wide-but-shallow flat array costs strictly linear
+work in input size, not amplification, and isn't a vulnerability in
+this class.
+
+**Migration on restore is shippable.** Four rounds of audit findings,
+all real, all fixed, all re-verified: the original scope gap (box
+meant "proceed anyway" instead of migration), a real crash against
+real production Action Scheduler data, a boundary-overmatch bug, an
+idempotency bug (plus the regression introduced fixing it), a
+double-serialization corruption bug, and two distinct PHP
+serialization-amplification attack shapes (circular references, then
+shared-reference DAGs). Every one caught by this project's own
+build-test-audit-fix-reverify discipline before shipping, several of
+them the kind only real production data or genuinely adversarial
+probing ever surfaces. Proceeding to cut v1.2.0.
 
 ## Phase 3 candidates (not yet scoped, for later discussion)
 
