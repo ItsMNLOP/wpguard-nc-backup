@@ -1,14 +1,20 @@
 # WPGuard Nextcloud Backup
 
+[![CI](https://github.com/ItsMNLOP/wpguard-nc-backup/actions/workflows/ci.yml/badge.svg)](https://github.com/ItsMNLOP/wpguard-nc-backup/actions/workflows/ci.yml)
+
 A WordPress plugin that backs up your site's database and files to a
 Nextcloud server you control, over authenticated HTTPS WebDAV — with
 read-back SHA-256 verification on every component before anything is
 ever reported as a successful backup.
 
-**Status:** v1.0.0, Phase 1 (MVP). Manual, on-demand backups and a
-manual restore procedure. Independently security-reviewed (see
-`docs/threat-model.md`). Scheduling, retention, one-click restore, and
-multisite are Phase 2 — see `CHANGELOG.md` for the full roadmap.
+**Status:** v1.2.0, Phase 2.5. Manual or scheduled backups, retention
+pruning, incremental file backups, one-click in-place restore (from
+either the configured Nextcloud destination or an uploaded backup
+bundle), and cross-site restore with automatic URL migration. Every
+feature has gone through independent security audit, fixes, and
+re-verification before shipping — see `docs/threat-model.md` and
+`CHANGELOG.md` for the full history. Multisite is not yet supported
+(backlogged — see `STATUS.md`).
 
 ## Why this exists
 
@@ -22,8 +28,9 @@ security model.
 
 ## Features
 
-- Manual, on-demand backup of the WordPress database and `wp-content`
-  to a self-hosted or any Nextcloud instance you control.
+- Manual or scheduled (daily/weekly) backup of the WordPress database
+  and `wp-content` to a self-hosted or any Nextcloud instance you
+  control, with retention pruning and opt-in incremental file backups.
 - Authenticated HTTPS WebDAV transport — no plaintext credentials, no
   TLS verification bypass; supports a custom CA bundle for self-signed
   or private-CA Nextcloud deployments.
@@ -31,11 +38,19 @@ security model.
   backup is ever marked complete.
 - Versioned manifest format (`docs/backup-format.md`) for forward
   compatibility.
-- Non-blocking, resumable job runner — a backup checkpoints its
-  progress and can resume rather than restart after an interruption.
+- Non-blocking, resumable job runner — a backup (or restore)
+  checkpoints its progress and can resume rather than restart after an
+  interruption, including automatic stale-lock recovery and a WP-Cron
+  fallback so a closed browser tab doesn't strand a job.
+- One-click in-place restore, from either the configured Nextcloud
+  destination or an uploaded backup bundle. Restoring a backup from a
+  different site can migrate every URL it contains (including inside
+  PHP-serialized data) to this site's own address, so the restored
+  site actually works — see `docs/operations.md`.
+- Self-hosted update feed via GitHub Releases — no wordpress.org
+  listing required.
 - Admin UI with live job status/log, plus a WP-CLI command
   (`wp wpguard-nc-backup run` / `status`).
-- Documented, tested restore procedure (`docs/restore-manual.md`).
 
 ## Requirements
 
@@ -56,8 +71,14 @@ security model.
    password, and a destination folder.
 5. Click **Test Connection**, then **Back Up Now**.
 
-See `plugin/wpguard-nc-backup/readme.txt` for the WordPress.org-style
-plugin readme, and `docs/restore-manual.md` for how to restore a backup.
+Restoring is one-click from the same settings page, from either the
+configured Nextcloud destination or an uploaded backup bundle — check
+"this backup is from a different site" if the backup came from
+somewhere other than this exact site/domain, which also migrates every
+URL it contains to this site's own address. See
+`plugin/wpguard-nc-backup/readme.txt` for the WordPress.org-style
+plugin readme, and `docs/restore-manual.md` for the manual (non-UI)
+restore procedure, kept as a documented fallback.
 
 ## Repo layout
 
@@ -103,8 +124,10 @@ instead — that's also what `package.ps1`'s own smoke test does.
 - `docs/adr/` — numbered architectural decision records.
 - `docs/threat-model.md` — STRIDE-style threat model and residual risks.
 - `docs/backup-format.md` — manifest schema, remote layout, compatibility policy.
-- `docs/restore-manual.md` — the current (manual) restore procedure.
-- `docs/maintenance.md`, `docs/operations.md`, `docs/test-matrix.md` — ongoing-support docs.
+- `docs/restore-manual.md` — the manual (non-UI) restore procedure, kept as a fallback.
+- `docs/operations.md` — what each admin-facing setting/checkbox actually does, including restore migration semantics.
+- `docs/maintenance.md`, `docs/test-matrix.md` — ongoing-support docs.
+- `docs/releasing.md` — how a version is cut and published to GitHub Releases.
 
 ## Security
 
