@@ -113,3 +113,33 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose -p wpguard-test -f docker/docker-compose.yml down -v
+
+  release:
+    # Phase 2 item 10 (CI bash port, release-zip half): builds and attaches
+    # the plugin-only zip Update_Checker looks for (see docs/releasing.md).
+    # Gated on the same tag-build steps every push already runs, so a
+    # broken build/test can never produce a release asset.
+    needs: [php-syntax-and-style, unit-tests, integration-and-restore-e2e]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build plugin-only zip from the tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          git archive --format=zip --prefix=wpguard-nc-backup/ "$TAG:plugin/wpguard-nc-backup" -o "wpguard-nc-backup-${VERSION}.zip"
+      - name: Attach to the GitHub Release for this tag
+        uses: softprops/action-gh-release@v2
+        with:
+          files: wpguard-nc-backup-*.zip
+          # A tag with a `-` suffix (e.g. v1.2.1-rc1) is marked prerelease,
+          # which Update_Checker's /releases/latest query never returns --
+          # this is how a real tag push can be tested without any live
+          # site ever being offered it.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true

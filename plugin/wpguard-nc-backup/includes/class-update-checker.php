@@ -12,10 +12,9 @@ namespace WPGuard\NCBackup;
  * whole repo (docs/, tests/, .github/, etc.), not just the plugin
  * folder, so it is never used as an install package. An update is only
  * ever offered when the release has an explicit `.zip` asset — built
- * and attached by hand at release time (see docs/releasing.md) until
- * the CI bash port (Phase 2, item 10) can build and attach it
- * automatically. No asset means no update offered, not a fallback to
- * the wrong package.
+ * and attached automatically by CI on a `v*` tag push (see
+ * docs/releasing.md), with a manual fallback if CI is unavailable. No
+ * asset means no update offered, not a fallback to the wrong package.
  */
 class Update_Checker {
 	const GITHUB_REPO = 'ItsMNLOP/wpguard-nc-backup';
