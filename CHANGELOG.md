@@ -2,6 +2,50 @@
 
 All notable changes to this project are documented here.
 
+## [1.3.0] — 2026-10-22 — Phase 3
+
+### Added
+- **WPGuard top-level admin menu.** The admin UI moved from
+  Settings > Nextcloud Backup to a shared top-level WPGuard menu
+  (idempotent shared-parent pattern), so future WPGuard-family plugins
+  land as submenus rather than collecting under Settings or each
+  getting their own top-level entry.
+- **"Download Now" — a second, independent backup destination.**
+  Packages a backup into a flat zip and serves it to the admin's
+  browser instead of uploading it, always available regardless of
+  whether Nextcloud is configured. Cap-at-one pending bundle, 24h TTL
+  sweep, explicit delete, plugin-deactivation purge. Restores through
+  the existing upload-restore path with zero new restore code.
+  Security audit: BLOCKED (4 MEDIUM, 5 LOW) -> fixed -> BLOCKED again
+  (1 new MEDIUM, 2 LOW) -> fixed -> CLEAR TO SHIP. Full detail:
+  `docs/threat-model.md` T21.
+- **Multi-backend support (ownCloud, OpenCloud).** Generalizes the
+  backup destination from Nextcloud-only to any server speaking the
+  same WebDAV dialect — `Nextcloud_Client` needed zero code changes.
+  Verified live against real disposable ownCloud 10.15 and OpenCloud
+  7.2.4 instances: connection, full/incremental backup, chain-aware
+  retention, restore with URL migration, and a multi-part
+  upload/download round-trip with SHA-256 byte-identity confirmed.
+  Security audit: CLEAR TO SHIP, zero findings. Full detail:
+  `docs/threat-model.md` T22.
+- **WP-CLI parity for both of the above.** `run --destination=download`
+  and a new `restore_local <path-to-zip>` command close the gap where
+  WP-CLI hard-required Nextcloud credentials unconditionally, with no
+  counterpart to the admin UI's credential-free routes. `restore_local`
+  shares its zip-extraction logic with the browser upload-restore path
+  (`Restore_Orchestrator::extract_bundle_zip()`) rather than a second
+  copy of this path-safety-critical code. Security audit: CLEAR TO
+  SHIP, one LOW (orphaned holding directory on lock contention) found
+  and fixed same-day. Full detail: `docs/threat-model.md` T23.
+
+### Fixed
+- CI is now connected and executing on every push (confirmed via
+  `gh run list`); the long-standing "written, never executed" claim in
+  `AGENTS.md`/`SECURITY.md`/`docs/test-matrix.md` was stale and is
+  corrected. A `release` job now auto-builds and attaches the plugin
+  zip to a GitHub Release on a `v*` tag push, replacing the fully
+  manual process `docs/releasing.md` previously required.
+
 ## [1.2.0] — 2026-10-21 — Phase 2.5
 
 ### Changed

@@ -4,7 +4,7 @@ Tags: backup, nextcloud, webdav, restore, disaster-recovery
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -30,6 +30,9 @@ A backup is never reported successful until every uploaded component has been re
 5. Click Back Up Now.
 
 == Changelog ==
+
+= 1.3.0 =
+Phase 3 release: a shared top-level WPGuard admin menu (future WPGuard-family plugins land as submenus); "Download Now" — a second, independent backup destination that packages a backup into a flat zip and serves it to your browser, with zero Nextcloud dependency; multi-backend support (ownCloud, OpenCloud, anything speaking the same WebDAV dialect, alongside Nextcloud); and WP-CLI parity for both of the above (`run --destination=download`, `restore_local`). Every feature went through an independent security audit, fixes applied, and re-verification before shipping — see this project's STATUS.md and docs/threat-model.md (T21–T23) for the full history.
 
 = 1.2.0 =
 Phase 2.5 release: checking "this backup is from a different site" on restore now means migration, not just "proceed anyway" — every URL in the backup (including inside PHP-serialized data) is rewritten to match this site's own address before anything is restored live, so logging into the restored site actually works. Four rounds of independent security audit findings, all fixed and re-verified, including two distinct PHP serialization-amplification attack shapes found via live adversarial testing against real production backup data. See this project's STATUS.md and docs/threat-model.md for the full history.
