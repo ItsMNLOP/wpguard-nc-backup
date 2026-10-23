@@ -66,6 +66,43 @@ if ( ! function_exists( 'update_option' ) ) {
 		return true;
 	}
 }
+// security audit finding M-01 (2026-10-23, ADR 0010 chunked upload):
+// supports_chunked_upload_v2() had zero test coverage before the bug
+// that let it through (misclassifying a probe's HTTP 405 as
+// "supported") -- this minimal HTTP mock is what closes that gap.
+// Scripted via $GLOBALS['__wpguard_test_http_responses'] (a queue: each
+// call to wp_remote_request() shifts one entry off; an empty queue
+// defaults to a 200 with no body rather than erroring, so tests that
+// don't care about the HTTP layer at all are unaffected). Every call
+// is also recorded into $GLOBALS['__wpguard_test_http_calls'] for
+// assertions about what was actually requested (method/url).
+$GLOBALS['__wpguard_test_http_responses'] = array();
+$GLOBALS['__wpguard_test_http_calls'] = array();
+if ( ! function_exists( 'wp_remote_request' ) ) {
+	function wp_remote_request( $url, $args = array() ) {
+		$GLOBALS['__wpguard_test_http_calls'][] = array( 'method' => $args['method'] ?? 'GET', 'url' => $url );
+		if ( empty( $GLOBALS['__wpguard_test_http_responses'] ) ) {
+			return array( 'response' => array( 'code' => 200 ), 'body' => '' );
+		}
+		return array_shift( $GLOBALS['__wpguard_test_http_responses'] );
+	}
+}
+if ( ! function_exists( 'wp_remote_retrieve_response_code' ) ) {
+	function wp_remote_retrieve_response_code( $response ) {
+		if ( is_wp_error( $response ) ) {
+			return '';
+		}
+		return $response['response']['code'] ?? 0;
+	}
+}
+if ( ! function_exists( 'wp_remote_retrieve_body' ) ) {
+	function wp_remote_retrieve_body( $response ) {
+		if ( is_wp_error( $response ) ) {
+			return '';
+		}
+		return $response['body'] ?? '';
+	}
+}
 if ( ! function_exists( 'get_transient' ) ) {
 	function get_transient( $key ) {
 		return $GLOBALS['__wpguard_test_transients'][ $key ] ?? false;

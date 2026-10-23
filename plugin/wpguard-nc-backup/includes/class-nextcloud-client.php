@@ -388,6 +388,18 @@ class Nextcloud_Client {
 	 * live (2026-10-22, ADR 0010): Nextcloud 34 and ownCloud 10.15
 	 * support this identically; OpenCloud 7.2.4 returns 404 on this
 	 * exact MKCOL -- not assumed, tested directly against all three.
+	 *
+	 * security audit finding M-01 (2026-10-23): the probe uses a FRESH
+	 * random ID every time, which cannot already exist on the server --
+	 * so unlike put_file_chunked()'s own MKCOL (where 405 correctly
+	 * means "this deterministic session already exists, resume it"), a
+	 * 405 here can only mean the server doesn't allow MKCOL on this
+	 * collection at all. Treating it as "supported" (proven live:
+	 * cached "yes" for a full day, every real upload attempt then fails
+	 * trying to use a transport the server doesn't actually offer)
+	 * directly contradicted this method's own claim of working
+	 * correctly against a server this plugin has never been tested
+	 * against. Only 201 means supported.
 	 */
 	public function supports_chunked_upload_v2(): bool {
 		$cache_key = 'wpguard_nc_chunk_v2_support_' . md5( $this->base_url );
@@ -397,7 +409,7 @@ class Nextcloud_Client {
 		}
 		$probe_id = 'probe-' . bin2hex( random_bytes( 8 ) );
 		$mk = $this->request( 'MKCOL', $this->upload_session_url( $probe_id ) );
-		$supported = ! is_wp_error( $mk ) && in_array( wp_remote_retrieve_response_code( $mk ), array( 201, 405 ), true );
+		$supported = ! is_wp_error( $mk ) && 201 === wp_remote_retrieve_response_code( $mk );
 		if ( $supported ) {
 			$this->request( 'DELETE', $this->upload_session_url( $probe_id ) );
 		}
@@ -512,6 +524,16 @@ class Nextcloud_Client {
 			'MOVE',
 			$this->upload_session_url( $upload_id, '.file' ),
 			array(
+				// security audit finding L-02 (2026-10-23): the default
+				// 30s timeout could fire before the server finishes
+				// assembling a large number of chunks server-side (a
+				// multi-hundred-MB database.sql.gz, say); request()'s
+				// own retry on timeout can then hit the session the
+				// server already finished assembling and auto-removed,
+				// surfacing a spurious 404 instead of the real success.
+				// Matches download_to_file()'s timeout for a similarly
+				// large server-side operation.
+				'timeout' => 300,
 				'headers' => array(
 					'Destination'     => $this->url_for( $relative_path ),
 					'OC-Total-Length' => (string) $total_size,

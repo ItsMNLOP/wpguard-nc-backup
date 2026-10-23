@@ -102,12 +102,25 @@ everything and got lucky."
   resumability, it does not change how large a part is allowed to be.
 - An abandoned job's in-progress upload session (chunks PUT, never
   `MOVE`d because the job was cancelled or failed before retrying) is
-  **not proactively cleaned up** server-side. Accepted, not fixed, for
-  the same reason `ADR 0004`'s own accepted gaps are accepted: bounded
-  in size (at most one part's worth of chunks per abandoned job), and a
-  real Nextcloud/ownCloud deployment already runs its own background
-  stale-upload garbage collection. A future session should verify this
-  periodically rather than build dedicated cleanup plumbing now.
+  **not proactively cleaned up** server-side. Accepted, not fixed --
+  but the original framing of this acceptance (security audit finding
+  L-01, 2026-10-23) understated it: `upload_part()` applies to
+  `database.sql.gz` too, which has no `PART_SIZE_BYTES` cap, so the
+  real bound is "the size of whichever single item was being uploaded
+  when the job died," not "one part." Confirmed live this doesn't
+  count against server-side quota on either Nextcloud or ownCloud (a
+  planted orphan session produced zero `quota_used` delta on both), so
+  a 507 from accumulated orphans is ruled out. Cleanup differs by
+  server, also confirmed live: Nextcloud 34 ships a daily
+  `UploadCleanup` background job (`cache_chunk_gc_ttl`, default 24h)
+  that reaps stale sessions automatically; ownCloud 10.15 has no
+  equivalent registered job, only the manual `occ dav:cleanup-chunks`
+  -- an ownCloud deployment accumulates orphaned chunks indefinitely
+  without an operator running that by hand periodically. The
+  acceptance itself still holds (no quota impact, no external attacker
+  surface, bounded by one item per failed job), but this needs a human
+  operator action on ownCloud specifically, not just "a future session
+  should verify periodically."
 - `Nextcloud_Client` stays the only class that knows WebDAV specifics
   (MNT-03) — `Job_Orchestrator` calls one method
   (`upload_part( $local_path, $relative_path, $upload_id )`) and never

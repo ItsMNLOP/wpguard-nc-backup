@@ -100,6 +100,14 @@ already has rather than re-sending the whole part. OpenCloud doesn't
 support this dialect (confirmed live, not assumed) and always uses a
 single whole-part PUT instead; this is automatic, not a setting.
 
+A job that's cancelled or fails mid-upload can leave an orphaned
+chunked-upload session on the server (confirmed live: doesn't count
+against storage quota on either server). Nextcloud cleans these up on
+its own, automatically, once a day. **ownCloud does not** — if you're
+using ownCloud as the destination, periodically run
+`occ dav:cleanup-chunks` on it (an operator action, not something this
+plugin can trigger remotely).
+
 ## Logs
 
 Per-job structured log (last 200 entries), redacted at write time

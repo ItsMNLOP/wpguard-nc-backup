@@ -1,6 +1,6 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
-## WebDAV chunking v2 (TRN-04, the last Phase 2 item), built, awaiting security audit, 2026-10-22
+## WebDAV chunking v2 (TRN-04, the last Phase 2 item), CLEAR TO SHIP, 2026-10-23
 
 The last unstarted Phase 2 hardening item. Real protocol tested live
 against all three verified backends before any code was written:
@@ -35,7 +35,34 @@ a `.env` table-prefix), fixed with the same capture-and-restore trap
 pattern, both green on retry. Full detail: `docs/adr/0010-webdav-
 chunking-v2-resumable-upload.md`, `docs/threat-model.md` T24.
 
-**Not yet shippable**: sent to the security audit; not self-certified.
+**Vex security audit: initially BLOCKED, one MEDIUM (M-01), two LOW
+(L-01, L-02), all fixed same-day.** M-01: the capability probe treated
+HTTP 405 the same as 201 ("supported") -- proven live via a mocked
+405 that a fresh-random-session probe getting 405 can only mean the
+server refuses MKCOL entirely (dormant against all three tested
+backends, but broke the probe's own "works against an unknown future
+server" claim -- a false "yes" would cache for a day, failing every
+backup with a file over 8 MiB repeatedly). Fixed: only 201 means
+supported. L-01: this entry's own "bounded to one part" framing was
+wrong (database dumps have no part-size cap) and "real deployments
+already run their own GC" was only true for Nextcloud, not ownCloud --
+corrected here and in the ADR, plus a new ownCloud operator-action
+note in docs/operations.md (`occ dav:cleanup-chunks`). L-02: the
+chunk-assembly MOVE used a 30s timeout, too short for a very large
+database dump; fixed to 300s, matching download_to_file()'s own
+timeout for a similarly large operation. 148 -> 153 unit tests (the
+405 bug had zero test coverage before -- closed with a new minimal
+wp_remote_request() mock in tests/unit/wp-shim.php). Full regression
+re-run green after the fixes. Full detail: `docs/threat-model.md` T24.
+
+Also found and fixed, pure test-infra, unrelated to the feature: this
+session's own disposable `wp_wpguard_nc_jobs` table had accumulated
+~19MB of job-history checkpoint data over a very long day of testing
+across many features, exceeding wp-restore's 16MB
+`max_allowed_packet` and breaking `run-e2e.sh`'s restore-import step
+with "Server has gone away." Fixed by truncating that disposable
+table (job history only, not real backup data) -- not a recurring
+product concern, just this session's own accumulated test cruft.
 
 ## WP-CLI credential-free paths, CLEAR TO SHIP, 2026-10-22
 
