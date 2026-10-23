@@ -41,8 +41,28 @@ class Admin {
 	 */
 	const FAMILY_PARENT_SLUG = 'wpguard';
 
+	/**
+	 * Phase 4 (family hub landing page): the contract any WPGuard-family
+	 * plugin hooks into to appear on the shared parent page's status
+	 * grid. A card is a plain associative array:
+	 *   slug         string  unique across the family (this plugin's: 'nc-backup')
+	 *   title        string  plain text, no markup
+	 *   icon         string  a 'dashicons-*' class name
+	 *   status_class string  one of 'ok' | 'warn' | 'error' | 'neutral'
+	 *   status_label string  plain text, no markup (e.g. "Backup verified")
+	 *   detail       string  plain text, no markup (e.g. "2 hours ago")
+	 *   url          string  this plugin's own settings page URL
+	 * Every field is treated as plain text and escaped on render
+	 * (esc_html/esc_url/a dashicons-class allowlist) -- a sibling
+	 * WPGuard plugin's bug is still foreign input to this one once it
+	 * crosses the filter, same as any other untrusted string this
+	 * codebase renders.
+	 */
+	const STATUS_CARDS_FILTER = 'wpguard_family_status_cards';
+
 	public function register(): void {
 		add_action( 'admin_menu', array( $this, 'add_menu' ) );
+		add_filter( self::STATUS_CARDS_FILTER, array( $this, 'add_own_status_card' ) );
 		add_action( 'wp_ajax_wpguard_nc_save_settings', array( $this, 'ajax_save_settings' ) );
 		add_action( 'wp_ajax_wpguard_nc_test_connection', array( $this, 'ajax_test_connection' ) );
 		add_action( 'wp_ajax_wpguard_nc_start_backup', array( $this, 'ajax_start_backup' ) );
@@ -76,22 +96,154 @@ class Admin {
 				__( 'WPGuard', 'wpguard-nc-backup' ),
 				'manage_options',
 				self::FAMILY_PARENT_SLUG,
-				'',
+				// Phase 4: this used to be '' (no callback), so clicking the
+				// parent menu item itself 404'd -- WP only auto-adds a
+				// submenu matching the parent slug for a landing page, and
+				// nothing rendered one. Whichever WPGuard plugin's
+				// admin_menu callback runs first now owns the real family
+				// hub page instead of a dead link, same "first one wins"
+				// rule already governing who creates the parent at all.
+				array( $this, 'render_family_hub' ),
 				'dashicons-shield'
 			);
 			// WP auto-adds a submenu item duplicating the parent label/slug;
-			// no WPGuard plugin owns a real page there, so drop it rather
-			// than leave a dead link.
+			// render_family_hub() above is that page now, so this just
+			// removes the duplicate auto-added entry from the submenu list
+			// (the page itself still renders via the parent's own callback).
 			remove_submenu_page( self::FAMILY_PARENT_SLUG, self::FAMILY_PARENT_SLUG );
 		}
 		add_submenu_page(
 			self::FAMILY_PARENT_SLUG,
-			__( 'WPGuard Nextcloud Backup', 'wpguard-nc-backup' ),
-			__( 'Nextcloud Backup', 'wpguard-nc-backup' ),
+			__( 'WPGuard Backup and Restore', 'wpguard-nc-backup' ),
+			__( 'Backup and Restore', 'wpguard-nc-backup' ),
 			'manage_options',
 			'wpguard-nc-backup',
 			array( $this, 'render_page' )
 		);
+	}
+
+	/**
+	 * The family hub landing page (top-level "WPGuard" click target).
+	 * Renders a status card per installed WPGuard plugin, gathered via
+	 * self::STATUS_CARDS_FILTER -- see that constant's docblock for the
+	 * card contract. Every field from a card is treated as untrusted
+	 * plain text regardless of origin (this plugin's own card included),
+	 * same escaping discipline as render_page() below.
+	 */
+	public function render_family_hub(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		$cards = apply_filters( self::STATUS_CARDS_FILTER, array() );
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( 'WPGuard', 'wpguard-nc-backup' ); ?></h1>
+			<p><?php esc_html_e( 'A home base for every WPGuard plugin on this site. Each one below reports its own status; open a card to manage that plugin.', 'wpguard-nc-backup' ); ?></p>
+
+			<?php if ( empty( $cards ) ) : ?>
+				<p><em><?php esc_html_e( 'No WPGuard plugins reported a status card.', 'wpguard-nc-backup' ); ?></em></p>
+			<?php else : ?>
+				<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:16px;">
+					<?php foreach ( $cards as $card ) : ?>
+						<?php
+						$card        = wp_parse_args(
+							$card,
+							array(
+								'slug'         => '',
+								'title'        => __( '(untitled)', 'wpguard-nc-backup' ),
+								'icon'         => 'dashicons-admin-generic',
+								'status_class' => 'neutral',
+								'status_label' => '',
+								'detail'       => '',
+								'url'          => '',
+							)
+						);
+						$status_colors = array(
+							'ok'      => '#46b450',
+							'warn'    => '#ffb900',
+							'error'   => '#dc3232',
+							'neutral' => '#787c82',
+						);
+						$dot_color = $status_colors[ $card['status_class'] ] ?? $status_colors['neutral'];
+						$icon      = preg_match( '/^dashicons-[a-z0-9-]+$/', (string) $card['icon'] ) ? $card['icon'] : 'dashicons-admin-generic';
+						?>
+						<a href="<?php echo esc_url( $card['url'] ); ?>" style="display:block;width:280px;padding:16px;border:1px solid #c3c4c7;border-radius:4px;background:#fff;text-decoration:none;color:inherit;">
+							<div style="display:flex;align-items:center;gap:8px;">
+								<span class="dashicons <?php echo esc_attr( $icon ); ?>" style="font-size:20px;"></span>
+								<strong style="font-size:14px;"><?php echo esc_html( $card['title'] ); ?></strong>
+							</div>
+							<div style="margin-top:10px;display:flex;align-items:center;gap:6px;">
+								<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:<?php echo esc_attr( $dot_color ); ?>;"></span>
+								<span><?php echo esc_html( $card['status_label'] ); ?></span>
+							</div>
+							<?php if ( '' !== $card['detail'] ) : ?>
+								<p class="description" style="margin-top:6px;"><?php echo esc_html( $card['detail'] ); ?></p>
+							<?php endif; ?>
+						</a>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * This plugin's own entry in the family hub's status grid. Mirrors
+	 * render_page()'s "last verified backup" summary, but against the
+	 * latest job of any outcome (not just the latest *verified* one) --
+	 * the hub's job is to surface a stuck or failed backup, not just the
+	 * last success.
+	 */
+	public function add_own_status_card( array $cards ): array {
+		$url = admin_url( 'admin.php?page=wpguard-nc-backup' );
+
+		if ( ! Settings::has_credentials() ) {
+			$cards[] = array(
+				'slug'         => 'nc-backup',
+				'title'        => __( 'Backup and Restore', 'wpguard-nc-backup' ),
+				'icon'         => 'dashicons-cloud-upload',
+				'status_class' => 'neutral',
+				'status_label' => __( 'Not configured', 'wpguard-nc-backup' ),
+				'detail'       => __( 'Connect a Nextcloud, ownCloud, or OpenCloud server to start backing up.', 'wpguard-nc-backup' ),
+				'url'          => $url,
+			);
+			return $cards;
+		}
+
+		$latest = Job_Store::get_latest();
+		if ( null === $latest ) {
+			$cards[] = array(
+				'slug'         => 'nc-backup',
+				'title'        => __( 'Backup and Restore', 'wpguard-nc-backup' ),
+				'icon'         => 'dashicons-cloud-upload',
+				'status_class' => 'warn',
+				'status_label' => __( 'No backup yet', 'wpguard-nc-backup' ),
+				'detail'       => __( 'Configured -- run your first backup.', 'wpguard-nc-backup' ),
+				'url'          => $url,
+			);
+			return $cards;
+		}
+
+		$status_map = array(
+			'verified'           => array( 'ok', __( 'Backup verified', 'wpguard-nc-backup' ) ),
+			'failed'             => array( 'error', __( 'Last backup failed', 'wpguard-nc-backup' ) ),
+			'uploaded-unverified' => array( 'warn', __( 'Backup in progress', 'wpguard-nc-backup' ) ),
+			'running'            => array( 'warn', __( 'Backup in progress', 'wpguard-nc-backup' ) ),
+			'queued'             => array( 'warn', __( 'Backup in progress', 'wpguard-nc-backup' ) ),
+		);
+		list( $status_class, $status_label ) = $status_map[ $latest['status'] ] ?? array( 'neutral', __( 'Unknown status', 'wpguard-nc-backup' ) );
+
+		$cards[] = array(
+			'slug'         => 'nc-backup',
+			'title'        => __( 'Backup and Restore', 'wpguard-nc-backup' ),
+			'icon'         => 'dashicons-cloud-upload',
+			'status_class' => $status_class,
+			'status_label' => $status_label,
+			/* translators: %s: human-readable time difference, e.g. "2 hours". */
+			'detail'       => sprintf( __( '%s ago', 'wpguard-nc-backup' ), human_time_diff( strtotime( $latest['updated_at'] . ' UTC' ) ) ),
+			'url'          => $url,
+		);
+		return $cards;
 	}
 
 	private function require_capability_and_nonce(): bool {
@@ -459,7 +611,7 @@ class Admin {
 		$retention_error = get_option( Job_Orchestrator::RETENTION_ERROR_OPTION, '' );
 		?>
 		<div class="wrap">
-			<h1><?php esc_html_e( 'WPGuard Nextcloud Backup', 'wpguard-nc-backup' ); ?></h1>
+			<h1><?php esc_html_e( 'WPGuard Backup and Restore', 'wpguard-nc-backup' ); ?></h1>
 
 			<?php if ( $retention_error ) : ?>
 				<div class="notice notice-warning">

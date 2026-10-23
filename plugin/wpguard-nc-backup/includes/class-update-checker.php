@@ -215,7 +215,7 @@ class Update_Checker {
 		}
 
 		$info                = new \stdClass();
-		$info->name          = 'WPGuard Nextcloud Backup';
+		$info->name          = 'WPGuard Backup and Restore';
 		$info->slug          = self::SLUG;
 		$info->version       = $release['version'];
 		$info->author        = 'WPGuard project';
@@ -224,7 +224,7 @@ class Update_Checker {
 		$info->requires_php  = '8.1';
 		$info->download_link = self::is_trusted_package_url( $release['package'] ) ? $release['package'] : '';
 		$info->sections      = array(
-			'description' => 'Backs up this WordPress site (files + database) to a user-controlled Nextcloud server over authenticated HTTPS WebDAV.',
+			'description' => 'Backs up this WordPress site (files + database) to a user-controlled Nextcloud, ownCloud, or OpenCloud server over authenticated HTTPS WebDAV -- or straight to your browser with zero cloud dependency -- with one-click restore.',
 			// Release body is attacker-controllable only by whoever can push
 			// a GitHub release for this repo (same trust level as the code
 			// itself), but it's rendered as HTML in the "View details"

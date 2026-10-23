@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name:       WPGuard Nextcloud Backup
+ * Plugin Name:       WPGuard Backup and Restore
  * Plugin URI:        https://github.com/ItsMNLOP/wpguard-nc-backup
  * Update URI:        https://github.com/ItsMNLOP/wpguard-nc-backup
- * Description:       Creates recoverable backups of this WordPress site (files + database) and transfers them to a user-controlled Nextcloud server over authenticated HTTPS WebDAV. Manual or scheduled backups, retention pruning, and one-click in-place restore from either the configured Nextcloud destination or an uploaded backup bundle.
+ * Description:       Creates recoverable backups of this WordPress site (files + database) and transfers them to a user-controlled Nextcloud, ownCloud, or OpenCloud server over authenticated HTTPS WebDAV -- or packages them straight to your browser with zero cloud dependency. Manual or scheduled backups, retention pruning, and one-click in-place restore from either a configured server destination or an uploaded backup bundle.
  * Version:           1.4.0
  * Requires at least: 6.4
  * Requires PHP:      8.1

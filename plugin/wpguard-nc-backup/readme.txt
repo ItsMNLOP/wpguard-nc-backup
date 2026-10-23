@@ -1,6 +1,6 @@
-=== WPGuard Nextcloud Backup ===
+=== WPGuard Backup and Restore ===
 Contributors: itsmnlop
-Tags: backup, nextcloud, webdav, restore, disaster-recovery
+Tags: backup, restore, nextcloud, webdav, disaster-recovery
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 8.1
@@ -8,7 +8,7 @@ Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Backs up your WordPress files and database to a Nextcloud server you control, over authenticated HTTPS WebDAV, with read-back checksum verification before anything is called a success.
+Backs up your WordPress files and database to a Nextcloud, ownCloud, or OpenCloud server you control over authenticated HTTPS WebDAV -- or straight to your browser, zero cloud dependency -- with read-back checksum verification before anything is called a success, and one-click restore.
 
 == Description ==
 
@@ -24,7 +24,7 @@ A backup is never reported successful until every uploaded component has been re
 == Installation ==
 
 1. Upload and activate the plugin.
-2. Go to WPGuard > Nextcloud Backup.
+2. Go to WPGuard > Backup and Restore.
 3. Enter your Nextcloud URL, the dedicated account's username, its app password, and a destination folder.
 4. Click Test Connection.
 5. Click Back Up Now.
