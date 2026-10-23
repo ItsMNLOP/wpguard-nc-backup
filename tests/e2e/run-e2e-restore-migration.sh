@@ -27,6 +27,23 @@ NC_BACKUP_USER=$(env_val NC_BACKUP_USER)
 NC_BACKUP_USER_PASSWORD=$(env_val NC_BACKUP_USER_PASSWORD)
 PREFIX="wp_"
 
+# This script's own wp-restore install/HTTP checks assume the DEFAULT
+# table prefix -- but another E2E script run earlier in the same
+# session can leave .env's WP_RESTORE_TABLE_PREFIX set to something
+# else entirely (run-e2e.sh deliberately matches whatever prefix the
+# backup's own manifest recorded, and leaves it there afterward -- not
+# a bug in that script, just a different resting value than this one
+# needs). Found live: wp-login.php's real HTTP check returned a
+# WordPress "not installed" redirect because the apache container's
+# own WORDPRESS_TABLE_PREFIX env (read from .env at container-create
+# time, not live) didn't match the wp_-prefixed tables this script's
+# own wp-cli calls had just created. Same fix pattern as
+# run-e2e-restore.sh.
+if ! grep -q "^WP_RESTORE_TABLE_PREFIX=${PREFIX}$" .env; then
+  sed -i "s/^WP_RESTORE_TABLE_PREFIX=.*/WP_RESTORE_TABLE_PREFIX=${PREFIX}/" .env
+  MSYS_NO_PATHCONV=1 docker compose -p wpguard-test --env-file .env up -d wp-restore > /dev/null
+fi
+
 wpr() {
   MSYS_NO_PATHCONV=1 docker compose -p wpguard-test --env-file .env run --rm \
     -e WORDPRESS_DB_HOST=db-restore -e WORDPRESS_DB_NAME=wp_restore \

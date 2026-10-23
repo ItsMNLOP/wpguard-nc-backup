@@ -148,7 +148,16 @@ class Restore_Orchestrator {
 	 * @return string[]
 	 */
 	private static function legacy_own_plugin_dir_prefixes(): array {
-		return array( 'wp-content/plugins/wpguard-nc-backup/' );
+		// Vex security audit (2026-10-23, non-blocking LOW): derived from
+		// the same ABSPATH-relative computation own_plugin_dir_prefix()
+		// uses (swapping only the final folder-name segment), rather than
+		// hardcoding 'wp-content/plugins/' -- a site with a custom
+		// WP_PLUGIN_DIR gets this exclusion at the same real location its
+		// CURRENT plugin directory actually lives, not WP's conventional
+		// default.
+		$current_parent = dirname( rtrim( self::own_plugin_dir_prefix(), '/' ) );
+		$prefix = '.' === $current_parent ? '' : $current_parent . '/';
+		return array( $prefix . 'wpguard-nc-backup/' );
 	}
 
 	/**
@@ -532,7 +541,17 @@ class Restore_Orchestrator {
 		if ( null !== $job && 'upload' === ( $job['checkpoint']['source']['type'] ?? '' ) && ! empty( $job['checkpoint']['source']['upload_dir'] ) ) {
 			self::delete_upload_dir( $job['checkpoint']['source']['upload_dir'] );
 		}
-		Job_Store::update( $job_id, array( 'status' => 'failed', 'error' => $safe ) );
+		// Vex security audit (2026-10-23, non-blocking MEDIUM): captured_options
+		// holds the real app password/token for as long as this job's row
+		// exists, needed only up to the point the swap re-applies it (or,
+		// here, never gets the chance to). Once the job reaches a terminal
+		// state, that credential has no further use -- stripped from the
+		// checkpoint rather than left sitting in a live table a backup
+		// export now correctly skips, but mysqldump/phpMyAdmin/a different
+		// backup plugin entirely would not.
+		$cp = null !== $job ? $job['checkpoint'] : array();
+		unset( $cp['captured_options'] );
+		Job_Store::update( $job_id, array( 'status' => 'failed', 'error' => $safe, 'checkpoint' => $cp ) );
 		return Job_Store::get( $job_id );
 	}
 
@@ -1526,16 +1545,48 @@ class Restore_Orchestrator {
 		// exactly as the dump specified.
 		$own_basename = plugin_basename( WPTHISTLE_BACKUP_DIR . 'wpthistle-backup-restore.php' );
 		$restored_active_plugins = get_option( 'active_plugins', array() );
+		// Vex security audit (2026-10-23, non-blocking LOW): a dead legacy
+		// basename left in active_plugins alongside the current one means
+		// WordPress tries to load both on the next bootstrap -- harmless
+		// if the old folder is already gone (silently ignored), but during
+		// the documented transitional cutover window (old plugin
+		// deactivated but deliberately not yet file-deleted) it would
+		// load the old plugin's code back in right next to this one.
+		// Dropped by folder-name prefix, derived from the same legacy
+		// list is_never_restored_path() already uses, so there is exactly
+		// one place that knows the old plugin's directory name.
+		$legacy_plugin_folders = array_map(
+			static fn( $prefix ) => basename( rtrim( $prefix, '/' ) ) . '/',
+			self::legacy_own_plugin_dir_prefixes()
+		);
+		$restored_active_plugins = array_values( array_filter(
+			$restored_active_plugins,
+			static function ( $basename ) use ( $legacy_plugin_folders ) {
+				foreach ( $legacy_plugin_folders as $folder ) {
+					if ( 0 === strpos( $basename, $folder ) ) {
+						return false;
+					}
+				}
+				return true;
+			}
+		) );
 		if ( ! in_array( $own_basename, $restored_active_plugins, true ) ) {
 			$restored_active_plugins[] = $own_basename;
-			update_option( 'active_plugins', $restored_active_plugins );
 		}
+		update_option( 'active_plugins', $restored_active_plugins );
 
 		self::log( $job_id, 'restore_swap', 'info', sprintf(
 			'Restore complete. Previous live tables (if any existed) preserved under the "%s" prefix; quarantined/replaced files preserved under %s. Nothing was deleted -- review and manually clean those up once you have confirmed the restored site is correct.',
 			$cp['backup_table_prefix'], $cp['rollback_dir']
 		) );
-		Job_Store::update( $job_id, array( 'status' => 'verified', 'step' => 'done' ) );
+		// Vex security audit (2026-10-23, non-blocking MEDIUM): captured_options
+		// held the real app password/token only for as long as it took to
+		// re-apply settings above -- stripped from the checkpoint now that
+		// the job is terminal, so a live jobs-table row (which a backup
+		// export now correctly skips, but mysqldump/phpMyAdmin/a different
+		// backup plugin would not) doesn't keep holding it indefinitely.
+		unset( $cp['captured_options'] );
+		Job_Store::update( $job_id, array( 'status' => 'verified', 'step' => 'done', 'checkpoint' => $cp ) );
 		return Job_Store::get( $job_id );
 	}
 }

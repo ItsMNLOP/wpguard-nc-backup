@@ -110,12 +110,16 @@ site_id, and real job history from this session's own earlier testing):
   wp-source. Fixed by excluding the jobs table from export entirely
   (symmetric with restore already never importing it, per the
   pre-existing T20 design) rather than trying to redact specific fields.
-  **This is a pre-existing issue, not introduced by the rename**: any
-  v1.x site that has ever run a one-click restore has this same
-  credential sitting in its own `database.sql.gz` from every backup
-  taken since. Flagged for Vex to disclose explicitly; if this site's
-  real app password/token was ever in a backup taken after a restore,
-  rotate it.
+  **This is a pre-existing issue, not introduced by the rename --
+  corrected by Vex's audit below**: the window is 1.1.0 through 1.4.0
+  specifically (one-click restore didn't exist in 1.0.0), it's the
+  Nextcloud/ownCloud/OpenCloud app password/token (not the WP admin
+  password, not DB credentials), it doesn't apply to a site using the
+  wp-config.php constant-override credential storage with the H-02
+  purge already in effect, and it also means any copy of an affected
+  backup downloaded locally carries the same exposure. If this
+  description applies to this site, revoke and replace that app
+  password/token.
 - **The never-touched-path restore protection didn't recognize the OLD
   plugin's own directory.** `is_never_restored_path()` derives its
   exclusion from the *current* `WPTHISTLE_BACKUP_DIR` -- restoring a
@@ -158,8 +162,68 @@ cases above, plus one proving the legacy plugin-dir restore exclusion).
 Full 16-suite E2E regression re-run clean after
 every fix above, including the specific scenario that found them
 (restore a real pre-rename backup, then take another real backup).
-Full detail on the migration code's own review: see the Vex
-security-audit entry immediately following this one once it's run.
+
+**GitHub organization**: the repo was then transferred from the
+personal `ItsMNLOP` account into a new `WPThistle` organization, set up
+to house this and future sibling plugins under one umbrella rather
+than a personal account. Confirmed live that both the original
+`wpguard-nc-backup` name and the intermediate `wpthistle-backup-restore`
+name under `ItsMNLOP` still redirect all the way through to
+`WPThistle/wpthistle-backup-restore` at both the web and API layers --
+two redirect hops, both held. Every repo-path reference (`Update_Checker`'s
+`GITHUB_REPO` constant, `Plugin URI`/`Update URI`, docs, the unit and
+E2E tests that assert against this exact repo) updated to match.
+
+**Vex security audit (SOP-023, 2026-10-23): CLEAR TO SHIP.** One
+non-blocking MEDIUM, four non-blocking LOW, all fixed same-day. The
+MEDIUM: a completed restore job's checkpoint permanently retained
+`captured_options` (the real app password/token) in the live jobs
+table even after the export-side fix above -- a backup export now
+correctly skips that table, but `mysqldump`/phpMyAdmin/a different
+backup plugin entirely would not. Fixed by stripping `captured_options`
+from the checkpoint the moment a restore job reaches either terminal
+state (`restore_swap`'s success path, `fail()`'s failure path), and by
+scrubbing it from any already-terminal row `migrate_from_legacy_wpguard()`
+carries over from the old plugin. The four LOWs: the migrated settings
+option was missing `autoload => false` (fixed, now matches
+`Settings::save()`); the legacy plugin-directory exclusion was a
+hardcoded `wp-content/plugins/...` string rather than derived the same
+`WP_PLUGIN_DIR`-aware way the current one is (fixed); `restore_swap`
+added this plugin's current basename to `active_plugins` but never
+removed a dead legacy basename the backup's own snapshot might still
+name, meaning the old plugin's code could load back in alongside the
+new one during the documented transitional window (fixed -- both
+filtered through the same legacy-prefix list); `uninstall.php` didn't
+clean up the legacy `wpguard_nc_*` option rows a migrated site
+deliberately leaves in place, so deleting this plugin later without
+ever having deleted the old one's files would leave them behind
+permanently (fixed).
+
+**Vex's audit also corrected this entry's own disclosure framing**
+(applied above): not v1.0.0 -- one-click restore shipped in 1.1.0, so
+v1.0.0 never had this exposure; not every site -- a site using the
+wp-config.php constant-override with the H-02 purge in effect never
+stored the password in the row that leaked; it's specifically the
+Nextcloud/ownCloud/OpenCloud app password/token, not the WordPress
+admin password or database credentials; and v1.4.0 (and every version
+back to 1.1.0) cannot auto-update to this release at all, since the
+slug and update-feed repository both changed -- affected sites need
+manual migration, which is its own reason this exposure doesn't
+self-heal on its own.
+
+After the MEDIUM/LOW fixes: 156/156 unit tests, full 16-suite E2E
+regression re-run clean again, including a second pre-rename-backup
+restore rehearsal confirming `captured_options` is actually gone from
+the terminal job row afterward (checked directly against the
+database, not just inferred) and that a dead legacy `active_plugins`
+entry is correctly absent. One further pre-existing test-infra gap
+surfaced by this second full-suite run, unrelated to any of the above:
+`run-e2e-restore-migration.sh` was missing the same apache-container
+table-prefix sync fix `run-e2e-restore.sh` already had, inherited a
+leftover non-default prefix from an earlier script in the same session,
+and failed its own `wp-login.php` HTTP check the same "not installed"
+way the original table-prefix bug did earlier this session. Fixed with
+the identical sync-before-use pattern.
 
 ## Family hub landing page (top-level "WPGuard" menu 404 fix), 2026-10-23
 

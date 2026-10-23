@@ -45,9 +45,9 @@ echo "=== Case B: a newer release WITH a qualifying .zip asset must be offered b
 wp_source eval "
   set_transient('wpthistle_backup_update_check', array(
     'version' => '9.9.9',
-    'package' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v9.9.9/wpthistle-backup-restore-9.9.9.zip',
+    'package' => 'https://github.com/WPThistle/wpthistle-backup-restore/releases/download/v9.9.9/wpthistle-backup-restore-9.9.9.zip',
     'body' => 'release notes',
-    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v9.9.9',
+    'html_url' => 'https://github.com/WPThistle/wpthistle-backup-restore/releases/tag/v9.9.9',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_B=$(wp_source eval "
@@ -57,7 +57,7 @@ RESULT_B=$(wp_source eval "
   \$item = \$transient->response['$PLUGIN_BASENAME'] ?? null;
   echo \$item ? (\$item->new_version . '|' . \$item->package) : 'none';
 ")
-[ "$RESULT_B" = "9.9.9|https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v9.9.9/wpthistle-backup-restore-9.9.9.zip" ] || { echo "FAIL: expected the cached newer release to be offered with its package url, got '$RESULT_B'"; exit 1; }
+[ "$RESULT_B" = "9.9.9|https://github.com/WPThistle/wpthistle-backup-restore/releases/download/v9.9.9/wpthistle-backup-restore-9.9.9.zip" ] || { echo "FAIL: expected the cached newer release to be offered with its package url, got '$RESULT_B'"; exit 1; }
 echo "OK  newer release with a qualifying asset offered by check_for_update()"
 
 echo
@@ -67,7 +67,7 @@ wp_source eval "
     'version' => '9.9.9',
     'package' => '',
     'body' => 'release notes, but no built zip attached yet',
-    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v9.9.9',
+    'html_url' => 'https://github.com/WPThistle/wpthistle-backup-restore/releases/tag/v9.9.9',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_C=$(wp_source eval "
@@ -84,9 +84,9 @@ echo "=== Case D: a same-or-older cached release must never be offered ==="
 wp_source eval "
   set_transient('wpthistle_backup_update_check', array(
     'version' => '1.0.0',
-    'package' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v1.0.0/wpthistle-backup-restore-1.0.0.zip',
+    'package' => 'https://github.com/WPThistle/wpthistle-backup-restore/releases/download/v1.0.0/wpthistle-backup-restore-1.0.0.zip',
     'body' => '',
-    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v1.0.0',
+    'html_url' => 'https://github.com/WPThistle/wpthistle-backup-restore/releases/tag/v1.0.0',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_D=$(wp_source eval "
@@ -130,7 +130,7 @@ wp_source eval "
     'version' => '9.9.9',
     'package' => 'https://github.com/someone-else/other-repo/releases/download/v1/wpthistle-backup-restore.zip',
     'body' => '',
-    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v9.9.9',
+    'html_url' => 'https://github.com/WPThistle/wpthistle-backup-restore/releases/tag/v9.9.9',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_F=$(wp_source eval "
@@ -147,9 +147,9 @@ echo "=== Case G: a cached package URL using path traversal to escape this repo'
 wp_source eval "
   set_transient('wpthistle_backup_update_check', array(
     'version' => '9.9.9',
-    'package' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/../../../../attacker/repo/releases/download/v1/wpthistle-backup-restore.zip',
+    'package' => 'https://github.com/WPThistle/wpthistle-backup-restore/releases/download/../../../../attacker/repo/releases/download/v1/wpthistle-backup-restore.zip',
     'body' => '',
-    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v9.9.9',
+    'html_url' => 'https://github.com/WPThistle/wpthistle-backup-restore/releases/tag/v9.9.9',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_G=$(wp_source eval "

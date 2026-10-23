@@ -547,7 +547,7 @@ this round with zero regressions.
 
 This plugin isn't on the WordPress.org directory, so wp-admin's normal
 "update available" nag is instead driven by `Update_Checker`, which
-polls `github.com/ItsMNLOP/wpthistle-backup-restore`'s Releases (public repo,
+polls `github.com/WPThistle/wpthistle-backup-restore`'s Releases (public repo,
 read-only, no credentials needed) through WP's own
 `pre_set_site_transient_update_plugins`/`plugins_api` filters — the
 same mechanism WordPress.org-hosted plugins use, so "Update now" on

@@ -17,7 +17,7 @@ namespace WPThistle\BackupRestore;
  * asset means no update offered, not a fallback to the wrong package.
  */
 class Update_Checker {
-	const GITHUB_REPO = 'ItsMNLOP/wpthistle-backup-restore';
+	const GITHUB_REPO = 'WPThistle/wpthistle-backup-restore';
 	const SLUG         = 'wpthistle-backup-restore';
 	const CACHE_KEY     = 'wpthistle_backup_update_check';
 	const CACHE_TTL      = 12 * HOUR_IN_SECONDS;
@@ -211,7 +211,7 @@ class Update_Checker {
 			// Returning our own error instead of passing $result through
 			// means this slug's details are owned by this feed, full
 			// stop, never by whatever a prior filter produced.
-			return new \WP_Error( 'wpthistle_backup_no_release', __( 'No published release found. Check github.com/ItsMNLOP/wpthistle-backup-restore.', 'wpthistle-backup-restore' ) );
+			return new \WP_Error( 'wpthistle_backup_no_release', __( 'No published release found. Check github.com/WPThistle/wpthistle-backup-restore.', 'wpthistle-backup-restore' ) );
 		}
 
 		$info                = new \stdClass();

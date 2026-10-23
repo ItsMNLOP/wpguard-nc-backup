@@ -12,9 +12,12 @@ All notable changes to this project are documented here.
   the project was about to broaden beyond backups into things that have
   nothing to do with "guarding." New plugin slug/folder/main file:
   `wpthistle-backup-restore`. New PHP namespace: `WPThistle\BackupRestore`
-  (was `WPGuard\NCBackup`). New GitHub repo:
-  `ItsMNLOP/wpthistle-backup-restore` (renamed in place via
-  `gh repo rename`, so the old URL still redirects). New WP-CLI command
+  (was `WPGuard\NCBackup`). New GitHub repo: `WPThistle/wpthistle-backup-restore`
+  -- renamed in place from `wpguard-nc-backup` via `gh repo rename`
+  (old URL redirects), then transferred from the personal `ItsMNLOP`
+  account into the new `WPThistle` organization set up to house this
+  and future sibling plugins (both the web and API redirect chains
+  from the original name hold through the transfer). New WP-CLI command
   name, admin menu slugs, nonce/AJAX action names, cron hook names, and
   the `wpthistle_family_status_cards` filter (zero consumers before this,
   so free to rename). Display name: "WPThistle Backup and Restore".
@@ -52,33 +55,68 @@ All notable changes to this project are documented here.
   prefix recorded in the manifest.
 
 ### Fixed
-- **Pre-existing credential leak, not caused by the rename**: a restore
-  job's own checkpoint legitimately holds the real app password/app
-  token (needed to re-apply settings after the DB swap), and the jobs
-  table was never excluded from a backup's own SQL export -- only the
-  settings option row was. Any site that ever ran a one-click restore
-  had that credential sitting in plaintext in every `database.sql.gz`
-  taken afterward. Fixed by excluding the jobs table from export
-  entirely, symmetric with restore already never importing it.
-  **If this plugin's real app password/token was ever present in a
-  backup taken after a restore, rotate it.**
+- **Pre-existing credential leak, not caused by the rename, present
+  since one-click restore shipped in 1.1.0 (not 1.0.0, which had no
+  restore feature yet)**: a restore job's own checkpoint legitimately
+  holds the real Nextcloud/ownCloud/OpenCloud app password/app token
+  (needed to re-apply settings after the DB swap), and the jobs table
+  was never excluded from a backup's own SQL export -- only the
+  settings option row was. Any site that ran a one-click restore
+  between 1.1.0 and 1.4.0 (and was not using the wp-config.php
+  constant-override credential storage with the H-02 purge already in
+  effect) had that credential sitting in plaintext in every
+  `database.sql.gz` taken afterward, including any copy downloaded
+  locally. Fixed three ways: the jobs table is now excluded from export
+  entirely (symmetric with restore already never importing it);
+  `captured_options` is stripped from a restore job's checkpoint as
+  soon as it reaches a terminal state (`verified` or `failed`), not
+  left sitting in the live table indefinitely; and
+  `migrate_from_legacy_wpguard()` scrubs it from any already-terminal
+  job row it carries over from the old plugin. **If you ran one-click
+  restore on this site between 1.1.0 and 1.4.0, revoke and replace that
+  app password/token.** The WordPress admin password and database
+  credentials are not affected. v1.4.0 and earlier installs cannot
+  auto-update to this release (slug and update-feed repository both
+  changed) -- install manually.
 - The never-touched-path restore protection, the wp-config.php
   credential redaction, and the jobs-table import-skip all only ever
   recognized the *current* plugin directory/constant names/table
   suffix -- each silently failed to protect the equivalent *legacy*
   (pre-rename) name. Fixed all three: restoring an old backup no
-  longer tries to resurrect the old plugin's files, a legacy
-  `WPGUARD_NC_APP_PASSWORD`/`WPGUARD_NC_CA_BUNDLE` constant redacts
-  correctly in an archived wp-config.php, and an old backup's own
-  `wpguard_nc_jobs` table is skipped on import, not resurrected.
+  longer tries to resurrect the old plugin's files (and the legacy
+  exclusion now derives from the same `WP_PLUGIN_DIR`-aware
+  computation the current one uses, not a hardcoded `wp-content/
+  plugins/`), a legacy `WPGUARD_NC_APP_PASSWORD`/`WPGUARD_NC_CA_BUNDLE`
+  constant redacts correctly in an archived wp-config.php, and an old
+  backup's own `wpguard_nc_jobs` table is skipped on import, not
+  resurrected.
 - `active_plugins` now correctly keeps this plugin's own current
   basename active after restoring any backup, including one taken
-  under the old plugin -- previously, that case silently dropped this
-  plugin out of `active_plugins` after a successful restore.
+  under the old plugin, while also dropping any dead legacy-plugin
+  basename the backup's own historical snapshot named -- previously,
+  restoring an old backup could either drop this plugin out of
+  `active_plugins` entirely, or (during the documented transitional
+  cutover window) load the old plugin's code back in alongside it.
+- The settings option `migrate_from_legacy_wpguard()` creates is now
+  correctly non-autoloaded, matching `Settings::save()` -- it was
+  previously autoloaded by WordPress's default until the admin next
+  saved the settings page.
+- `uninstall.php` now also removes the legacy `wpguard_nc_*` option
+  rows a migrated site leaves in place (deliberately, for rollback
+  safety) if this plugin is later removed by deleting its files
+  directly rather than through WordPress's own plugin-delete flow.
 - Several E2E scripts hard-coded a `wp_` table prefix for wp-source's
   own jobs table instead of the stack's actual `wps_` -- silent no-ops
   behind `|| true`, caught once the full 16-suite regression was
-  re-run rather than by any single script on its own.
+  re-run rather than by any single script on its own. A separate script
+  (`run-e2e-restore-migration.sh`) was also missing the apache-container
+  table-prefix sync fix other restore-testing scripts already had,
+  surfaced by the same full-suite re-run.
+
+Independently audited (SOP-023, Vex): **CLEAR TO SHIP.** One
+non-blocking MEDIUM (the credential-in-checkpoint exposure above) and
+four non-blocking LOW findings, all fixed in this release. Full
+findings in `docs/threat-model.md` T25.
 
 See `STATUS.md` for the full narrative (why the name had to change, what
 was checked, the security audit of the migration path) and

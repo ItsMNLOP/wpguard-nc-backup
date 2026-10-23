@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:       WPThistle Backup and Restore
- * Plugin URI:        https://github.com/ItsMNLOP/wpthistle-backup-restore
- * Update URI:        https://github.com/ItsMNLOP/wpthistle-backup-restore
+ * Plugin URI:        https://github.com/WPThistle/wpthistle-backup-restore
+ * Update URI:        https://github.com/WPThistle/wpthistle-backup-restore
  * Description:       Creates recoverable backups of this WordPress site (files + database) and transfers them to a user-controlled Nextcloud, ownCloud, or OpenCloud server over authenticated HTTPS WebDAV -- or packages them straight to your browser with zero cloud dependency. Manual or scheduled backups, retention pruning, and one-click in-place restore from either a configured server destination or an uploaded backup bundle.
  * Version:           2.0.0
  * Requires at least: 6.4
@@ -86,7 +86,12 @@ function migrate_from_legacy_wpguard(): void {
 	if ( false === $legacy_settings ) {
 		return; // No legacy plugin data found -- genuinely a fresh install.
 	}
-	update_option( Settings::OPTION_KEY, $legacy_settings );
+	// Vex security audit (2026-10-23, non-blocking LOW): Settings::save()
+	// always passes autoload=false for this credential-bearing option;
+	// this migration path must match, not leave it autoloading (WP's
+	// default) into every request's alloptions cache until the admin
+	// next opens the settings page and saves.
+	update_option( Settings::OPTION_KEY, $legacy_settings, false );
 
 	$legacy_site_id = get_option( 'wpguard_nc_site_id', false );
 	if ( false !== $legacy_site_id ) {
@@ -120,6 +125,23 @@ function migrate_from_legacy_wpguard(): void {
 	// fixed constant-derived strings, never user input.
 	if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $old_table ) ) === $old_table ) {
 		$wpdb->query( "RENAME TABLE `{$old_table}` TO `{$new_table}`" );
+		// Vex security audit (2026-10-23, non-blocking MEDIUM): a
+		// completed restore job's checkpoint holds the real app
+		// password/token in its captured_options snapshot, needed only
+		// up to the point it was re-applied -- stripped here for every
+		// job this migration just carried over, same as every future
+		// job gets stripped at its own terminal transition
+		// (restore_swap()/fail()) from here on.
+		$job_ids = $wpdb->get_col( "SELECT job_id FROM `{$new_table}` WHERE status IN ( 'verified', 'failed' )" );
+		foreach ( $job_ids as $job_id ) {
+			$job = Job_Store::get( $job_id );
+			if ( null === $job || ! isset( $job['checkpoint']['captured_options'] ) ) {
+				continue;
+			}
+			$cp = $job['checkpoint'];
+			unset( $cp['captured_options'] );
+			Job_Store::update( $job_id, array( 'checkpoint' => $cp ) );
+		}
 	}
 
 	// Orphaned entries under the old hook names would otherwise sit in

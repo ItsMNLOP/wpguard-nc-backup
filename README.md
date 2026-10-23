@@ -1,6 +1,6 @@
 # WPThistle Backup and Restore
 
-[![CI](https://github.com/ItsMNLOP/wpthistle-backup-restore/actions/workflows/ci.yml/badge.svg)](https://github.com/ItsMNLOP/wpthistle-backup-restore/actions/workflows/ci.yml)
+[![CI](https://github.com/WPThistle/wpthistle-backup-restore/actions/workflows/ci.yml/badge.svg)](https://github.com/WPThistle/wpthistle-backup-restore/actions/workflows/ci.yml)
 
 A WordPress plugin that backs up your site's database and files to a
 Nextcloud server you control, over authenticated HTTPS WebDAV — with

@@ -1,12 +1,26 @@
 # Cutting a release (Phase 2, update feed)
 
-The plugin checks `github.com/ItsMNLOP/wpthistle-backup-restore`'s **Releases**
+The plugin checks `github.com/WPThistle/wpthistle-backup-restore`'s **Releases**
 for updates (`Update_Checker`, Phase 2 item 4) instead of a self-hosted
 feed server or the WordPress.org plugin directory. It only ever offers
 an update when the release carries a `.zip` asset whose name starts
 with `wpthistle-backup-restore` — it never falls back to GitHub's own
 auto-generated zipball, because that contains the whole repo (`docs/`,
 `tests/`, `.github/`, etc.), not just the plugin folder.
+
+**Operational note (Vex security audit, 2026-10-23, LOW, not a code
+fix)**: this trust chain assumes the `WPThistle` GitHub organization
+(and, before the 2.0.0 org transfer, the `ItsMNLOP` account) keeps
+owning this exact repo name. GitHub does not reserve a vacated
+username/org slug or repo name — if this org were ever renamed or
+deleted, or if `wpguard-nc-backup`/`wpthistle-backup-restore` were
+ever recreated elsewhere, the redirect chain breaks, and in the worst
+case a squatter could stand up a same-named repo with a same-shaped
+release asset that would pass `is_trusted_package_url()`'s own check
+for any site still on an older version. Mitigation is entirely
+operational: never rename or delete this org, never let the old
+`wpguard-nc-backup`/`wpthistle-backup-restore` names under `ItsMNLOP`
+get recreated by anyone else.
 
 As of 2026-10-21, `.github/workflows/ci.yml`'s `release` job builds and
 attaches that zip automatically on any `v*` tag push, gated behind the
