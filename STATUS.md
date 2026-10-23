@@ -1,5 +1,42 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## WebDAV chunking v2 (TRN-04, the last Phase 2 item), built, awaiting security audit, 2026-10-22
+
+The last unstarted Phase 2 hardening item. Real protocol tested live
+against all three verified backends before any code was written:
+Nextcloud 34.0.5 and ownCloud 10.15 both support WebDAV chunking v2
+(MKCOL the uploads collection, numbered PUTs, MOVE with
+`OC-Total-Length`) identically; OpenCloud 7.2.4 returns 404 on the same
+MKCOL, confirmed live, not assumed.
+
+`Nextcloud_Client::upload_part()` now does the real chunked,
+resumable upload for anything bigger than one 8 MiB chunk on a server
+that supports it, falling back to ADR 0004's original single-PUT path
+otherwise (small files, or OpenCloud). Capability is probed live and
+cached, not inferred from the `backend` setting -- deliberately, so
+this doesn't reopen T22's "`get_backend()` has zero consumers"
+finding. Resumability needed zero new checkpoint fields: the
+`$upload_id` is deterministic (derived from job_id + the part's own
+remote path), so a process killed outright mid-upload still resumes
+correctly on the next `advance()` of the same still-running job, via a
+real server-side chunk discovery rather than any local counter.
+
+**Proven live, not just argued**: `tests/e2e/run-e2e-chunked-upload.sh`
+round-trips a 20MB file byte-identical on all three backends, and
+specifically proves resume by planting a deliberately wrong chunk 0
+directly on the server before retrying -- the result's first chunk
+stays wrong (proving it was skipped, not re-sent) while everything
+after it is correct (proving the rest uploaded properly that call).
+9 new unit tests (148/148 total). Full existing E2E regression (16
+suites) re-run green -- two suites initially failed from this
+session's own new test script leaving wp-source's settings pointed at
+its own test folder (same pollution bug class a prior session hit with
+a `.env` table-prefix), fixed with the same capture-and-restore trap
+pattern, both green on retry. Full detail: `docs/adr/0010-webdav-
+chunking-v2-resumable-upload.md`, `docs/threat-model.md` T24.
+
+**Not yet shippable**: sent to the security audit; not self-certified.
+
 ## WP-CLI credential-free paths, CLEAR TO SHIP, 2026-10-22
 
 Fixes the CLI gap found while re-checking the Phase 3 candidates list:

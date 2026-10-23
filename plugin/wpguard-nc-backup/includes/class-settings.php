@@ -239,6 +239,14 @@ class Settings {
 			return array( 'ok' => false, 'errors' => $errors );
 		}
 
+		// ADR 0010: Nextcloud_Client::supports_chunked_upload_v2()
+		// caches its probe result for a day, keyed by server URL --
+		// invalidate both the old and new URL's cache on every save so
+		// switching servers (or the same server gaining/losing support
+		// across an upgrade) never has to wait out a stale cached probe.
+		delete_transient( 'wpguard_nc_chunk_v2_support_' . md5( $current['nextcloud_url'] ?? '' ) );
+		delete_transient( 'wpguard_nc_chunk_v2_support_' . md5( $clean['nextcloud_url'] ?? '' ) );
+
 		update_option( self::OPTION_KEY, $clean, false );
 		return array( 'ok' => true, 'errors' => array() );
 	}

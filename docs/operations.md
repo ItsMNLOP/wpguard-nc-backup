@@ -88,6 +88,18 @@ tracked as a follow-up, not a release blocker since the manual restore
 runbook's `curl`/WebDAV-client approach still works if you browse the
 configured folder directly in Nextcloud's web UI).
 
+## Transport (ADR 0004, ADR 0010)
+
+Each component (database export, each `files.part-NNNN.zip`) is
+uploaded, then independently read back and SHA-256-verified before a
+backup is ever reported `verified`. Parts bigger than one chunk (8
+MiB) use resumable WebDAV chunking v2 on servers that support it
+(confirmed live: Nextcloud, ownCloud) — if the connection drops
+mid-upload, the next attempt resumes from whatever chunks the server
+already has rather than re-sending the whole part. OpenCloud doesn't
+support this dialect (confirmed live, not assumed) and always uses a
+single whole-part PUT instead; this is automatic, not a setting.
+
 ## Logs
 
 Per-job structured log (last 200 entries), redacted at write time

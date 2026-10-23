@@ -14,6 +14,11 @@ if ( ! defined( 'ABSPATH' ) ) {
  * rides along since OpenCloud is its fork, or any other WebDAV server.
  * Never sets sslverify=>false (ADR 0007, threat-model T11 — enforced
  * here and checked by tests/unit/NoInsecureTlsTest.php).
+ *
+ * ADR 0010: upload_part() uses resumable WebDAV chunking v2 when the
+ * server supports it (probed, not assumed -- confirmed live against
+ * Nextcloud and ownCloud, confirmed absent on OpenCloud), falling back
+ * to a single whole-file PUT otherwise.
  */
 class Nextcloud_Client {
 
@@ -256,10 +261,22 @@ class Nextcloud_Client {
 	 * @return array<string>|\WP_Error
 	 */
 	public function list_children( string $relative_path ) {
+		return $this->list_children_at_url( $this->url_for( $relative_path ) );
+	}
+
+	/**
+	 * Shared by list_children() (relative to the files/ root) and the
+	 * chunked-upload resume logic (list_uploaded_chunk_indices(), which
+	 * needs the uploads/ collection's own absolute URL, a different
+	 * top-level path than files/ -- not expressible via url_for()).
+	 *
+	 * @return array<string>|\WP_Error
+	 */
+	private function list_children_at_url( string $url ) {
 		$body = '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>';
 		$response = $this->request(
 			'PROPFIND',
-			$this->url_for( $relative_path ),
+			$url,
 			array(
 				'headers' => array( 'Depth' => '1', 'Content-Type' => 'application/xml' ),
 				'body'    => $body,
@@ -293,7 +310,7 @@ class Nextcloud_Client {
 		// never excluded, and its bare folder name ("backups") leaked
 		// into the result as if it were a real sibling entry. Decoding
 		// both sides before comparing makes the match encoder-agnostic.
-		$self_path = rawurldecode( rtrim( (string) wp_parse_url( $this->url_for( $relative_path ), PHP_URL_PATH ), '/' ) );
+		$self_path = rawurldecode( rtrim( (string) wp_parse_url( $url, PHP_URL_PATH ), '/' ) );
 		$names = array();
 		foreach ( $xml->xpath( '//d:response' ) as $resp ) {
 			$resp->registerXPathNamespace( 'd', 'DAV:' );
@@ -341,6 +358,209 @@ class Nextcloud_Client {
 			return new \WP_Error( 'wpguard_nc_get_json_decode_failed', "Downloaded object is not valid JSON: {$relative_path}" );
 		}
 		return $decoded;
+	}
+
+	/**
+	 * ADR 0010 (WebDAV chunking v2). Sub-chunk size for a resumable
+	 * chunked upload -- deliberately much smaller than ADR 0004's
+	 * PART_SIZE_BYTES bound (that cap stays unchanged; this splits each
+	 * already-bounded part further, purely for transport-level
+	 * resumability and lower peak memory per HTTP request). 8 MiB
+	 * bounds a single retry's wasted bandwidth/time on a flaky
+	 * connection without creating a pathological chunk count for a
+	 * default 64 MiB part (8 chunks).
+	 */
+	const CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
+
+	/** Absolute URL for a WebDAV chunking v2 upload session (or one of its chunk sub-resources). A different top-level path (uploads/) than url_for()'s files/ root. */
+	private function upload_session_url( string $upload_id, string $suffix = '' ): string {
+		$encoded_user = rawurlencode( $this->user );
+		$encoded_id   = rawurlencode( $upload_id );
+		$url = $this->base_url . '/remote.php/dav/uploads/' . $encoded_user . '/' . $encoded_id;
+		return '' === $suffix ? $url : $url . '/' . $suffix;
+	}
+
+	/**
+	 * Probes whether the configured server supports WebDAV chunking v2
+	 * at all (a throwaway MKCOL on the uploads/ collection, cleaned up
+	 * immediately), caching the result for a day per server URL so
+	 * every part of every future backup doesn't re-probe. Confirmed
+	 * live (2026-10-22, ADR 0010): Nextcloud 34 and ownCloud 10.15
+	 * support this identically; OpenCloud 7.2.4 returns 404 on this
+	 * exact MKCOL -- not assumed, tested directly against all three.
+	 */
+	public function supports_chunked_upload_v2(): bool {
+		$cache_key = 'wpguard_nc_chunk_v2_support_' . md5( $this->base_url );
+		$cached = get_transient( $cache_key );
+		if ( false !== $cached ) {
+			return 'yes' === $cached;
+		}
+		$probe_id = 'probe-' . bin2hex( random_bytes( 8 ) );
+		$mk = $this->request( 'MKCOL', $this->upload_session_url( $probe_id ) );
+		$supported = ! is_wp_error( $mk ) && in_array( wp_remote_retrieve_response_code( $mk ), array( 201, 405 ), true );
+		if ( $supported ) {
+			$this->request( 'DELETE', $this->upload_session_url( $probe_id ) );
+		}
+		set_transient( $cache_key, $supported ? 'yes' : 'no', DAY_IN_SECONDS );
+		return $supported;
+	}
+
+	/**
+	 * Re-discovers which numbered chunks already exist in an upload
+	 * session by asking the server, not by trusting any local counter
+	 * -- the same "never trust local-only state, re-verify against the
+	 * real server" discipline this project already uses elsewhere
+	 * (Backup_Chain re-verifying the prior chain backup live before
+	 * trusting it). This is what makes a chunked upload genuinely
+	 * resumable across a PHP process that was killed outright mid-loop
+	 * with no chance to persist anything of its own: a fresh attempt,
+	 * even with zero local state, re-derives the same deterministic
+	 * $upload_id (see upload_part()'s docblock) and picks up exactly
+	 * where the server says the last attempt left off.
+	 *
+	 * @return array<int>
+	 */
+	private function list_uploaded_chunk_indices( string $upload_id ): array {
+		$names = $this->list_children_at_url( $this->upload_session_url( $upload_id ) );
+		if ( is_wp_error( $names ) ) {
+			// A session that doesn't exist yet (shouldn't happen right
+			// after our own successful MKCOL, but fail closed rather
+			// than assume) reads the same as "no chunks uploaded yet."
+			return array();
+		}
+		return self::chunk_indices_from_names( $names );
+	}
+
+	/**
+	 * Pure filter, split out from list_uploaded_chunk_indices() so this
+	 * name-matching logic (which must exclude the session's own `.file`
+	 * assembly target and anything else that isn't a plain 6-digit
+	 * chunk name) is directly unit-testable without a live server.
+	 *
+	 * @param array<string> $names
+	 * @return array<int>
+	 */
+	public static function chunk_indices_from_names( array $names ): array {
+		$indices = array();
+		foreach ( $names as $name ) {
+			if ( 1 === preg_match( '/^\d{6}$/', $name ) ) {
+				$indices[] = (int) $name;
+			}
+		}
+		return $indices;
+	}
+
+	/**
+	 * Uploads one local file via WebDAV chunking v2 (MKCOL the upload
+	 * session, PUT each not-already-uploaded numbered chunk, MOVE
+	 * .file to $relative_path with Destination + OC-Total-Length --
+	 * all three steps confirmed live against Nextcloud 34 and ownCloud
+	 * 10.15, ADR 0010). Reads the local file in CHUNK_SIZE_BYTES pieces
+	 * via fopen/fread, never buffering more than one chunk in memory.
+	 * $total_size must be the file's real size, read by the caller
+	 * before any retry could change it.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private function put_file_chunked( string $local_path, string $relative_path, string $upload_id, int $total_size ) {
+		$mk = $this->request( 'MKCOL', $this->upload_session_url( $upload_id ) );
+		if ( is_wp_error( $mk ) ) {
+			return $mk;
+		}
+		$mk_code = wp_remote_retrieve_response_code( $mk );
+		if ( ! in_array( $mk_code, array( 201, 405 ), true ) ) {
+			return new \WP_Error( 'wpguard_nc_chunk_mkcol_failed', sprintf( 'Chunked-upload session MKCOL failed with HTTP %d', $mk_code ), array( 'status' => $mk_code ) );
+		}
+
+		$already = $this->list_uploaded_chunk_indices( $upload_id );
+
+		$fh = fopen( $local_path, 'rb' );
+		if ( false === $fh ) {
+			return new \WP_Error( 'wpguard_nc_chunk_open_failed', "Could not open local file for chunked read: {$local_path}" );
+		}
+		$index = 0;
+		while ( ! feof( $fh ) ) {
+			$chunk = fread( $fh, self::CHUNK_SIZE_BYTES );
+			if ( false === $chunk ) {
+				fclose( $fh );
+				return new \WP_Error( 'wpguard_nc_chunk_read_failed', "Could not read local file for chunked upload: {$local_path}" );
+			}
+			if ( '' === $chunk ) {
+				break;
+			}
+			if ( ! in_array( $index, $already, true ) ) {
+				$put = $this->request(
+					'PUT',
+					$this->upload_session_url( $upload_id, sprintf( '%06d', $index ) ),
+					array( 'body' => $chunk, 'timeout' => 120 )
+				);
+				if ( is_wp_error( $put ) ) {
+					fclose( $fh );
+					return $put;
+				}
+				$put_code = wp_remote_retrieve_response_code( $put );
+				if ( ! in_array( $put_code, array( 200, 201, 204 ), true ) ) {
+					fclose( $fh );
+					return new \WP_Error( 'wpguard_nc_chunk_put_failed', sprintf( 'Chunk upload failed with HTTP %d', $put_code ), array( 'status' => $put_code ) );
+				}
+			}
+			$index++;
+		}
+		fclose( $fh );
+
+		$move = $this->request(
+			'MOVE',
+			$this->upload_session_url( $upload_id, '.file' ),
+			array(
+				'headers' => array(
+					'Destination'     => $this->url_for( $relative_path ),
+					'OC-Total-Length' => (string) $total_size,
+				),
+			)
+		);
+		if ( is_wp_error( $move ) ) {
+			return $move;
+		}
+		$move_code = wp_remote_retrieve_response_code( $move );
+		if ( in_array( $move_code, array( 200, 201, 204 ), true ) ) {
+			return true;
+		}
+		return new \WP_Error( 'wpguard_nc_chunk_move_failed', sprintf( 'Chunk-assembly MOVE failed with HTTP %d', $move_code ), array( 'status' => $move_code ) );
+	}
+
+	/**
+	 * Uploads a local file to $relative_path -- the one entry point
+	 * step_upload_parts() calls, replacing a raw file_get_contents()
+	 * +put_bytes() pair. Uses resumable WebDAV chunking v2 when the
+	 * server supports it (supports_chunked_upload_v2()) and the file is
+	 * bigger than one chunk; a single whole-file PUT otherwise (small
+	 * files, or a server without chunking-v2 support -- confirmed live,
+	 * not assumed, that OpenCloud needs this fallback, ADR 0010).
+	 *
+	 * $upload_id must be a STABLE, deterministic string the caller
+	 * derives from data that doesn't change across retries of the same
+	 * logical upload (e.g. job_id + this part's own remote path) --
+	 * never a fresh random token per call. A fresh ID on every attempt
+	 * would silently orphan the previous attempt's server-side session
+	 * and defeat the entire point of resumability; reusing the same ID
+	 * is what lets list_uploaded_chunk_indices() find and skip whatever
+	 * a prior, possibly-crashed attempt already got through.
+	 *
+	 * @return true|\WP_Error
+	 */
+	public function upload_part( string $local_path, string $relative_path, string $upload_id ) {
+		$size = @filesize( $local_path );
+		if ( false === $size ) {
+			return new \WP_Error( 'wpguard_nc_upload_part_stat_failed', "Could not stat local file: {$local_path}" );
+		}
+		if ( $size <= self::CHUNK_SIZE_BYTES || ! $this->supports_chunked_upload_v2() ) {
+			$bytes = file_get_contents( $local_path );
+			if ( false === $bytes ) {
+				return new \WP_Error( 'wpguard_nc_upload_part_read_failed', "Could not read local file: {$local_path}" );
+			}
+			return $this->put_bytes( $relative_path, $bytes );
+		}
+		return $this->put_file_chunked( $local_path, $relative_path, $upload_id, $size );
 	}
 
 	public function delete( string $relative_path ) {

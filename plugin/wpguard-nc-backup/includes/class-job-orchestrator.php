@@ -955,12 +955,26 @@ class Job_Orchestrator {
 		$client = Nextcloud_Client::from_settings( self::logger() );
 		$remote_rel = $client->relative_path( Settings::get_site_id() . '/backups/' . $job['backup_id'] . '/' . $item['remote'] );
 
-		$local_bytes = file_get_contents( $item['local'] );
-		$local_sha256 = $item['sha256'] ?? hash( 'sha256', $local_bytes );
-		$local_size = $item['bytes'] ?? strlen( $local_bytes );
+		// hash_file()/filesize() instead of file_get_contents() -- this
+		// fallback is rarely hit (sha256/bytes normally already come
+		// from the manifest) but bounding its memory the same way as
+		// the chunked-upload path below (ADR 0010) rather than buffering
+		// a whole part just to hash it is a straightforward improvement,
+		// not a behavior change.
+		$local_sha256 = $item['sha256'] ?? hash_file( 'sha256', $item['local'] );
+		$local_size = $item['bytes'] ?? filesize( $item['local'] );
 
-		$put = $client->put_bytes( $remote_rel, $local_bytes );
-		unset( $local_bytes );
+		// ADR 0010 (WebDAV chunking v2): upload_id is DETERMINISTIC, not
+		// a fresh token per call -- derived from this job+part so that
+		// if this exact advance() call is killed outright mid-upload
+		// (process/host death, not a caught WP_Error -- the checkpoint
+		// below is never reached, so parts_to_upload still has this
+		// same item on the next advance() of this still-'running' job),
+		// the retry reuses the same server-side upload session and
+		// resumes from whatever chunks the server says already landed,
+		// instead of starting over or orphaning the earlier attempt.
+		$upload_id = substr( hash( 'sha256', Settings::get_site_id() . '|' . $job_id . '|' . $item['remote'] ), 0, 32 );
+		$put = $client->upload_part( $item['local'], $remote_rel, $upload_id );
 		if ( is_wp_error( $put ) ) {
 			return self::fail( $job_id, 'upload_parts', "Upload failed for {$item['label']}: " . $put->get_error_message() );
 		}

@@ -1,6 +1,11 @@
 # ADR 0004: Plain WebDAV PUT with bounded part size, no chunked upload v2 (MVP)
 
-**Status:** Accepted (MVP)
+**Status:** Accepted (MVP) — **amended by ADR 0010** (2026-10-22), which
+adds real resumable WebDAV chunking v2 for parts bigger than one chunk,
+on servers that support it (Nextcloud, ownCloud; OpenCloud falls back
+to this ADR's plain-PUT path, confirmed live that it doesn't support
+chunking v2 at all). `PART_SIZE_BYTES` and everything else below is
+otherwise unchanged.
 **Date:** 2026-10-19
 
 ## Context
@@ -47,7 +52,10 @@ callers.
   still split at the archive layer, not the transport layer, in MVP. This is
   simpler but means a single huge file forces smaller part sizes for the rest
   of that backup. Documented as a known MVP limitation.
-- No resumability of a single in-flight PUT if interrupted mid-part; the
+- ~~No resumability of a single in-flight PUT if interrupted mid-part; the
   whole part is retried from the start (bounded by the part-size cap, so
-  retry cost is bounded too). Full resumability is Phase 2 (chunked v2).
+  retry cost is bounded too). Full resumability is Phase 2 (chunked v2).~~
+  **Resolved by ADR 0010** (2026-10-22) on servers that support WebDAV
+  chunking v2 (confirmed live: Nextcloud, ownCloud); OpenCloud still has
+  this exact limitation, since it doesn't support chunking v2 at all.
 - Verification (ADR 0006) still applies per part.
