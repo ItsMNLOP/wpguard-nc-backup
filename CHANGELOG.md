@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented here.
 
+## [1.4.0] — 2026-10-23 — Phase 2 (final item): WebDAV chunking v2
+
+### Added
+- **Resumable WebDAV chunking v2 for backup parts bigger than one
+  chunk (8 MiB).** Closes TRN-04, the last unstarted Phase 2
+  hardening item. Real protocol tested live against all three
+  verified backends before any code was written: Nextcloud 34.0.5 and
+  ownCloud 10.15 both support the full MKCOL-uploads-collection/
+  numbered-PUT/MOVE-with-`OC-Total-Length` dialect identically;
+  OpenCloud 7.2.4 returns 404 on the exact same MKCOL, confirmed live,
+  not assumed, so it keeps the existing single-PUT transport
+  unchanged. `Nextcloud_Client::upload_part()` picks the right path
+  automatically — no setting to configure. Resumability needed zero
+  new checkpoint fields: a deterministic upload id lets a process
+  killed outright mid-upload (host death, hard timeout) resume
+  correctly on retry by asking the server which chunks already
+  landed, never a local counter. Proven live, not just argued: a
+  dedicated E2E test plants a deliberately wrong chunk on the server
+  before retrying, then confirms the real retry skips exactly that
+  chunk while correctly finishing the rest — the one test shape that
+  actually distinguishes "resumed" from "silently re-uploaded
+  everything and got lucky." Full detail: `docs/adr/0010-webdav-
+  chunking-v2-resumable-upload.md`, `docs/threat-model.md` T24.
+
+### Fixed
+- Security audit findings on the above, all same-day: the capability
+  probe misclassified an HTTP 405 as "chunking supported" (proven
+  live that a fresh-random-session probe getting 405 can only mean
+  the server refuses the collection entirely, not "already exists" —
+  dormant against all three tested backends, but would have silently
+  broken backups for any file over 8 MiB on a server returning 405
+  for a full day per cache); the chunk-assembly `MOVE` used a 30s
+  timeout, too short for very large database dumps assembling
+  server-side; and this ADR's own "bounded to one part" framing for
+  an abandoned job's orphaned upload session was corrected (database
+  dumps have no part-size cap, and only Nextcloud — not ownCloud —
+  cleans these up automatically; the latter now documented as an
+  operator action in `docs/operations.md`).
+
 ## [1.3.0] — 2026-10-22 — Phase 3
 
 ### Added
