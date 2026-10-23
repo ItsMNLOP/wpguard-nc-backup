@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Archive_Writer;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Archive_Writer;
 
 function test_rejects_parent_traversal() {
 	wpguard_assert( false === Archive_Writer::is_path_safe( '../../etc/passwd' ), 'should reject ../ traversal' );
@@ -26,7 +26,7 @@ function test_rejects_empty() {
 // resolve as a no-op at the filesystem layer and bypassed
 // Restore_Orchestrator::is_never_restored_path()'s exact-string-match
 // exclusions for wp-config.php / the plugin's own directory, proven
-// live: './wp-config.php' and 'wp-content//plugins/wpguard-nc-backup/evil.php'
+// live: './wp-config.php' and 'wp-content//plugins/wpthistle-backup-restore/evil.php'
 // both resolve to exactly the protected target.
 function test_rejects_single_dot_segment() {
 	wpguard_assert( false === Archive_Writer::is_path_safe( './wp-config.php' ), 'a leading ./ segment must be rejected -- it resolves to the bare filename at the filesystem layer' );

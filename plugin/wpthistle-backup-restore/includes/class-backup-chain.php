@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -31,7 +31,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Backup_Chain {
 
-	const STATE_OPTION = 'wpguard_nc_chain_state';
+	const STATE_OPTION = 'wpthistle_backup_chain_state';
 
 	// Bounds how long a chain can grow before a full is forced, by
 	// whichever limit is hit first. Two independent bounds: a pure
@@ -89,8 +89,8 @@ class Backup_Chain {
 			return self::full_plan();
 		}
 
-		$max_chain = max( 1, (int) apply_filters( 'wpguard_nc_incremental_max_chain', self::MAX_CHAIN_DEFAULT ) );
-		$max_days  = max( 1, (int) apply_filters( 'wpguard_nc_incremental_max_chain_days', self::MAX_CHAIN_DAYS_DEFAULT ) );
+		$max_chain = max( 1, (int) apply_filters( 'wpthistle_backup_incremental_max_chain', self::MAX_CHAIN_DEFAULT ) );
+		$max_days  = max( 1, (int) apply_filters( 'wpthistle_backup_incremental_max_chain_days', self::MAX_CHAIN_DAYS_DEFAULT ) );
 
 		if ( (int) $state['depth'] >= $max_chain ) {
 			return self::full_plan();

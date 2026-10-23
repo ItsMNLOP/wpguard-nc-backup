@@ -27,7 +27,7 @@ so the job survives PHP process death between steps. This satisfies JOB-01
 and JOB-03 without Action Scheduler.
 
 The same step-advance function is invoked directly by WP-CLI
-(`wp wpguard-nc-backup run`, used by the E2E harness) for deterministic,
+(`wp wpthistle-backup-restore run`, used by the E2E harness) for deterministic,
 synchronous test execution without relying on AJAX/cron timing.
 
 ## Consequences

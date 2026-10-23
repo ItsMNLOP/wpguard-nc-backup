@@ -11,7 +11,7 @@
 require __DIR__ . '/wp-shim.php';
 require __DIR__ . '/assert.php';
 
-$plugin_includes = dirname( __DIR__, 2 ) . '/plugin/wpguard-nc-backup/includes/';
+$plugin_includes = dirname( __DIR__, 2 ) . '/plugin/wpthistle-backup-restore/includes/';
 foreach ( array( 'class-archive-writer.php', 'class-logger.php', 'class-manifest.php', 'class-ca-bundle.php', 'class-settings.php', 'class-update-checker.php', 'class-nextcloud-client.php', 'class-job-orchestrator.php', 'class-db-exporter.php', 'class-db-migrator.php', 'class-restore-orchestrator.php' ) as $f ) {
 	require $plugin_includes . $f;
 }
@@ -26,7 +26,7 @@ foreach ( $test_files as $file ) {
 	$fn_names = require $file;
 	foreach ( $fn_names as $fn ) {
 		$total++;
-		$qualified = '\\WPGuard\\NCBackup\\Tests\\' . $fn;
+		$qualified = '\\WPThistle\\BackupRestore\\Tests\\' . $fn;
 		try {
 			$qualified();
 			echo "PASS  " . basename( $file ) . "::{$fn}\n";

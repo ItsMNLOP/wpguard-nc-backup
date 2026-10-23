@@ -23,23 +23,23 @@ wp_source() {
 }
 
 echo "=== Clear any pre-existing job row so this test starts from a clean slate ==="
-wp_source db query "UPDATE wp_wpguard_nc_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
+wp_source db query "UPDATE ${WP_SOURCE_TABLE_PREFIX}wpthistle_backup_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
 
 echo "=== Create a job and leave it un-advanced (simulates a genuinely stranded job) ==="
 JOB_ID=$(wp_source eval '
-  $id = \WPGuard\NCBackup\Job_Orchestrator::create_job();
+  $id = \WPThistle\BackupRestore\Job_Orchestrator::create_job();
   echo $id;
 ')
 [ -n "$JOB_ID" ] || { echo "FAIL: could not create a job"; exit 1; }
 echo "job_id=$JOB_ID"
 
-HAS_RUNNING=$(wp_source eval 'echo \WPGuard\NCBackup\Job_Store::has_running_job() ? "yes" : "no";')
+HAS_RUNNING=$(wp_source eval 'echo \WPThistle\BackupRestore\Job_Store::has_running_job() ? "yes" : "no";')
 [ "$HAS_RUNNING" = "yes" ] || { echo "FAIL: has_running_job() should be true right after create_job()"; exit 1; }
 echo "OK  has_running_job() = yes (new job correctly blocked while stuck)"
 
 echo "=== Cancel it (the admin override, not the deferred Phase 2 lock-expiry system) ==="
 STATUS_AFTER_CANCEL=$(wp_source eval "
-  \$job = \WPGuard\NCBackup\Job_Orchestrator::cancel('$JOB_ID');
+  \$job = \WPThistle\BackupRestore\Job_Orchestrator::cancel('$JOB_ID');
   echo \$job['status'] . '|' . \$job['error'];
 ")
 echo "result: $STATUS_AFTER_CANCEL"
@@ -47,13 +47,13 @@ echo "result: $STATUS_AFTER_CANCEL"
 [[ "$STATUS_AFTER_CANCEL" == *"Cancelled by administrator"* ]] || { echo "FAIL: cancel() did not record an explanatory error"; exit 1; }
 echo "OK  job marked failed with an explanatory error"
 
-HAS_RUNNING_AFTER=$(wp_source eval 'echo \WPGuard\NCBackup\Job_Store::has_running_job() ? "yes" : "no";')
+HAS_RUNNING_AFTER=$(wp_source eval 'echo \WPThistle\BackupRestore\Job_Store::has_running_job() ? "yes" : "no";')
 [ "$HAS_RUNNING_AFTER" = "no" ] || { echo "FAIL: has_running_job() should be false after cancelling the only job"; exit 1; }
 echo "OK  has_running_job() = no (a new backup could start now)"
 
 echo "=== Cancelling an already-terminal job is a no-op, not an error ==="
 STATUS_SECOND_CANCEL=$(wp_source eval "
-  \$job = \WPGuard\NCBackup\Job_Orchestrator::cancel('$JOB_ID');
+  \$job = \WPThistle\BackupRestore\Job_Orchestrator::cancel('$JOB_ID');
   echo \$job['status'];
 ")
 [ "$STATUS_SECOND_CANCEL" = "failed" ] || { echo "FAIL: cancelling an already-failed job should leave it failed, got: $STATUS_SECOND_CANCEL"; exit 1; }

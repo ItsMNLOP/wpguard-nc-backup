@@ -57,20 +57,20 @@ fi
 
 wp_restore core install --url="http://127.0.0.1:8082" --title="Restore E2E Target" \
   --admin_user=wpadmin --admin_password=RestoreE2EAdminPW --admin_email=wpadmin@wpguard-test.local --skip-email > /dev/null
-wp_restore plugin activate wpguard-nc-backup > /dev/null
+wp_restore plugin activate wpthistle-backup-restore > /dev/null
 echo "OK  fresh WordPress + active WPGuard plugin on wp-restore"
 
 echo
 echo "=== Configure plugin settings to point at the REAL cloud.tomcat.casa test account, forcing site_id to the real backup's ==="
 wp_restore eval "
-  \WPGuard\NCBackup\Settings::save(array(
+  \WPThistle\BackupRestore\Settings::save(array(
     'nextcloud_url' => 'https://$NC_TEST_HOST',
     'nextcloud_user' => '$NC_TEST_USER',
     'app_password' => '$NC_TEST_APP_PASSWORD',
     'remote_folder' => 'wpguard-backups',
   ));
-  update_option( \WPGuard\NCBackup\Settings::SITE_ID_KEY, '$REAL_SITE_ID', true );
-  echo 'configured:' . \WPGuard\NCBackup\Settings::get_nextcloud_url() . '|' . \WPGuard\NCBackup\Settings::get_site_id();
+  update_option( \WPThistle\BackupRestore\Settings::SITE_ID_KEY, '$REAL_SITE_ID', true );
+  echo 'configured:' . \WPThistle\BackupRestore\Settings::get_nextcloud_url() . '|' . \WPThistle\BackupRestore\Settings::get_site_id();
 "
 
 echo
@@ -82,7 +82,7 @@ echo "OK  sentinel file created; wp-config.php hash recorded: $WPCONFIG_HASH_BEF
 
 echo
 echo "=== Running the real one-click restore (this downloads a real ~production-scale backup; may take a few minutes) ==="
-wp_restore wpguard-nc-backup restore "$REAL_BACKUP_ID" --confirm-url-mismatch 2>&1 | tee "$SCRATCH/restore_run.log"
+wp_restore wpthistle-backup-restore restore "$REAL_BACKUP_ID" --confirm-url-mismatch 2>&1 | tee "$SCRATCH/restore_run.log"
 # Checked HERE, immediately after the restore CLI command itself returns --
 # before any OTHER wp-cli invocation gets a chance to boot WordPress with
 # the now-restored, now-genuinely-active third-party plugins. Found live:
@@ -96,8 +96,8 @@ wp_restore wpguard-nc-backup restore "$REAL_BACKUP_ID" --confirm-url-mismatch 2>
 WPCONFIG_HASH_IMMEDIATELY_AFTER=$(docker exec wpguard-test-wp-restore-1 sh -c "sha256sum /var/www/html/wp-config.php" | awk '{print $1}')
 tail -5 "$SCRATCH/restore_run.log"
 
-RESTORE_JOB_ID=$(wp_restore eval 'echo \WPGuard\NCBackup\Job_Store::get_latest()["job_id"];')
-RESTORE_STATUS=$(wp_restore eval "echo \WPGuard\NCBackup\Job_Store::get('$RESTORE_JOB_ID')['status'];")
+RESTORE_JOB_ID=$(wp_restore eval 'echo \WPThistle\BackupRestore\Job_Store::get_latest()["job_id"];')
+RESTORE_STATUS=$(wp_restore eval "echo \WPThistle\BackupRestore\Job_Store::get('$RESTORE_JOB_ID')['status'];")
 [ "$RESTORE_STATUS" = "verified" ] || { echo "FAIL: restore job did not reach 'verified', got '$RESTORE_STATUS'"; exit 1; }
 echo "OK  restore job $RESTORE_JOB_ID reached 'verified'"
 
@@ -107,21 +107,21 @@ echo "OK  wp-config.php byte-identical before and immediately after the restore 
 echo
 echo "=== Assertions ==="
 
-PLUGIN_SETTINGS_USER=$(wp_restore eval "echo \WPGuard\NCBackup\Settings::get_nextcloud_user();")
+PLUGIN_SETTINGS_USER=$(wp_restore eval "echo \WPThistle\BackupRestore\Settings::get_nextcloud_user();")
 [ "$PLUGIN_SETTINGS_USER" = "$NC_TEST_USER" ] || { echo "FAIL: plugin's own Nextcloud settings were NOT preserved across the restore -- got user '$PLUGIN_SETTINGS_USER'"; exit 1; }
 echo "OK  plugin's own Nextcloud connection settings survived the restore intact (captured_options re-apply worked)"
 
-PLUGIN_SITE_ID=$(wp_restore eval "echo \WPGuard\NCBackup\Settings::get_site_id();")
+PLUGIN_SITE_ID=$(wp_restore eval "echo \WPThistle\BackupRestore\Settings::get_site_id();")
 [ "$PLUGIN_SITE_ID" = "$REAL_SITE_ID" ] || { echo "FAIL: site_id was not preserved, got '$PLUGIN_SITE_ID'"; exit 1; }
 echo "OK  site_id preserved"
 
-JOB_ROW_STATUS=$(wp_restore eval "echo \WPGuard\NCBackup\Job_Store::get('$RESTORE_JOB_ID')['status'] ?? 'MISSING';")
-[ "$JOB_ROW_STATUS" = "verified" ] || { echo "FAIL: the restore job's OWN row in wp_wpguard_nc_jobs did not survive the DB swap intact (jobs-table exclusion failed), got '$JOB_ROW_STATUS'"; exit 1; }
+JOB_ROW_STATUS=$(wp_restore eval "echo \WPThistle\BackupRestore\Job_Store::get('$RESTORE_JOB_ID')['status'] ?? 'MISSING';")
+[ "$JOB_ROW_STATUS" = "verified" ] || { echo "FAIL: the restore job's OWN row in ${PREFIX}wpthistle_backup_jobs did not survive the DB swap intact (jobs-table exclusion failed), got '$JOB_ROW_STATUS'"; exit 1; }
 echo "OK  the restore job's own tracking row survived the live/shadow table swap untouched (jobs-table exclusion confirmed)"
 
 SENTINEL_STILL_LIVE=$(docker exec wpguard-test-wp-restore-1 sh -c "test -f /var/www/html/$SENTINEL_REL && echo yes || echo no")
 [ "$SENTINEL_STILL_LIVE" = "no" ] || { echo "FAIL: pre-restore sentinel file (not part of the backup) is still at its live path -- should have been quarantined, not left in place"; exit 1; }
-QUARANTINED=$(docker exec wpguard-test-wp-restore-1 sh -c "find /var/www/html/wp-content/wpguard-nc-restore-tmp -path '*quarantine*pre-restore-sentinel.txt' 2>/dev/null | head -1")
+QUARANTINED=$(docker exec wpguard-test-wp-restore-1 sh -c "find /var/www/html/wp-content/wpthistle-restore-tmp -path '*quarantine*pre-restore-sentinel.txt' 2>/dev/null | head -1")
 [ -n "$QUARANTINED" ] || { echo "FAIL: pre-restore sentinel file was removed from its live path but not found anywhere under the rollback/quarantine directory -- it may have been deleted outright instead of quarantined"; exit 1; }
 echo "OK  pre-restore sentinel file (not part of the backup) was quarantined (moved aside), not deleted -- found at $QUARANTINED"
 
@@ -133,8 +133,8 @@ SHADOW_TABLES=$(wp_restore db query "SHOW TABLES LIKE 'wpgshd%';" --skip-column-
 [ "$SHADOW_TABLES" -eq 0 ] || { echo "FAIL: expected zero leftover shadow (wpgshd-prefixed) tables after a successful swap, found $SHADOW_TABLES"; exit 1; }
 echo "OK  no leftover shadow tables after a successful swap"
 
-JOBS_TABLE_LIVE=$(wp_restore db query "SELECT COUNT(*) FROM wp_wpguard_nc_jobs;" --skip-column-names 2>/dev/null)
-[ "$JOBS_TABLE_LIVE" -ge 1 ] || { echo "FAIL: live wp_wpguard_nc_jobs table is empty/missing after restore"; exit 1; }
+JOBS_TABLE_LIVE=$(wp_restore db query "SELECT COUNT(*) FROM ${PREFIX}wpthistle_backup_jobs;" --skip-column-names 2>/dev/null)
+[ "$JOBS_TABLE_LIVE" -ge 1 ] || { echo "FAIL: live ${PREFIX}wpthistle_backup_jobs table is empty/missing after restore"; exit 1; }
 echo "OK  live jobs table intact with $JOBS_TABLE_LIVE row(s)"
 
 REAL_CONTENT_POST_COUNT=$(wp_restore post list --post_type=post --format=count)

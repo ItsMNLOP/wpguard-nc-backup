@@ -1,25 +1,25 @@
 <?php
 /**
- * Plugin Name:       WPGuard Backup and Restore
- * Plugin URI:        https://github.com/ItsMNLOP/wpguard-nc-backup
- * Update URI:        https://github.com/ItsMNLOP/wpguard-nc-backup
+ * Plugin Name:       WPThistle Backup and Restore
+ * Plugin URI:        https://github.com/ItsMNLOP/wpthistle-backup-restore
+ * Update URI:        https://github.com/ItsMNLOP/wpthistle-backup-restore
  * Description:       Creates recoverable backups of this WordPress site (files + database) and transfers them to a user-controlled Nextcloud, ownCloud, or OpenCloud server over authenticated HTTPS WebDAV -- or packages them straight to your browser with zero cloud dependency. Manual or scheduled backups, retention pruning, and one-click in-place restore from either a configured server destination or an uploaded backup bundle.
- * Version:           1.4.0
+ * Version:           2.0.0
  * Requires at least: 6.4
  * Requires PHP:      8.1
- * Author:            WPGuard project
+ * Author:            WPThistle project
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain:       wpguard-nc-backup
+ * Text Domain:       wpthistle-backup-restore
  */
 
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WPGUARD_NC_VERSION', '1.4.0' );
+define( 'WPTHISTLE_BACKUP_VERSION', '2.0.0' );
 // Phase 2 (incremental backups): bumped 1 -> 2. Every manifest this
 // plugin writes from here on -- full or incremental alike -- carries
 // new backup_mode/base_backup_id/parent_backup_id/files fields.
@@ -29,21 +29,21 @@ define( 'WPGUARD_NC_VERSION', '1.4.0' );
 // understand, rather than silently restoring a partial file set.
 // Restoring an OLDER format_version 1 backup is unaffected -- only
 // forward-compatibility is the thing being deliberately broken here.
-define( 'WPGUARD_NC_FORMAT_VERSION', 2 );
-define( 'WPGUARD_NC_DIR', plugin_dir_path( __FILE__ ) );
-define( 'WPGUARD_NC_URL', plugin_dir_url( __FILE__ ) );
+define( 'WPTHISTLE_BACKUP_FORMAT_VERSION', 2 );
+define( 'WPTHISTLE_BACKUP_DIR', plugin_dir_path( __FILE__ ) );
+define( 'WPTHISTLE_BACKUP_URL', plugin_dir_url( __FILE__ ) );
 // Phase 3 (downloadable backups): bumped 1 -> 2, adds the jobs table's
 // own `destination` column (see class-job-store.php's create() docblock).
-define( 'WPGUARD_NC_DB_SCHEMA_VERSION', 2 );
+define( 'WPTHISTLE_BACKUP_DB_SCHEMA_VERSION', 2 );
 
 spl_autoload_register(
 	function ( $class ) {
-		$prefix = 'WPGuard\\NCBackup\\';
+		$prefix = 'WPThistle\\BackupRestore\\';
 		if ( strpos( $class, $prefix ) !== 0 ) {
 			return;
 		}
 		$relative = substr( $class, strlen( $prefix ) );
-		$file     = WPGUARD_NC_DIR . 'includes/class-' . strtolower( str_replace( '_', '-', $relative ) ) . '.php';
+		$file     = WPTHISTLE_BACKUP_DIR . 'includes/class-' . strtolower( str_replace( '_', '-', $relative ) ) . '.php';
 		if ( file_exists( $file ) ) {
 			require $file;
 		}
@@ -53,14 +53,86 @@ spl_autoload_register(
 register_activation_hook( __FILE__, __NAMESPACE__ . '\\activate' );
 register_deactivation_hook( __FILE__, __NAMESPACE__ . '\\deactivate' );
 
-const STALE_LOCK_CHECK_HOOK = 'wpguard_nc_stale_lock_check';
-const SCHEDULED_BACKUP_HOOK = 'wpguard_nc_scheduled_backup';
+const STALE_LOCK_CHECK_HOOK = 'wpthistle_backup_stale_lock_check';
+const SCHEDULED_BACKUP_HOOK = 'wpthistle_backup_scheduled_backup';
 
 function activate() {
+	migrate_from_legacy_wpguard();
 	Job_Store::install_or_upgrade_schema();
 	Settings::ensure_site_id();
 	sync_stale_lock_check();
 	sync_scheduled_backup();
+}
+
+/**
+ * 2.0.0 rename (WPGuard Nextcloud Backup -> WPThistle Backup and
+ * Restore): migrates data from the old plugin's storage into this
+ * plugin's own. Non-destructive -- nothing under the old names is
+ * deleted here; that only happens if the old plugin is itself
+ * uninstalled via its own uninstall.php, which this never touches. Safe
+ * cutover order: deactivate the old plugin (data stays on disk/in the
+ * DB), activate this one (this function runs and migrates it), verify,
+ * THEN delete the old plugin's files.
+ *
+ * A no-op on a brand-new install (nothing old to find) and on every
+ * activation after the first (the new settings option is already
+ * present, so this returns immediately).
+ */
+function migrate_from_legacy_wpguard(): void {
+	if ( false !== get_option( Settings::OPTION_KEY, false ) ) {
+		return;
+	}
+	$legacy_settings = get_option( 'wpguard_nc_settings', false );
+	if ( false === $legacy_settings ) {
+		return; // No legacy plugin data found -- genuinely a fresh install.
+	}
+	update_option( Settings::OPTION_KEY, $legacy_settings );
+
+	$legacy_site_id = get_option( 'wpguard_nc_site_id', false );
+	if ( false !== $legacy_site_id ) {
+		update_option( Settings::SITE_ID_KEY, $legacy_site_id );
+	}
+
+	$legacy_schema_version = get_option( 'wpguard_nc_db_schema_version', false );
+	if ( false !== $legacy_schema_version ) {
+		// Job_Store::install_or_upgrade_schema() runs right after this
+		// (still inside activate()) and reads this exact option to decide
+		// whether dbDelta() needs to run -- carrying the old value over
+		// means it correctly sees "already current" once the table itself
+		// is renamed below, rather than creating a second, empty table.
+		update_option( 'wpthistle_backup_db_schema_version', $legacy_schema_version );
+	}
+
+	$legacy_chain_state = get_option( 'wpguard_nc_chain_state', false );
+	if ( false !== $legacy_chain_state ) {
+		update_option( Backup_Chain::STATE_OPTION, $legacy_chain_state );
+	}
+
+	$legacy_retention_error = get_option( 'wpguard_nc_retention_last_error', false );
+	if ( false !== $legacy_retention_error ) {
+		update_option( Job_Orchestrator::RETENTION_ERROR_OPTION, $legacy_retention_error );
+	}
+
+	global $wpdb;
+	$old_table = $wpdb->prefix . 'wpguard_nc_jobs';
+	$new_table = Job_Store::table_name();
+	// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- both names are
+	// fixed constant-derived strings, never user input.
+	if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $old_table ) ) === $old_table ) {
+		$wpdb->query( "RENAME TABLE `{$old_table}` TO `{$new_table}`" );
+	}
+
+	// Orphaned entries under the old hook names would otherwise sit in
+	// wp_options('cron') forever -- nothing listens for them post-rename.
+	// sync_stale_lock_check()/sync_scheduled_backup(), called right after
+	// this inside activate(), schedule fresh events under the new names
+	// regardless of whether this clears anything.
+	wp_clear_scheduled_hook( 'wpguard_nc_stale_lock_check' );
+	wp_clear_scheduled_hook( 'wpguard_nc_scheduled_backup' );
+	// wpguard_nc_cron_advance is scheduled per-job (wp_schedule_single_event,
+	// not a single recurring hook), so there can be several pending events
+	// to clear here, not just one.
+	wp_clear_scheduled_hook( 'wpguard_nc_cron_advance' );
 }
 
 /**
@@ -101,7 +173,7 @@ function register_weekly_schedule( array $schedules ): array {
 	if ( ! isset( $schedules['weekly'] ) ) {
 		$schedules['weekly'] = array(
 			'interval' => 7 * DAY_IN_SECONDS,
-			'display'  => __( 'Once Weekly', 'wpguard-nc-backup' ),
+			'display'  => __( 'Once Weekly', 'wpthistle-backup-restore' ),
 		);
 	}
 	return $schedules;
@@ -151,7 +223,7 @@ function run_scheduled_backup(): void {
 	if ( '' === $job_id ) {
 		return;
 	}
-	wp_schedule_single_event( time() + 5, 'wpguard_nc_cron_advance', array( $job_id ) );
+	wp_schedule_single_event( time() + 5, 'wpthistle_backup_cron_advance', array( $job_id ) );
 }
 
 add_action( 'plugins_loaded', __NAMESPACE__ . '\\boot' );
@@ -174,7 +246,7 @@ function boot() {
 	// only data path in is the TLS-authenticated GitHub API response.
 	( new Update_Checker( plugin_basename( __FILE__ ) ) )->register();
 
-	add_action( 'wpguard_nc_cron_advance', __NAMESPACE__ . '\\cron_advance' );
+	add_action( 'wpthistle_backup_cron_advance', __NAMESPACE__ . '\\cron_advance' );
 
 	// JOB-05 (Phase 2) safety net: Job_Orchestrator::create_job() already
 	// reaps a stale job the moment anyone next tries to back up, but a
@@ -198,7 +270,7 @@ function boot() {
 	sync_scheduled_backup();
 
 	if ( defined( 'WP_CLI' ) && WP_CLI ) {
-		\WP_CLI::add_command( 'wpguard-nc-backup', new CLI_Command() );
+		\WP_CLI::add_command( 'wpthistle-backup-restore', new CLI_Command() );
 	}
 }
 
@@ -227,5 +299,5 @@ function cron_advance( string $job_id ) {
 			return;
 		}
 	}
-	wp_schedule_single_event( time() + 5, 'wpguard_nc_cron_advance', array( $job_id ) );
+	wp_schedule_single_event( time() + 5, 'wpthistle_backup_cron_advance', array( $job_id ) );
 }

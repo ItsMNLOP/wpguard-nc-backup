@@ -40,14 +40,14 @@ docker compose -p wpguard-test exec -T db-restore mariadb -u root -p"$WP_RESTORE
   -e "DROP DATABASE IF EXISTS wp_restore; CREATE DATABASE wp_restore; GRANT ALL ON wp_restore.* TO 'wp_restore'@'%';" > /dev/null
 wpr core install --url="http://127.0.0.1:8082" --title="AJAX Safety Test" \
   --admin_user=wpadmin --admin_password=RestoreE2EAdminPW --admin_email=wpadmin@wpguard-test.local --skip-email > /dev/null
-wpr plugin activate wpguard-nc-backup > /dev/null
+wpr plugin activate wpthistle-backup-restore > /dev/null
 
 NC_BACKUP_USER_PASSWORD=$(env_val NC_BACKUP_USER_PASSWORD)
 APP_PASSWORD=$(curl -sk --cacert certs/wpguard-test-ca.crt -u "$NC_BACKUP_USER:$NC_BACKUP_USER_PASSWORD" \
   -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
   https://127.0.0.1:8443/ocs/v2.php/core/getapppassword | sed -n 's/.*"apppassword":"\([^"]*\)".*/\1/p')
 wpr eval "
-  \WPGuard\NCBackup\Settings::save(array(
+  \WPThistle\BackupRestore\Settings::save(array(
     'nextcloud_url' => 'https://nc-proxy.wpguard-test.local',
     'nextcloud_user' => '$NC_BACKUP_USER',
     'app_password' => '$APP_PASSWORD',
@@ -75,7 +75,7 @@ echo "OK  synthetic plugin-a (main.php requiring helper.php) created and active"
 
 echo
 echo "=== Backup A: taken while plugin-a still only needs helper.php ==="
-wpr wpguard-nc-backup run > /dev/null 2>&1 || true
+wpr wpthistle-backup-restore run > /dev/null 2>&1 || true
 # Confirmed transient infra flakiness, not a code defect: an immediate
 # follow-up `docker compose run --rm` container occasionally doesn't
 # see the previous one's just-committed row on its first query, even
@@ -83,7 +83,7 @@ wpr wpguard-nc-backup run > /dev/null 2>&1 || true
 # genuinely there -- retried rather than chased further.
 RESULT_A=""
 for attempt in 1 2 3 4 5; do
-  RESULT_A=$(wpr eval '$j = \WPGuard\NCBackup\Job_Store::get_latest(); echo ($j["backup_id"] ?? "") . "|" . ($j["status"] ?? "");')
+  RESULT_A=$(wpr eval '$j = \WPThistle\BackupRestore\Job_Store::get_latest(); echo ($j["backup_id"] ?? "") . "|" . ($j["status"] ?? "");')
   [ -n "$RESULT_A" ] && [[ "$RESULT_A" == *"|"* ]] && break
   sleep 2
 done
@@ -111,13 +111,13 @@ echo "OK  plugin-a's live version now depends on new-required.php, which backup 
 
 echo
 echo "=== Drive the restore from backup A one advance() call at a time, EACH via a genuinely separate process (fresh WordPress bootstrap every time -- matching real AJAX/cron, not the CLI command's own internal loop) ==="
-JOB_ID=$(wpr eval "echo \WPGuard\NCBackup\Restore_Orchestrator::create_restore_job(array('type'=>'nextcloud'), '$BACKUP_A', true);")
+JOB_ID=$(wpr eval "echo \WPThistle\BackupRestore\Restore_Orchestrator::create_restore_job(array('type'=>'nextcloud'), '$BACKUP_A', true);")
 echo "job=$JOB_ID"
 [ -n "$JOB_ID" ] || { echo "FAIL: could not create restore job"; exit 1; }
 
 FATAL_SEEN=0
 for i in $(seq 1 400); do
-  RESULT=$(wpr eval "\$j = \WPGuard\NCBackup\Restore_Orchestrator::advance('$JOB_ID'); echo \$j['step'] . '|' . \$j['status'];")
+  RESULT=$(wpr eval "\$j = \WPThistle\BackupRestore\Restore_Orchestrator::advance('$JOB_ID'); echo \$j['step'] . '|' . \$j['status'];")
   if [[ "$RESULT" == *"Fatal error"* || "$RESULT" == *"critical error"* ]]; then
     echo "FAIL: a fresh bootstrap at iteration $i fataled -- the AJAX/cron path is NOT safe. Output: $RESULT"
     FATAL_SEEN=1
@@ -134,7 +134,7 @@ for i in $(seq 1 400); do
 done
 [ "$FATAL_SEEN" -eq 0 ] || exit 1
 
-FINAL_STATUS=$(wpr eval "echo \WPGuard\NCBackup\Job_Store::get('$JOB_ID')['status'];")
+FINAL_STATUS=$(wpr eval "echo \WPThistle\BackupRestore\Job_Store::get('$JOB_ID')['status'];")
 [ "$FINAL_STATUS" = "verified" ] || { echo "FAIL: restore did not reach 'verified' within 400 batches, got '$FINAL_STATUS'"; exit 1; }
 
 echo

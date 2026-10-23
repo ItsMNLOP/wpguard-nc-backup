@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\CA_Bundle;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\CA_Bundle;
 
 function test_rejects_oversized_file_before_reading_content() {
 	$path = tempnam( sys_get_temp_dir(), 'wpguard_ca_' );

@@ -35,10 +35,10 @@ services:
       WORDPRESS_DB_PASSWORD: ${WP_SOURCE_DB_PASSWORD}
       WORDPRESS_TABLE_PREFIX: ${WP_SOURCE_TABLE_PREFIX}
       WORDPRESS_CONFIG_EXTRA: |
-        define('WPGUARD_NC_CA_BUNDLE', '/usr/local/share/ca-certificates/wpguard-test-ca.crt');
+        define('WPTHISTLE_BACKUP_CA_BUNDLE', '/usr/local/share/ca-certificates/wpguard-test-ca.crt');
     volumes:
       - wp_source_html:/var/www/html
-      - ../plugin/wpguard-nc-backup:/var/www/html/wp-content/plugins/wpguard-nc-backup
+      - ../plugin/wpthistle-backup-restore:/var/www/html/wp-content/plugins/wpthistle-backup-restore
       - ./certs:/usr/local/share/ca-certificates:ro
       - ./php/uploads.ini:/usr/local/etc/php/conf.d/zz-wpguard-test-uploads.ini:ro
     ports:
@@ -272,7 +272,7 @@ services:
       # touches it, unlike wp-source which is a stable fixture other
       # E2E scripts depend on -- so this is the safe target for a real
       # in-place restore test, not wp-source.
-      - ../plugin/wpguard-nc-backup:/var/www/html/wp-content/plugins/wpguard-nc-backup
+      - ../plugin/wpthistle-backup-restore:/var/www/html/wp-content/plugins/wpthistle-backup-restore
       - ./php/uploads.ini:/usr/local/etc/php/conf.d/zz-wpguard-test-uploads.ini:ro
     ports:
       - "127.0.0.1:8082:80"
@@ -290,10 +290,10 @@ services:
       # setting whenever wpcli operates on html-source (ADR 0007's CA
       # trust path and the DB_* vars below for the same reason).
       WORDPRESS_CONFIG_EXTRA: |
-        define('WPGUARD_NC_CA_BUNDLE', '/usr/local/share/ca-certificates/wpguard-test-ca.crt');
+        define('WPTHISTLE_BACKUP_CA_BUNDLE', '/usr/local/share/ca-certificates/wpguard-test-ca.crt');
     volumes:
       - wp_source_html:/var/www/html-source
-      - ../plugin/wpguard-nc-backup:/var/www/html-source/wp-content/plugins/wpguard-nc-backup
+      - ../plugin/wpthistle-backup-restore:/var/www/html-source/wp-content/plugins/wpthistle-backup-restore
       - wp_restore_html:/var/www/html-restore
       # Phase 2 (one-click restore E2E): wpcli never had the plugin
       # mounted into its own html-restore path at all -- only the
@@ -303,7 +303,7 @@ services:
       # leftovers from an earlier manual-unzip restore drill), not a
       # live view of this repo. Found live when a freshly emptied
       # volume made that gap obvious (every class simply missing).
-      - ../plugin/wpguard-nc-backup:/var/www/html-restore/wp-content/plugins/wpguard-nc-backup
+      - ../plugin/wpthistle-backup-restore:/var/www/html-restore/wp-content/plugins/wpthistle-backup-restore
       - ./certs:/certs:ro
       - ./certs:/usr/local/share/ca-certificates:ro
       - ../tests/fixtures:/fixtures:ro

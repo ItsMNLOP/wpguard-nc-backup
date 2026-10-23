@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -27,15 +27,15 @@ class Manifest {
 	public static function new_skeleton( string $backup_id, string $site_id, array $chain_plan ): array {
 		global $wpdb;
 		return array(
-			'format_version'    => WPGUARD_NC_FORMAT_VERSION,
+			'format_version'    => WPTHISTLE_BACKUP_FORMAT_VERSION,
 			'backup_id'         => $backup_id,
 			'site_id'           => $site_id,
 			'backup_mode'       => $chain_plan['mode'],
 			'base_backup_id'    => $chain_plan['base_backup_id'],
 			'parent_backup_id'  => $chain_plan['parent_backup_id'],
 			'created_at_utc' => gmdate( 'Y-m-d\TH:i:s\Z' ),
-			'plugin_version' => WPGUARD_NC_VERSION,
-			'generator'      => 'wpguard-nc-backup',
+			'plugin_version' => WPTHISTLE_BACKUP_VERSION,
+			'generator'      => 'wpthistle-backup-restore',
 			'source'         => array(
 				'wp_version'   => function_exists( 'get_bloginfo' ) ? get_bloginfo( 'version' ) : '',
 				'php_version'  => PHP_VERSION,
@@ -100,7 +100,7 @@ class Manifest {
 	public static function complete_json( string $backup_id, string $manifest_json ): string {
 		return wp_json_encode(
 			array(
-				'format_version'   => WPGUARD_NC_FORMAT_VERSION,
+				'format_version'   => WPTHISTLE_BACKUP_FORMAT_VERSION,
 				'backup_id'        => $backup_id,
 				'completed_at_utc' => gmdate( 'Y-m-d\TH:i:s\Z' ),
 				'manifest_sha256'  => hash( 'sha256', $manifest_json ),
@@ -115,8 +115,8 @@ class Manifest {
 		if ( ! isset( $decoded['format_version'] ) || ! is_int( $decoded['format_version'] ) ) {
 			return 'Manifest is missing a valid format_version field.';
 		}
-		if ( $decoded['format_version'] > WPGUARD_NC_FORMAT_VERSION ) {
-			return "Manifest format_version {$decoded['format_version']} is newer than this plugin supports (max " . WPGUARD_NC_FORMAT_VERSION . '). Refusing to guess — upgrade the plugin/restore tooling.';
+		if ( $decoded['format_version'] > WPTHISTLE_BACKUP_FORMAT_VERSION ) {
+			return "Manifest format_version {$decoded['format_version']} is newer than this plugin supports (max " . WPTHISTLE_BACKUP_FORMAT_VERSION . '). Refusing to guess — upgrade the plugin/restore tooling.';
 		}
 		return true;
 	}

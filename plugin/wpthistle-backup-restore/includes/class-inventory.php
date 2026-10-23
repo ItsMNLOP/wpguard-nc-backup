@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -23,8 +23,8 @@ class Inventory {
 	/** @var string[] Glob-style exclusion patterns, matched against the path relative to ABSPATH. */
 	const EXCLUDED_PATTERNS = array(
 		'wp-content/cache/*',
-		'wp-content/wpguard-nc-backup-tmp/*',
-		'wp-content/wpguard-nc-backup-tmp',
+		'wp-content/wpthistle-backup-restore-tmp/*',
+		'wp-content/wpthistle-backup-restore-tmp',
 		// Phase 2 (one-click restore): found live -- without this, a
 		// restore's own in-progress staging directory (itself sitting
 		// under wp-content/, same as the backup tmp dir above) gets
@@ -32,10 +32,10 @@ class Inventory {
 		// files to quarantine, and the restore ends up quarantining
 		// (moving away) its OWN not-yet-applied staged backup parts
 		// before it ever gets to use them.
-		'wp-content/wpguard-nc-restore-tmp/*',
-		'wp-content/wpguard-nc-restore-tmp',
-		'wp-content/wpguard-nc-restore-upload/*',
-		'wp-content/wpguard-nc-restore-upload',
+		'wp-content/wpthistle-restore-tmp/*',
+		'wp-content/wpthistle-restore-tmp',
+		'wp-content/wpthistle-restore-upload/*',
+		'wp-content/wpthistle-restore-upload',
 	);
 
 	/**

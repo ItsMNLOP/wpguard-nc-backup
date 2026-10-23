@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Settings;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Settings;
 
 function test_rejects_plain_http_url() {
 	$GLOBALS['__wpguard_test_options'] = array();
@@ -137,12 +137,31 @@ function test_backend_rejects_unrecognized_value_without_failing_save() {
 function test_redact_wp_config_strips_credential_constants() {
 	$content = "<?php\n"
 		. "define('WP_DEBUG', false);\n"
-		. "define('WPGUARD_NC_APP_PASSWORD', 'super-secret-app-pw');\n"
-		. "define('WPGUARD_NC_CA_BUNDLE', '/path/to/ca.crt');\n"
+		. "define('WPTHISTLE_BACKUP_APP_PASSWORD', 'super-secret-app-pw');\n"
+		. "define('WPTHISTLE_BACKUP_CA_BUNDLE', '/path/to/ca.crt');\n"
 		. "define('DB_NAME', 'wordpress');\n";
 	$redacted = Settings::redact_wp_config_contents( $content );
 	wpguard_assert( false === strpos( $redacted, 'super-secret-app-pw' ), 'app-password constant value must not survive redaction' );
 	wpguard_assert( false === strpos( $redacted, '/path/to/ca.crt' ), 'ca-bundle constant value must not survive redaction' );
+	wpguard_assert( false !== strpos( $redacted, "define('WP_DEBUG', false);" ), 'unrelated defines must be preserved verbatim' );
+	wpguard_assert( false !== strpos( $redacted, "define('DB_NAME', 'wordpress');" ), 'unrelated defines must be preserved verbatim' );
+}
+
+// 2.0.0 rename: the legacy WPGUARD_NC_* constant names are still a
+// supported fallback (Settings::active_app_pw_const()/
+// active_ca_bundle_const()) for a site whose wp-config.php hasn't been
+// updated to the new names yet -- redaction must cover them too, or
+// exactly the site that fallback exists for archives its real
+// credential unredacted.
+function test_redact_wp_config_strips_legacy_credential_constants() {
+	$content = "<?php\n"
+		. "define('WP_DEBUG', false);\n"
+		. "define('WPGUARD_NC_APP_PASSWORD', 'legacy-secret-app-pw');\n"
+		. "define('WPGUARD_NC_CA_BUNDLE', '/legacy/path/to/ca.crt');\n"
+		. "define('DB_NAME', 'wordpress');\n";
+	$redacted = Settings::redact_wp_config_contents( $content );
+	wpguard_assert( false === strpos( $redacted, 'legacy-secret-app-pw' ), 'legacy app-password constant value must not survive redaction' );
+	wpguard_assert( false === strpos( $redacted, '/legacy/path/to/ca.crt' ), 'legacy ca-bundle constant value must not survive redaction' );
 	wpguard_assert( false !== strpos( $redacted, "define('WP_DEBUG', false);" ), 'unrelated defines must be preserved verbatim' );
 	wpguard_assert( false !== strpos( $redacted, "define('DB_NAME', 'wordpress');" ), 'unrelated defines must be preserved verbatim' );
 }
@@ -162,7 +181,7 @@ function test_redact_wp_config_strips_credential_constants() {
 // mainstream WordPress installer or hosting panel has ever been
 // observed defining a credential constant via string concatenation.
 function test_redact_wp_config_known_gap_const_syntax_not_caught() {
-	$content = "<?php\nconst WPGUARD_NC_APP_PASSWORD = 'leaks-through-const-syntax';\n";
+	$content = "<?php\nconst WPTHISTLE_BACKUP_APP_PASSWORD = 'leaks-through-const-syntax';\n";
 	$redacted = Settings::redact_wp_config_contents( $content );
 	wpguard_assert( false !== strpos( $redacted, 'leaks-through-const-syntax' ), 'documents the known gap: const syntax is not matched by the define()-shaped regex' );
 }
@@ -176,14 +195,14 @@ function test_redact_wp_config_known_gap_const_syntax_not_caught() {
 // partial match). Covers both quote styles since the fix is shared by
 // redact_wp_config_contents() and redact_wp_config_db_credentials().
 function test_redact_wp_config_survives_value_containing_close_paren_semicolon() {
-	$content = "<?php\ndefine('WPGUARD_NC_APP_PASSWORD', 'first);remaining');\n";
+	$content = "<?php\ndefine('WPTHISTLE_BACKUP_APP_PASSWORD', 'first);remaining');\n";
 	$redacted = Settings::redact_wp_config_contents( $content );
 	wpguard_assert( false === strpos( $redacted, 'remaining' ), 'a value containing its own ");" must not leave a fragment unredacted' );
 	wpguard_assert( false === strpos( $redacted, 'first' ), 'the whole value must be gone, not just the tail after the embedded ");"' );
 }
 
 function test_redact_wp_config_survives_double_quoted_value_containing_close_paren_semicolon() {
-	$content = '<?php' . "\n" . 'define("WPGUARD_NC_APP_PASSWORD", "first);remaining");' . "\n";
+	$content = '<?php' . "\n" . 'define("WPTHISTLE_BACKUP_APP_PASSWORD", "first);remaining");' . "\n";
 	$redacted = Settings::redact_wp_config_contents( $content );
 	wpguard_assert( false === strpos( $redacted, 'remaining' ), 'a double-quoted value containing its own ");" must not leave a fragment unredacted' );
 }
@@ -220,22 +239,39 @@ function test_redact_wp_config_db_credentials_survives_password_containing_close
 	wpguard_assert( false === strpos( $redacted, 'first' ), 'the whole value must be gone, not just the tail' );
 }
 
-// Defines a real PHP constant — must run last in this file, since PHP
-// constants cannot be undefined and would otherwise lock every test
-// after it. run-all.php sorts files alphabetically and UpdateCheckerTest.php
-// now sorts after this file, but defines no constants, so the ordering
-// requirement here is still satisfied in practice.
+// Defines a real PHP constant — must run last in this file (specifically,
+// after test_legacy_app_password_constant_still_locks below, which
+// needs WPTHISTLE_BACKUP_APP_PASSWORD still undefined so
+// active_app_pw_const() actually falls through to the legacy name),
+// since PHP constants cannot be undefined and would otherwise lock
+// every test after it. run-all.php sorts files alphabetically and
+// UpdateCheckerTest.php now sorts after this file, but defines no
+// constants, so the ordering requirement here is still satisfied in
+// practice. The execution order that matters is the returned array
+// below, not this function's physical position in the file.
 function test_locked_app_password_purges_stored_wp_options_value() {
 	$GLOBALS['__wpguard_test_options'] = array(
 		Settings::OPTION_KEY => array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => 'old-option-stored-secret', 'ca_bundle_path' => '' ),
 	);
-	define( 'WPGUARD_NC_APP_PASSWORD', 'constant-sourced-secret' );
+	define( 'WPTHISTLE_BACKUP_APP_PASSWORD', 'constant-sourced-secret' );
 	wpguard_assert( Settings::is_app_password_locked(), 'defining the constant must lock the app password' );
 	$result = Settings::save( array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups' ) );
 	wpguard_assert( true === $result['ok'], 'save must still succeed while the password is constant-locked' );
 	wpguard_assert_equals( 'constant-sourced-secret', Settings::get_app_password(), 'get_app_password() must read the constant while locked' );
 	$stored = Settings::get_all();
 	wpguard_assert_equals( '', $stored['app_password'], 'the stale wp_options value must be purged once the constant takes over (H-02)' );
+}
+
+// 2.0.0 rename: a site whose wp-config.php still defines the LEGACY
+// constant name (not yet updated to WPTHISTLE_BACKUP_APP_PASSWORD)
+// must still lock correctly through the fallback.
+function test_legacy_app_password_constant_still_locks() {
+	$GLOBALS['__wpguard_test_options'] = array(
+		Settings::OPTION_KEY => array( 'nextcloud_url' => 'https://nc.example.com', 'nextcloud_user' => 'u', 'remote_folder' => 'backups', 'app_password' => '', 'ca_bundle_path' => '' ),
+	);
+	define( 'WPGUARD_NC_APP_PASSWORD', 'legacy-constant-sourced-secret' );
+	wpguard_assert( Settings::is_app_password_locked(), 'the legacy constant name must still lock the app password' );
+	wpguard_assert_equals( 'legacy-constant-sourced-secret', Settings::get_app_password(), 'get_app_password() must fall back to reading the legacy constant' );
 }
 
 return array(
@@ -256,10 +292,12 @@ return array(
 	'test_backend_accepts_owncloud_and_opencloud',
 	'test_backend_rejects_unrecognized_value_without_failing_save',
 	'test_redact_wp_config_strips_credential_constants',
+	'test_redact_wp_config_strips_legacy_credential_constants',
 	'test_redact_wp_config_known_gap_const_syntax_not_caught',
 	'test_redact_wp_config_survives_value_containing_close_paren_semicolon',
 	'test_redact_wp_config_survives_double_quoted_value_containing_close_paren_semicolon',
 	'test_redact_wp_config_db_credentials_strips_db_constants',
 	'test_redact_wp_config_db_credentials_survives_password_containing_close_paren_semicolon',
+	'test_legacy_app_password_constant_still_locks',
 	'test_locked_app_password_purges_stored_wp_options_value',
 );

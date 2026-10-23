@@ -25,7 +25,7 @@ and only reading an optional override constant.
 Follow the brief for MVP: store the credential in a dedicated `wp_options`
 row (not autoloaded), gated behind `manage_options` capability and nonce
 checks on every read/write path. Support an **optional** override: if the
-constant `WPGUARD_NC_APP_PASSWORD` (and `WPGUARD_NC_CA_BUNDLE` for the test CA,
+constant `WPTHISTLE_BACKUP_APP_PASSWORD` (and `WPTHISTLE_BACKUP_CA_BUNDLE` for the test CA,
 see ADR 0007) is defined in `wp-config.php`, it takes precedence over the
 stored option and the settings field is shown as locked/disabled with a note
 explaining why. This gives operators who want the file-based-secret

@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -128,7 +128,7 @@ class Nextcloud_Client {
 		if ( in_array( $code, array( 201, 405 ), true ) ) {
 			return true;
 		}
-		return new \WP_Error( 'wpguard_nc_mkcol_failed', sprintf( 'MKCOL failed with HTTP %d', $code ), array( 'status' => $code ) );
+		return new \WP_Error( 'wpthistle_backup_mkcol_failed', sprintf( 'MKCOL failed with HTTP %d', $code ), array( 'status' => $code ) );
 	}
 
 	/** Creates nested remote directories one level at a time. */
@@ -159,7 +159,7 @@ class Nextcloud_Client {
 		if ( in_array( $code, array( 200, 201, 204 ), true ) ) {
 			return true;
 		}
-		return new \WP_Error( 'wpguard_nc_put_failed', sprintf( 'PUT failed with HTTP %d', $code ), array( 'status' => $code ) );
+		return new \WP_Error( 'wpthistle_backup_put_failed', sprintf( 'PUT failed with HTTP %d', $code ), array( 'status' => $code ) );
 	}
 
 	/**
@@ -186,7 +186,7 @@ class Nextcloud_Client {
 			return array( 'exists' => false, 'length' => 0 );
 		}
 		if ( 207 !== $code ) {
-			return new \WP_Error( 'wpguard_nc_propfind_failed', sprintf( 'PROPFIND failed with HTTP %d', $code ), array( 'status' => $code ) );
+			return new \WP_Error( 'wpthistle_backup_propfind_failed', sprintf( 'PROPFIND failed with HTTP %d', $code ), array( 'status' => $code ) );
 		}
 		$xml_text = wp_remote_retrieve_body( $response );
 		$previous = libxml_use_internal_errors( true );
@@ -198,7 +198,7 @@ class Nextcloud_Client {
 		$xml = simplexml_load_string( $xml_text, 'SimpleXMLElement', LIBXML_NONET );
 		libxml_use_internal_errors( $previous );
 		if ( false === $xml ) {
-			return new \WP_Error( 'wpguard_nc_propfind_parse_failed', 'Could not parse PROPFIND XML response.' );
+			return new \WP_Error( 'wpthistle_backup_propfind_parse_failed', 'Could not parse PROPFIND XML response.' );
 		}
 		$xml->registerXPathNamespace( 'd', 'DAV:' );
 		$nodes = $xml->xpath( '//d:getcontentlength' );
@@ -234,7 +234,7 @@ class Nextcloud_Client {
 		}
 		$code = wp_remote_retrieve_response_code( $response );
 		if ( 200 !== $code ) {
-			return new \WP_Error( 'wpguard_nc_get_failed', sprintf( 'GET failed with HTTP %d', $code ), array( 'status' => $code ) );
+			return new \WP_Error( 'wpthistle_backup_get_failed', sprintf( 'GET failed with HTTP %d', $code ), array( 'status' => $code ) );
 		}
 		// Kept as defense in depth: limit_response_size's behavior isn't
 		// identical across every WP HTTP transport, so the post-hoc check
@@ -243,7 +243,7 @@ class Nextcloud_Client {
 			$actual = filesize( $local_path );
 			if ( $actual > $expected_max_bytes + $tolerance ) {
 				unlink( $local_path );
-				return new \WP_Error( 'wpguard_nc_size_exceeded', 'Downloaded object exceeded the manifest-declared size; aborted.' );
+				return new \WP_Error( 'wpthistle_backup_size_exceeded', 'Downloaded object exceeded the manifest-declared size; aborted.' );
 			}
 		}
 		return true;
@@ -290,7 +290,7 @@ class Nextcloud_Client {
 			return array();
 		}
 		if ( 207 !== $code ) {
-			return new \WP_Error( 'wpguard_nc_propfind_list_failed', sprintf( 'PROPFIND (list) failed with HTTP %d', $code ), array( 'status' => $code ) );
+			return new \WP_Error( 'wpthistle_backup_propfind_list_failed', sprintf( 'PROPFIND (list) failed with HTTP %d', $code ), array( 'status' => $code ) );
 		}
 		$xml_text = wp_remote_retrieve_body( $response );
 		$previous = libxml_use_internal_errors( true );
@@ -298,7 +298,7 @@ class Nextcloud_Client {
 		$xml = simplexml_load_string( $xml_text, 'SimpleXMLElement', LIBXML_NONET );
 		libxml_use_internal_errors( $previous );
 		if ( false === $xml ) {
-			return new \WP_Error( 'wpguard_nc_propfind_list_parse_failed', 'Could not parse PROPFIND XML response.' );
+			return new \WP_Error( 'wpthistle_backup_propfind_list_parse_failed', 'Could not parse PROPFIND XML response.' );
 		}
 		$xml->registerXPathNamespace( 'd', 'DAV:' );
 		// the security audit delta audit, 2026-10-20 (RETENTION-1): compared encoded, this
@@ -342,7 +342,7 @@ class Nextcloud_Client {
 	 *   or isn't valid JSON that decodes to an array.
 	 */
 	public function get_json( string $relative_path, int $max_bytes ) {
-		$tmp = wp_tempnam( 'wpguard-nc-manifest' );
+		$tmp = wp_tempnam( 'wpthistle-manifest' );
 		$download = $this->download_to_file( $relative_path, $tmp, $max_bytes );
 		if ( is_wp_error( $download ) ) {
 			@unlink( $tmp );
@@ -351,11 +351,11 @@ class Nextcloud_Client {
 		$raw = file_get_contents( $tmp );
 		@unlink( $tmp );
 		if ( false === $raw ) {
-			return new \WP_Error( 'wpguard_nc_get_json_read_failed', "Could not read downloaded object: {$relative_path}" );
+			return new \WP_Error( 'wpthistle_backup_get_json_read_failed', "Could not read downloaded object: {$relative_path}" );
 		}
 		$decoded = json_decode( $raw, true );
 		if ( ! is_array( $decoded ) ) {
-			return new \WP_Error( 'wpguard_nc_get_json_decode_failed', "Downloaded object is not valid JSON: {$relative_path}" );
+			return new \WP_Error( 'wpthistle_backup_get_json_decode_failed', "Downloaded object is not valid JSON: {$relative_path}" );
 		}
 		return $decoded;
 	}
@@ -402,7 +402,7 @@ class Nextcloud_Client {
 	 * against. Only 201 means supported.
 	 */
 	public function supports_chunked_upload_v2(): bool {
-		$cache_key = 'wpguard_nc_chunk_v2_support_' . md5( $this->base_url );
+		$cache_key = 'wpthistle_backup_chunk_v2_support_' . md5( $this->base_url );
 		$cached = get_transient( $cache_key );
 		if ( false !== $cached ) {
 			return 'yes' === $cached;
@@ -481,21 +481,21 @@ class Nextcloud_Client {
 		}
 		$mk_code = wp_remote_retrieve_response_code( $mk );
 		if ( ! in_array( $mk_code, array( 201, 405 ), true ) ) {
-			return new \WP_Error( 'wpguard_nc_chunk_mkcol_failed', sprintf( 'Chunked-upload session MKCOL failed with HTTP %d', $mk_code ), array( 'status' => $mk_code ) );
+			return new \WP_Error( 'wpthistle_backup_chunk_mkcol_failed', sprintf( 'Chunked-upload session MKCOL failed with HTTP %d', $mk_code ), array( 'status' => $mk_code ) );
 		}
 
 		$already = $this->list_uploaded_chunk_indices( $upload_id );
 
 		$fh = fopen( $local_path, 'rb' );
 		if ( false === $fh ) {
-			return new \WP_Error( 'wpguard_nc_chunk_open_failed', "Could not open local file for chunked read: {$local_path}" );
+			return new \WP_Error( 'wpthistle_backup_chunk_open_failed', "Could not open local file for chunked read: {$local_path}" );
 		}
 		$index = 0;
 		while ( ! feof( $fh ) ) {
 			$chunk = fread( $fh, self::CHUNK_SIZE_BYTES );
 			if ( false === $chunk ) {
 				fclose( $fh );
-				return new \WP_Error( 'wpguard_nc_chunk_read_failed', "Could not read local file for chunked upload: {$local_path}" );
+				return new \WP_Error( 'wpthistle_backup_chunk_read_failed', "Could not read local file for chunked upload: {$local_path}" );
 			}
 			if ( '' === $chunk ) {
 				break;
@@ -513,7 +513,7 @@ class Nextcloud_Client {
 				$put_code = wp_remote_retrieve_response_code( $put );
 				if ( ! in_array( $put_code, array( 200, 201, 204 ), true ) ) {
 					fclose( $fh );
-					return new \WP_Error( 'wpguard_nc_chunk_put_failed', sprintf( 'Chunk upload failed with HTTP %d', $put_code ), array( 'status' => $put_code ) );
+					return new \WP_Error( 'wpthistle_backup_chunk_put_failed', sprintf( 'Chunk upload failed with HTTP %d', $put_code ), array( 'status' => $put_code ) );
 				}
 			}
 			$index++;
@@ -547,7 +547,7 @@ class Nextcloud_Client {
 		if ( in_array( $move_code, array( 200, 201, 204 ), true ) ) {
 			return true;
 		}
-		return new \WP_Error( 'wpguard_nc_chunk_move_failed', sprintf( 'Chunk-assembly MOVE failed with HTTP %d', $move_code ), array( 'status' => $move_code ) );
+		return new \WP_Error( 'wpthistle_backup_chunk_move_failed', sprintf( 'Chunk-assembly MOVE failed with HTTP %d', $move_code ), array( 'status' => $move_code ) );
 	}
 
 	/**
@@ -573,12 +573,12 @@ class Nextcloud_Client {
 	public function upload_part( string $local_path, string $relative_path, string $upload_id ) {
 		$size = @filesize( $local_path );
 		if ( false === $size ) {
-			return new \WP_Error( 'wpguard_nc_upload_part_stat_failed', "Could not stat local file: {$local_path}" );
+			return new \WP_Error( 'wpthistle_backup_upload_part_stat_failed', "Could not stat local file: {$local_path}" );
 		}
 		if ( $size <= self::CHUNK_SIZE_BYTES || ! $this->supports_chunked_upload_v2() ) {
 			$bytes = file_get_contents( $local_path );
 			if ( false === $bytes ) {
-				return new \WP_Error( 'wpguard_nc_upload_part_read_failed', "Could not read local file: {$local_path}" );
+				return new \WP_Error( 'wpthistle_backup_upload_part_read_failed', "Could not read local file: {$local_path}" );
 			}
 			return $this->put_bytes( $relative_path, $bytes );
 		}
@@ -594,7 +594,7 @@ class Nextcloud_Client {
 		if ( in_array( $code, array( 200, 204, 404 ), true ) ) {
 			return true;
 		}
-		return new \WP_Error( 'wpguard_nc_delete_failed', sprintf( 'DELETE failed with HTTP %d', $code ), array( 'status' => $code ) );
+		return new \WP_Error( 'wpthistle_backup_delete_failed', sprintf( 'DELETE failed with HTTP %d', $code ), array( 'status' => $code ) );
 	}
 
 	/**
@@ -605,7 +605,7 @@ class Nextcloud_Client {
 	 * @return array{ok:bool, reason:string, message:string}
 	 */
 	public function test_connection(): array {
-		$probe_name = '.wpguard-nc-backup-test-' . bin2hex( random_bytes( 6 ) );
+		$probe_name = '.wpthistle-backup-restore-test-' . bin2hex( random_bytes( 6 ) );
 
 		$mk = $this->mkcol_recursive( trim( Settings::get_remote_folder(), '/' ) );
 		if ( is_wp_error( $mk ) ) {
@@ -613,7 +613,7 @@ class Nextcloud_Client {
 		}
 
 		$probe_rel = $this->relative_path( $probe_name );
-		$put = $this->put_bytes( $probe_rel, 'wpguard-nc-backup-connection-test' );
+		$put = $this->put_bytes( $probe_rel, 'wpthistle-backup-restore-connection-test' );
 		if ( is_wp_error( $put ) ) {
 			return $this->classify_failure( $put, 'write' );
 		}
@@ -621,15 +621,15 @@ class Nextcloud_Client {
 		$info = $this->propfind_size( $probe_rel );
 		if ( is_wp_error( $info ) || empty( $info['exists'] ) ) {
 			$this->delete( $probe_rel );
-			return array( 'ok' => false, 'reason' => 'read', 'message' => __( 'Wrote the test file but could not read it back.', 'wpguard-nc-backup' ) );
+			return array( 'ok' => false, 'reason' => 'read', 'message' => __( 'Wrote the test file but could not read it back.', 'wpthistle-backup-restore' ) );
 		}
 
 		$del = $this->delete( $probe_rel );
 		if ( is_wp_error( $del ) ) {
-			return array( 'ok' => false, 'reason' => 'delete', 'message' => __( 'Connected and wrote/read a test file, but could not delete it. Check folder permissions.', 'wpguard-nc-backup' ) );
+			return array( 'ok' => false, 'reason' => 'delete', 'message' => __( 'Connected and wrote/read a test file, but could not delete it. Check folder permissions.', 'wpthistle-backup-restore' ) );
 		}
 
-		return array( 'ok' => true, 'reason' => 'ok', 'message' => __( 'Connection verified: authenticated, and a test file could be written, read back, and deleted.', 'wpguard-nc-backup' ) );
+		return array( 'ok' => true, 'reason' => 'ok', 'message' => __( 'Connection verified: authenticated, and a test file could be written, read back, and deleted.', 'wpthistle-backup-restore' ) );
 	}
 
 	private function classify_failure( \WP_Error $error, string $stage ): array {
@@ -638,16 +638,16 @@ class Nextcloud_Client {
 		$message = $error->get_error_message();
 
 		if ( 401 === $status || 403 === $status ) {
-			return array( 'ok' => false, 'reason' => 'auth', 'message' => __( 'Authentication failed (401/403). Check the username and app password / app token.', 'wpguard-nc-backup' ) );
+			return array( 'ok' => false, 'reason' => 'auth', 'message' => __( 'Authentication failed (401/403). Check the username and app password / app token.', 'wpthistle-backup-restore' ) );
 		}
 		if ( 404 === $status ) {
-			return array( 'ok' => false, 'reason' => 'not_found', 'message' => __( 'Destination not found (404). Check the server URL and folder path.', 'wpguard-nc-backup' ) );
+			return array( 'ok' => false, 'reason' => 'not_found', 'message' => __( 'Destination not found (404). Check the server URL and folder path.', 'wpthistle-backup-restore' ) );
 		}
 		if ( 507 === $status ) {
-			return array( 'ok' => false, 'reason' => 'quota', 'message' => __( 'Server reported insufficient storage/quota.', 'wpguard-nc-backup' ) );
+			return array( 'ok' => false, 'reason' => 'quota', 'message' => __( 'Server reported insufficient storage/quota.', 'wpthistle-backup-restore' ) );
 		}
 		if ( 0 === $status ) {
-			return array( 'ok' => false, 'reason' => 'network', 'message' => __( 'Network or TLS error reaching the server: ', 'wpguard-nc-backup' ) . $this->logger->redact( $message ) );
+			return array( 'ok' => false, 'reason' => 'network', 'message' => __( 'Network or TLS error reaching the server: ', 'wpthistle-backup-restore' ) . $this->logger->redact( $message ) );
 		}
 		return array( 'ok' => false, 'reason' => $stage, 'message' => $this->logger->redact( $message ) );
 	}

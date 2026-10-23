@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Logger;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Logger;
 
 function test_redacts_known_secret_value() {
 	$secret = 'xk92-superSecretAppPassword-99';

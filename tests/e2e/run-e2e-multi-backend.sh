@@ -56,7 +56,7 @@ wp_restore() {
 }
 
 echo "=== Capturing wp-source's current plugin settings (restored at exit, whatever happens) ==="
-ORIGINAL_SETTINGS_JSON=$(wp_source option get wpguard_nc_settings --format=json)
+ORIGINAL_SETTINGS_JSON=$(wp_source option get wpthistle_backup_settings --format=json)
 printf '%s' "$ORIGINAL_SETTINGS_JSON" > "$SCRATCH/original-settings.json"
 
 ORIGINAL_WP_RESTORE_PREFIX=$(grep '^WP_RESTORE_TABLE_PREFIX=' .env | cut -d= -f2-)
@@ -65,7 +65,7 @@ restore_original_settings() {
   echo "=== Restoring wp-source's original plugin settings ==="
   wp_source_scratch eval '
     $data = json_decode( file_get_contents( "/scratch/original-settings.json" ), true );
-    $r = \WPGuard\NCBackup\Settings::save( $data );
+    $r = \WPThistle\BackupRestore\Settings::save( $data );
     echo $r["ok"] ? "restored ok\n" : "RESTORE FAILED: " . wp_json_encode( $r["errors"] ) . "\n";
   '
   # This script's own restore step changes WP_RESTORE_TABLE_PREFIX in
@@ -93,7 +93,7 @@ trap restore_original_settings EXIT
 # the backup living under this site's own site_id -- the real cross-site
 # case (run-e2e-restore.sh) forces SITE_ID_KEY to the source's id before
 # restoring, and this test does the same.
-SOURCE_SITE_ID=$(wp_source eval 'echo \WPGuard\NCBackup\Settings::get_site_id();')
+SOURCE_SITE_ID=$(wp_source eval 'echo \WPThistle\BackupRestore\Settings::get_site_id();')
 
 run_backend() {
   local backend="$1" url="$2" user="$3" cred="$4" folder="wpguard-backups-multi-backend-e2e"
@@ -117,8 +117,8 @@ run_backend() {
 
   echo "--- Connection test ---"
   CONN=$(wp_source eval '
-    $logger = new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) );
-    $client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( $logger );
+    $logger = new \WPThistle\BackupRestore\Logger( array( \WPThistle\BackupRestore\Settings::get_app_password() ) );
+    $client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( $logger );
     $r = $client->test_connection();
     echo wp_json_encode( $r );
   ')
@@ -127,24 +127,24 @@ run_backend() {
   echo "OK  ($backend) connection verified"
 
   echo "--- Backup #1 (full) ---"
-  wp_source wpguard-nc-backup run
-  BACKUP_1=$(wp_source wpguard-nc-backup status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
+  wp_source wpthistle-backup-restore run
+  BACKUP_1=$(wp_source wpthistle-backup-restore status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
   echo "OK  ($backend) backup #1 verified: $BACKUP_1"
 
   echo "--- Enable incremental, backup #2 (expect mode=incremental, nothing changed since #1) ---"
   wp_source eval '
-    $cur = \WPGuard\NCBackup\Settings::get_all();
+    $cur = \WPThistle\BackupRestore\Settings::get_all();
     $cur["incremental_enabled"] = true;
     $cur["app_password"] = "";
-    $r = \WPGuard\NCBackup\Settings::save( $cur );
+    $r = \WPThistle\BackupRestore\Settings::save( $cur );
     echo $r["ok"] ? "incremental enabled\n" : "FAILED: " . wp_json_encode( $r["errors"] ) . "\n";
   '
-  wp_source wpguard-nc-backup run
-  BACKUP_2=$(wp_source wpguard-nc-backup status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
+  wp_source wpthistle-backup-restore run
+  BACKUP_2=$(wp_source wpthistle-backup-restore status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
   MODE_2=$(wp_source eval "
-    \$logger = new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) );
-    \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( \$logger );
-    \$rel = \$client->relative_path( \WPGuard\NCBackup\Settings::get_site_id() . '/backups/$BACKUP_2/manifest.json' );
+    \$logger = new \WPThistle\BackupRestore\Logger( array( \WPThistle\BackupRestore\Settings::get_app_password() ) );
+    \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( \$logger );
+    \$rel = \$client->relative_path( \WPThistle\BackupRestore\Settings::get_site_id() . '/backups/$BACKUP_2/manifest.json' );
     \$m = \$client->get_json( \$rel, 50 * 1024 * 1024 );
     echo \$m['backup_mode'];
   ")
@@ -153,18 +153,18 @@ run_backend() {
 
   echo "--- Retention: keep last 1, backup #3, confirm older folders pruned on this backend ---"
   wp_source eval '
-    $cur = \WPGuard\NCBackup\Settings::get_all();
+    $cur = \WPThistle\BackupRestore\Settings::get_all();
     $cur["retention_count"] = 1;
     $cur["app_password"] = "";
-    $r = \WPGuard\NCBackup\Settings::save( $cur );
+    $r = \WPThistle\BackupRestore\Settings::save( $cur );
     echo $r["ok"] ? "retention_count=1 set\n" : "FAILED: " . wp_json_encode( $r["errors"] ) . "\n";
   '
-  wp_source wpguard-nc-backup run
-  BACKUP_3=$(wp_source wpguard-nc-backup status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
+  wp_source wpthistle-backup-restore run
+  BACKUP_3=$(wp_source wpthistle-backup-restore status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
   REMAINING=$(wp_source eval "
-    \$logger = new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) );
-    \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( \$logger );
-    \$rel = \$client->relative_path( \WPGuard\NCBackup\Settings::get_site_id() . '/backups' );
+    \$logger = new \WPThistle\BackupRestore\Logger( array( \WPThistle\BackupRestore\Settings::get_app_password() ) );
+    \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( \$logger );
+    \$rel = \$client->relative_path( \WPThistle\BackupRestore\Settings::get_site_id() . '/backups' );
     \$children = \$client->list_children( \$rel );
     sort( \$children );
     echo implode( ',', \$children );
@@ -192,7 +192,7 @@ run_backend() {
   fi
   wp_restore "$prefix" core install --url="http://127.0.0.1:8082" --title="Multi-backend Restore Target" \
     --admin_user=wpadmin --admin_password=RestoreE2EAdminPW --admin_email=wpadmin@wpguard-test.local --skip-email > /dev/null
-  wp_restore "$prefix" plugin activate wpguard-nc-backup > /dev/null
+  wp_restore "$prefix" plugin activate wpthistle-backup-restore > /dev/null
 
   MSYS_NO_PATHCONV=1 docker compose -p wpguard-test --env-file .env run --rm \
     -e WORDPRESS_DB_HOST=db-restore -e WORDPRESS_DB_NAME=wp_restore \
@@ -205,10 +205,10 @@ run_backend() {
     -e WPGUARD_TEST_NC_FOLDER="$folder" \
     wpcli wp --path=/var/www/html-restore eval-file /fixtures/configure-plugin.php 2>&1 | grep -v '^ Container'
 
-  wp_restore "$prefix" eval "update_option( \WPGuard\NCBackup\Settings::SITE_ID_KEY, '$SOURCE_SITE_ID', true ); echo 'site_id forced to source: ' . \WPGuard\NCBackup\Settings::get_site_id();"
+  wp_restore "$prefix" eval "update_option( \WPThistle\BackupRestore\Settings::SITE_ID_KEY, '$SOURCE_SITE_ID', true ); echo 'site_id forced to source: ' . \WPThistle\BackupRestore\Settings::get_site_id();"
 
-  wp_restore "$prefix" wpguard-nc-backup restore "$BACKUP_3" --confirm-url-mismatch
-  RESTORE_STATUS=$(wp_restore "$prefix" eval 'echo \WPGuard\NCBackup\Job_Store::get_latest()["status"];')
+  wp_restore "$prefix" wpthistle-backup-restore restore "$BACKUP_3" --confirm-url-mismatch
+  RESTORE_STATUS=$(wp_restore "$prefix" eval 'echo \WPThistle\BackupRestore\Job_Store::get_latest()["status"];')
   [ "$RESTORE_STATUS" = "verified" ] || { echo "FAIL ($backend): restore from this backend did not reach verified, got '$RESTORE_STATUS'"; exit 1; }
   POST_COUNT=$(wp_restore "$prefix" post list --post_type=post --format=count)
   [ "$POST_COUNT" -ge 2 ] || { echo "FAIL ($backend): restored post count too low ($POST_COUNT)"; exit 1; }

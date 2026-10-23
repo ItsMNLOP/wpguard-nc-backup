@@ -27,12 +27,12 @@ wp_source() {
     wpcli wp --path=/var/www/html-source "$@" 2>&1 | grep -v '^ Container' || true
 }
 
-PLUGIN_BASENAME='wpguard-nc-backup/wpguard-nc-backup.php'
+PLUGIN_BASENAME='wpthistle-backup-restore/wpthistle-backup-restore.php'
 
 echo "=== Case A: real GitHub API call, no release published yet (today's actual state) ==="
 RESULT_A=$(wp_source eval "
-  delete_transient('wpguard_nc_update_check');
-  \$checker = new \WPGuard\NCBackup\Update_Checker('$PLUGIN_BASENAME');
+  delete_transient('wpthistle_backup_update_check');
+  \$checker = new \WPThistle\BackupRestore\Update_Checker('$PLUGIN_BASENAME');
   \$transient = (object) array('checked' => array('$PLUGIN_BASENAME' => '1.0.0'));
   \$transient = \$checker->check_for_update(\$transient);
   echo isset(\$transient->response['$PLUGIN_BASENAME']) ? 'offered' : 'none';
@@ -43,35 +43,35 @@ echo "OK  no update offered against the real (release-less) repo, no error throw
 echo
 echo "=== Case B: a newer release WITH a qualifying .zip asset must be offered by check_for_update() ==="
 wp_source eval "
-  set_transient('wpguard_nc_update_check', array(
+  set_transient('wpthistle_backup_update_check', array(
     'version' => '9.9.9',
-    'package' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v9.9.9/wpguard-nc-backup-9.9.9.zip',
+    'package' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v9.9.9/wpthistle-backup-restore-9.9.9.zip',
     'body' => 'release notes',
-    'html_url' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/tag/v9.9.9',
+    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v9.9.9',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_B=$(wp_source eval "
-  \$checker = new \WPGuard\NCBackup\Update_Checker('$PLUGIN_BASENAME');
+  \$checker = new \WPThistle\BackupRestore\Update_Checker('$PLUGIN_BASENAME');
   \$transient = (object) array('checked' => array('$PLUGIN_BASENAME' => '1.0.0'));
   \$transient = \$checker->check_for_update(\$transient);
   \$item = \$transient->response['$PLUGIN_BASENAME'] ?? null;
   echo \$item ? (\$item->new_version . '|' . \$item->package) : 'none';
 ")
-[ "$RESULT_B" = "9.9.9|https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v9.9.9/wpguard-nc-backup-9.9.9.zip" ] || { echo "FAIL: expected the cached newer release to be offered with its package url, got '$RESULT_B'"; exit 1; }
+[ "$RESULT_B" = "9.9.9|https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v9.9.9/wpthistle-backup-restore-9.9.9.zip" ] || { echo "FAIL: expected the cached newer release to be offered with its package url, got '$RESULT_B'"; exit 1; }
 echo "OK  newer release with a qualifying asset offered by check_for_update()"
 
 echo
 echo "=== Case C: a newer release with NO qualifying asset must never be offered (fail-closed) ==="
 wp_source eval "
-  set_transient('wpguard_nc_update_check', array(
+  set_transient('wpthistle_backup_update_check', array(
     'version' => '9.9.9',
     'package' => '',
     'body' => 'release notes, but no built zip attached yet',
-    'html_url' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/tag/v9.9.9',
+    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v9.9.9',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_C=$(wp_source eval "
-  \$checker = new \WPGuard\NCBackup\Update_Checker('$PLUGIN_BASENAME');
+  \$checker = new \WPThistle\BackupRestore\Update_Checker('$PLUGIN_BASENAME');
   \$transient = (object) array('checked' => array('$PLUGIN_BASENAME' => '1.0.0'));
   \$transient = \$checker->check_for_update(\$transient);
   echo isset(\$transient->response['$PLUGIN_BASENAME']) ? 'offered' : 'none';
@@ -82,15 +82,15 @@ echo "OK  release with no qualifying asset correctly never offered"
 echo
 echo "=== Case D: a same-or-older cached release must never be offered ==="
 wp_source eval "
-  set_transient('wpguard_nc_update_check', array(
+  set_transient('wpthistle_backup_update_check', array(
     'version' => '1.0.0',
-    'package' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.0.0/wpguard-nc-backup-1.0.0.zip',
+    'package' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v1.0.0/wpthistle-backup-restore-1.0.0.zip',
     'body' => '',
-    'html_url' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/tag/v1.0.0',
+    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v1.0.0',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_D=$(wp_source eval "
-  \$checker = new \WPGuard\NCBackup\Update_Checker('$PLUGIN_BASENAME');
+  \$checker = new \WPThistle\BackupRestore\Update_Checker('$PLUGIN_BASENAME');
   \$transient = (object) array('checked' => array('$PLUGIN_BASENAME' => '1.0.0'));
   \$transient = \$checker->check_for_update(\$transient);
   echo isset(\$transient->response['$PLUGIN_BASENAME']) ? 'offered' : 'none';
@@ -101,20 +101,20 @@ echo "OK  same-version release correctly never offered"
 echo
 echo "=== Case E: a WP.org-sourced entry already in the transient must be stripped, never passed through (security audit finding H-001) ==="
 wp_source eval "
-  delete_transient('wpguard_nc_update_check');
-  set_transient('wpguard_nc_update_check', array(), HOUR_IN_SECONDS);
+  delete_transient('wpthistle_backup_update_check');
+  set_transient('wpthistle_backup_update_check', array(), HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_E=$(wp_source eval "
-  \$checker = new \WPGuard\NCBackup\Update_Checker('$PLUGIN_BASENAME');
+  \$checker = new \WPThistle\BackupRestore\Update_Checker('$PLUGIN_BASENAME');
   \$transient = (object) array('checked' => array('$PLUGIN_BASENAME' => '1.0.0'));
   // Simulates what WP core would already have written into the
   // transient from a WP.org lookup for this slug (e.g. a squatter who
-  // registered the still-unclaimed 'wpguard-nc-backup' slug there)
+  // registered the still-unclaimed 'wpthistle-backup-restore' slug there)
   // before our own filter ever runs.
   \$transient->response['$PLUGIN_BASENAME'] = (object) array(
     'new_version' => '9.9.9',
-    'package'     => 'https://downloads.wordpress.org/plugin/wpguard-nc-backup.9.9.9.zip',
-    'slug'        => 'wpguard-nc-backup',
+    'package'     => 'https://downloads.wordpress.org/plugin/wpthistle-backup-restore.9.9.9.zip',
+    'slug'        => 'wpthistle-backup-restore',
     'plugin'      => '$PLUGIN_BASENAME',
   );
   \$transient = \$checker->check_for_update(\$transient);
@@ -126,15 +126,15 @@ echo "OK  pre-existing WP.org-sourced entry correctly removed when no trusted Gi
 echo
 echo "=== Case F: a cached release whose package URL doesn't point at this repo's own release assets must never be offered (security audit finding L-001) ==="
 wp_source eval "
-  set_transient('wpguard_nc_update_check', array(
+  set_transient('wpthistle_backup_update_check', array(
     'version' => '9.9.9',
-    'package' => 'https://github.com/someone-else/other-repo/releases/download/v1/wpguard-nc-backup.zip',
+    'package' => 'https://github.com/someone-else/other-repo/releases/download/v1/wpthistle-backup-restore.zip',
     'body' => '',
-    'html_url' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/tag/v9.9.9',
+    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v9.9.9',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_F=$(wp_source eval "
-  \$checker = new \WPGuard\NCBackup\Update_Checker('$PLUGIN_BASENAME');
+  \$checker = new \WPThistle\BackupRestore\Update_Checker('$PLUGIN_BASENAME');
   \$transient = (object) array('checked' => array('$PLUGIN_BASENAME' => '1.0.0'));
   \$transient = \$checker->check_for_update(\$transient);
   echo isset(\$transient->response['$PLUGIN_BASENAME']) ? 'offered' : 'none';
@@ -145,15 +145,15 @@ echo "OK  untrusted package URL (wrong repo) correctly never offered, even thoug
 echo
 echo "=== Case G: a cached package URL using path traversal to escape this repo's release path must never be offered (security re-verification finding L-001) ==="
 wp_source eval "
-  set_transient('wpguard_nc_update_check', array(
+  set_transient('wpthistle_backup_update_check', array(
     'version' => '9.9.9',
-    'package' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/../../../../attacker/repo/releases/download/v1/wpguard-nc-backup.zip',
+    'package' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/../../../../attacker/repo/releases/download/v1/wpthistle-backup-restore.zip',
     'body' => '',
-    'html_url' => 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/tag/v9.9.9',
+    'html_url' => 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/tag/v9.9.9',
   ), 12 * HOUR_IN_SECONDS);
 " > /dev/null
 RESULT_G=$(wp_source eval "
-  \$checker = new \WPGuard\NCBackup\Update_Checker('$PLUGIN_BASENAME');
+  \$checker = new \WPThistle\BackupRestore\Update_Checker('$PLUGIN_BASENAME');
   \$transient = (object) array('checked' => array('$PLUGIN_BASENAME' => '1.0.0'));
   \$transient = \$checker->check_for_update(\$transient);
   echo isset(\$transient->response['$PLUGIN_BASENAME']) ? 'offered' : 'none';
@@ -163,7 +163,7 @@ echo "OK  path-traversal package URL correctly never offered, even though cached
 
 echo
 echo "=== Cleanup: clear the cached release so the live site is left pointed at reality again ==="
-wp_source eval "delete_transient('wpguard_nc_update_check');" > /dev/null
+wp_source eval "delete_transient('wpthistle_backup_update_check');" > /dev/null
 
 echo
 echo "=== UPDATE CHECKER REGRESSION TEST PASSED ==="

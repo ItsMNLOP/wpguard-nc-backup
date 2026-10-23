@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -85,7 +85,7 @@ class Archive_Writer {
 		// correct by accident) but misleading to read. Written directly.
 		$open = $zip->open( $zip_path, file_exists( $zip_path ) ? 0 : \ZipArchive::CREATE );
 		if ( true !== $open ) {
-			return new \WP_Error( 'wpguard_nc_zip_open_failed', "Could not open archive part (code {$open})." );
+			return new \WP_Error( 'wpthistle_backup_zip_open_failed', "Could not open archive part (code {$open})." );
 		}
 		return $zip;
 	}
@@ -93,10 +93,10 @@ class Archive_Writer {
 	/** @return true|\WP_Error */
 	public static function add_file_to( \ZipArchive $zip, string $abs_source, string $relative_name ) {
 		if ( ! self::is_path_safe( $relative_name ) ) {
-			return new \WP_Error( 'wpguard_nc_unsafe_path', "Refusing to archive unsafe path: {$relative_name}" );
+			return new \WP_Error( 'wpthistle_backup_unsafe_path', "Refusing to archive unsafe path: {$relative_name}" );
 		}
 		if ( ! $zip->addFile( $abs_source, $relative_name ) ) {
-			return new \WP_Error( 'wpguard_nc_zip_add_failed', "Could not add file to archive: {$relative_name}" );
+			return new \WP_Error( 'wpthistle_backup_zip_add_failed', "Could not add file to archive: {$relative_name}" );
 		}
 		$ext = strtolower( pathinfo( $relative_name, PATHINFO_EXTENSION ) );
 		if ( in_array( $ext, self::STORE_ONLY_EXTENSIONS, true ) ) {
@@ -127,7 +127,7 @@ class Archive_Writer {
 	public static function close_part( \ZipArchive $zip ) {
 		if ( ! $zip->close() ) {
 			return new \WP_Error(
-				'wpguard_nc_zip_close_failed',
+				'wpthistle_backup_zip_close_failed',
 				'Archive part failed to finalize -- a source file likely disappeared or became unreadable mid-batch. The affected files will be re-archived on the next backup attempt.'
 			);
 		}

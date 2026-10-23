@@ -2,8 +2,8 @@
 
 ## Running a backup
 
-Admin UI: WPGuard > Nextcloud Backup > "Back Up Now". Progress polls via
-AJAX every 500ms; a WP-Cron fallback (`wpguard_nc_cron_advance`) keeps the
+Admin UI: WPThistle > Backup and Restore > "Back Up Now". Progress polls via
+AJAX every 500ms; a WP-Cron fallback (`wpthistle_backup_cron_advance`) keeps the
 job moving even if the admin tab is closed (ADR 0003). Reloading or
 reopening the settings page while a job is in progress resumes reporting
 it automatically (fixed 2026-10-19 — previously the status box went blank
@@ -12,8 +12,8 @@ without checking Nextcloud or the DB directly).
 
 CLI (used by the E2E harness, also usable by an admin with shell access):
 ```
-wp wpguard-nc-backup run [--destination=nextcloud|download]
-wp wpguard-nc-backup status
+wp wpthistle-backup-restore run [--destination=nextcloud|download]
+wp wpthistle-backup-restore status
 ```
 
 `--destination=download` runs a credential-free backup and reports the
@@ -34,7 +34,7 @@ to diff against without a persistent remote location); retention pruning
 doesn't apply to it either.
 
 The bundle is held in a random-token directory under
-`wp-content/wpguard-nc-backup-tmp/downloads/<token>/`, guarded the same way
+`wp-content/wpthistle-backup-restore-tmp/downloads/<token>/`, guarded the same way
 as every other tmp/staging directory this plugin creates (`.htaccess`,
 excluded from the next backup's own file enumeration). It is never deleted
 on download (the server can't know the browser received every byte) —
@@ -43,7 +43,7 @@ instead:
   pending bundle exists at a time).
 - "Delete local copy" removes it immediately.
 - An hourly sweep (and one on every settings-page load) removes it after
-  24 hours regardless (`wpguard_nc_download_bundle_ttl_seconds` filter, 300s
+  24 hours regardless (`wpthistle_backup_download_bundle_ttl_seconds` filter, 300s
   floor).
 - Deactivating the plugin purges it immediately rather than leaving it
   until reactivation.
@@ -112,7 +112,7 @@ plugin can trigger remotely).
 
 Per-job structured log (last 200 entries), redacted at write time
 (`Logger::redact()`), visible in the admin page's log pane and via
-`wp wpguard-nc-backup status`. No secrets should ever appear there — this
+`wp wpthistle-backup-restore status`. No secrets should ever appear there — this
 is tested (`tests/unit/LoggerRedactionTest.php`), not just asserted.
 
 ## Stale-lock recovery (JOB-05) — automatic, plus a manual override
@@ -129,7 +129,7 @@ real site) would otherwise stay stuck forever and block every future
 **Automatic recovery (Phase 2, 2026-10-20)**: `Job_Orchestrator::reap_stale_lock()`
 marks a job `failed` if its checkpoint hasn't been touched in over
 `STALE_LOCK_SECONDS` (600s default, filterable via
-`wpguard_nc_stale_lock_seconds`, floored at 60s — the follow-up security audit
+`wpthistle_backup_stale_lock_seconds`, floored at 60s — the follow-up security audit
 LOW-JOB05-3 — so a filtered value can't shrink below the one genuinely
 lock-free moment in a job's life, between `create_job()` returning and
 the first `advance()` call acquiring the lock). It uses the same
@@ -149,7 +149,7 @@ process at all (lock already free) sits before being reaped. Called from
 `create_job()` — so the fix applies the instant anyone next tries to
 back up, no admin action and no real server-cron (JOB-02, separate
 item) required — and from a recurring hourly WP-Cron event
-(`wpguard_nc_stale_lock_check`) as a safety net for a site nobody
+(`wpthistle_backup_stale_lock_check`) as a safety net for a site nobody
 visits for a while. That recurring event is still WP-Cron pseudo-cron
 under the hood (fires on the next traffic after it's due), so it
 doesn't need real server-cron to exist, but inherits the same
@@ -201,8 +201,8 @@ or WP-CLI-driven scheduling is Phase 2 (JOB-02).
 
 Settings page has an "Automatic backup schedule" dropdown: Disabled
 (default), Daily, Weekly. Backed by a real recurring WP-Cron event
-(`wpguard_nc_scheduled_backup`) reconciled against the stored setting
-by `sync_scheduled_backup()` (`wpguard-nc-backup.php`) — called on every
+(`wpthistle_backup_scheduled_backup`) reconciled against the stored setting
+by `sync_scheduled_backup()` (`wpthistle-backup-restore.php`) — called on every
 boot and immediately after a settings save, so a schedule change takes
 effect without waiting for the next page load. 'Weekly' is a custom
 recurrence registered via the `cron_schedules` filter (WP core only
@@ -311,8 +311,8 @@ run instead, decided once up front in `step_init()` before any file
 is skipped (never discovered to be unsafe partway through
 `export_files`, by which point skipped files would be unrecoverable
 for that run). A full backup is also forced periodically regardless of
-any failure: every `wpguard_nc_incremental_max_chain` backups (7,
-filterable) or `wpguard_nc_incremental_max_chain_days` days (7,
+any failure: every `wpthistle_backup_incremental_max_chain` backups (7,
+filterable) or `wpthistle_backup_incremental_max_chain_days` days (7,
 filterable), whichever comes first — this bounds the (size, mtime)
 unchanged-check's known blind spot (a file whose content changed but
 whose modified time was preserved, deliberately or incidentally, by
@@ -360,8 +360,8 @@ CLI equivalent (fixed 2026-10-22 — previously CLI `restore` only ever
 pulled from Nextcloud, with no counterpart to the admin UI's upload
 path at all):
 ```
-wp wpguard-nc-backup restore <backup_id> [--confirm-url-mismatch]
-wp wpguard-nc-backup restore_local <path-to-zip> [--confirm-url-mismatch]
+wp wpthistle-backup-restore restore <backup_id> [--confirm-url-mismatch]
+wp wpthistle-backup-restore restore_local <path-to-zip> [--confirm-url-mismatch]
 ```
 `restore_local` extracts the given zip and drives the restore exactly
 like an uploaded bundle would (`Restore_Orchestrator::extract_bundle_zip()`
@@ -547,14 +547,14 @@ this round with zero regressions.
 
 This plugin isn't on the WordPress.org directory, so wp-admin's normal
 "update available" nag is instead driven by `Update_Checker`, which
-polls `github.com/ItsMNLOP/wpguard-nc-backup`'s Releases (public repo,
+polls `github.com/ItsMNLOP/wpthistle-backup-restore`'s Releases (public repo,
 read-only, no credentials needed) through WP's own
 `pre_set_site_transient_update_plugins`/`plugins_api` filters — the
 same mechanism WordPress.org-hosted plugins use, so "Update now" on
 the Plugins page works exactly as it would for any other plugin.
 
 An update is only ever offered when the release has an explicit
-`.zip` asset attached (name starting with `wpguard-nc-backup`) — never
+`.zip` asset attached (name starting with `wpthistle-backup-restore`) — never
 GitHub's own auto-generated zipball, which contains the whole repo
 (docs, tests, CI config), not just the plugin folder, and would get
 installed as-is if used. No qualifying asset means no update offered,

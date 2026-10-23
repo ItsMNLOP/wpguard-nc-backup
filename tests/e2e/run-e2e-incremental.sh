@@ -30,13 +30,13 @@ wp_source() {
 
 TRACK_DIR="wp-content/uploads/wpguard-incr-test"
 echo "=== Setup: clean job table, clear leftover local chain state from any previous run of this test, enable incremental backups, create 3 tracked files ==="
-wp_source db query "UPDATE wp_wpguard_nc_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
-wp_source eval 'delete_option("wpguard_nc_chain_state");' > /dev/null
+wp_source db query "UPDATE ${WP_SOURCE_TABLE_PREFIX}wpthistle_backup_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
+wp_source eval 'delete_option("wpthistle_backup_chain_state");' > /dev/null
 wp_source eval '
-  \WPGuard\NCBackup\Settings::save(array(
-    "nextcloud_url" => \WPGuard\NCBackup\Settings::get_nextcloud_url(),
-    "nextcloud_user" => \WPGuard\NCBackup\Settings::get_nextcloud_user(),
-    "remote_folder" => \WPGuard\NCBackup\Settings::get_remote_folder(),
+  \WPThistle\BackupRestore\Settings::save(array(
+    "nextcloud_url" => \WPThistle\BackupRestore\Settings::get_nextcloud_url(),
+    "nextcloud_user" => \WPThistle\BackupRestore\Settings::get_nextcloud_user(),
+    "remote_folder" => \WPThistle\BackupRestore\Settings::get_remote_folder(),
     "incremental_enabled" => true,
     "retention_count" => 0,
   ));
@@ -51,16 +51,16 @@ echo "OK  3 tracked files created, incremental backups enabled"
 
 echo
 echo "=== Backup 1 (expected: full -- no local chain state yet) ==="
-wp_source wpguard-nc-backup run > "$SCRATCH/run1.log" 2>&1 || true
+wp_source wpthistle-backup-restore run > "$SCRATCH/run1.log" 2>&1 || true
 tail -3 "$SCRATCH/run1.log"
-BACKUP1=$(wp_source eval 'echo \WPGuard\NCBackup\Job_Store::get_latest()["backup_id"];')
-STATUS1=$(wp_source eval "echo \WPGuard\NCBackup\Job_Store::get_latest()['status'];")
+BACKUP1=$(wp_source eval 'echo \WPThistle\BackupRestore\Job_Store::get_latest()["backup_id"];')
+STATUS1=$(wp_source eval "echo \WPThistle\BackupRestore\Job_Store::get_latest()['status'];")
 [ "$STATUS1" = "verified" ] || { echo "FAIL: backup 1 did not verify"; exit 1; }
 echo "backup1=$BACKUP1"
 
 RESULT1=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
-  \$m = \$client->get_json( \$client->relative_path( \WPGuard\NCBackup\Settings::get_site_id() . '/backups/$BACKUP1/manifest.json' ), 64*1024*1024 );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
+  \$m = \$client->get_json( \$client->relative_path( \WPThistle\BackupRestore\Settings::get_site_id() . '/backups/$BACKUP1/manifest.json' ), 64*1024*1024 );
   \$by_path = array();
   foreach ( \$m['files'] as \$f ) { \$by_path[\$f['path']] = \$f; }
   echo \$m['backup_mode'] . '|' . (\$m['base_backup_id'] ?? 'null') . '|' . \$by_path['$TRACK_DIR/fileA.txt']['source_backup_id'];
@@ -70,16 +70,16 @@ echo "OK  backup 1 is a full backup, fileA's manifest entry correctly points at 
 
 echo
 echo "=== Backup 2 (expected: incremental, no file changes -- every tracked file must be carried forward, NOT re-archived) ==="
-wp_source wpguard-nc-backup run > "$SCRATCH/run2.log" 2>&1 || true
+wp_source wpthistle-backup-restore run > "$SCRATCH/run2.log" 2>&1 || true
 tail -3 "$SCRATCH/run2.log"
-BACKUP2=$(wp_source eval 'echo \WPGuard\NCBackup\Job_Store::get_latest()["backup_id"];')
-STATUS2=$(wp_source eval "echo \WPGuard\NCBackup\Job_Store::get_latest()['status'];")
+BACKUP2=$(wp_source eval 'echo \WPThistle\BackupRestore\Job_Store::get_latest()["backup_id"];')
+STATUS2=$(wp_source eval "echo \WPThistle\BackupRestore\Job_Store::get_latest()['status'];")
 [ "$STATUS2" = "verified" ] || { echo "FAIL: backup 2 did not verify"; exit 1; }
 echo "backup2=$BACKUP2"
 
 RESULT2=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
-  \$parent = \$client->relative_path( \WPGuard\NCBackup\Settings::get_site_id() . '/backups' );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
+  \$parent = \$client->relative_path( \WPThistle\BackupRestore\Settings::get_site_id() . '/backups' );
   \$m = \$client->get_json( \$parent . '/$BACKUP2/manifest.json', 64*1024*1024 );
   \$by_path = array();
   foreach ( \$m['files'] as \$f ) { \$by_path[\$f['path']] = \$f; }
@@ -101,16 +101,16 @@ docker exec wpguard-test-wp-source-1 sh -c "
 
 echo
 echo "=== Backup 3 (expected: incremental depth 2; fileA still from backup1; fileB and fileD from backup3 itself; fileC absent entirely -- deletions must not resurrect) ==="
-wp_source wpguard-nc-backup run > "$SCRATCH/run3.log" 2>&1 || true
+wp_source wpthistle-backup-restore run > "$SCRATCH/run3.log" 2>&1 || true
 tail -3 "$SCRATCH/run3.log"
-BACKUP3=$(wp_source eval 'echo \WPGuard\NCBackup\Job_Store::get_latest()["backup_id"];')
-STATUS3=$(wp_source eval "echo \WPGuard\NCBackup\Job_Store::get_latest()['status'];")
+BACKUP3=$(wp_source eval 'echo \WPThistle\BackupRestore\Job_Store::get_latest()["backup_id"];')
+STATUS3=$(wp_source eval "echo \WPThistle\BackupRestore\Job_Store::get_latest()['status'];")
 [ "$STATUS3" = "verified" ] || { echo "FAIL: backup 3 did not verify"; exit 1; }
 echo "backup3=$BACKUP3"
 
 RESULT3=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
-  \$m = \$client->get_json( \$client->relative_path( \WPGuard\NCBackup\Settings::get_site_id() . '/backups/$BACKUP3/manifest.json' ), 64*1024*1024 );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
+  \$m = \$client->get_json( \$client->relative_path( \WPThistle\BackupRestore\Settings::get_site_id() . '/backups/$BACKUP3/manifest.json' ), 64*1024*1024 );
   \$by_path = array();
   foreach ( \$m['files'] as \$f ) { \$by_path[\$f['path']] = \$f; }
   \$c_present = isset( \$by_path['$TRACK_DIR/fileC.txt'] ) ? 'PRESENT' : 'ABSENT';
@@ -122,8 +122,8 @@ echo "OK  unchanged file still points at the original backup; changed+new files 
 echo
 echo "=== Restore reconstruction: walk backup3's manifest, fetch each distinct source part exactly once, extract, compare byte-for-byte against live content ==="
 RESTORE_RESULT=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
-  \$parent_rel = \$client->relative_path( \WPGuard\NCBackup\Settings::get_site_id() . '/backups' );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
+  \$parent_rel = \$client->relative_path( \WPThistle\BackupRestore\Settings::get_site_id() . '/backups' );
   \$m = \$client->get_json( \$parent_rel . '/$BACKUP3/manifest.json', 64*1024*1024 );
   \$wanted = array('$TRACK_DIR/fileA.txt' => 'fileA-v1', '$TRACK_DIR/fileB.txt' => 'fileB-v2', '$TRACK_DIR/fileD.txt' => 'fileD-v1');
   \$by_path = array();
@@ -160,9 +160,9 @@ echo
 echo "=== Chain-aware retention: keep=1 must protect backup1 (fileA's source, still depended on by the kept backup3) even though it is the oldest by name, while reclaiming backup2 (fully superseded, nothing depends on it) ==="
 echo "Note: the real backups folder is shared with other E2E scripts run earlier this session (same precedent as run-e2e-retention.sh Case E), so other unrelated old verified backups may legitimately also be deleted here -- the real invariant under test is backup1 survives and backup2 does not, not an exact deleted-list match."
 PRUNE_RESULT=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
-  \$parent = \$client->relative_path( \WPGuard\NCBackup\Settings::get_site_id() . '/backups' );
-  \$r = \WPGuard\NCBackup\Retention::prune( \$client, \$parent, 1 );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
+  \$parent = \$client->relative_path( \WPThistle\BackupRestore\Settings::get_site_id() . '/backups' );
+  \$r = \WPThistle\BackupRestore\Retention::prune( \$client, \$parent, 1 );
   echo is_wp_error(\$r) ? 'ERROR:' . \$r->get_error_message() : implode(',', \$r['deleted']);
 ")
 echo "deleted: $PRUNE_RESULT"
@@ -173,10 +173,10 @@ echo "deleted: $PRUNE_RESULT"
 echo "OK  backup2 (fully superseded, no remaining dependents) reclaimed; backup1 (still depended on for fileA) correctly survived despite being the oldest by name; backup3 (the kept backup) untouched"
 
 RETENTION_CLEANUP=$(wp_source eval "
-  \WPGuard\NCBackup\Settings::save(array(
-    'nextcloud_url' => \WPGuard\NCBackup\Settings::get_nextcloud_url(),
-    'nextcloud_user' => \WPGuard\NCBackup\Settings::get_nextcloud_user(),
-    'remote_folder' => \WPGuard\NCBackup\Settings::get_remote_folder(),
+  \WPThistle\BackupRestore\Settings::save(array(
+    'nextcloud_url' => \WPThistle\BackupRestore\Settings::get_nextcloud_url(),
+    'nextcloud_user' => \WPThistle\BackupRestore\Settings::get_nextcloud_user(),
+    'remote_folder' => \WPThistle\BackupRestore\Settings::get_remote_folder(),
     'incremental_enabled' => false,
     'retention_count' => 0,
   ));

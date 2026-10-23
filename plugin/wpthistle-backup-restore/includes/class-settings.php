@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -15,10 +15,17 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Settings {
 
-	const OPTION_KEY    = 'wpguard_nc_settings';
-	const SITE_ID_KEY   = 'wpguard_nc_site_id';
-	const APP_PW_CONST  = 'WPGUARD_NC_APP_PASSWORD';
-	const CA_BUNDLE_CONST = 'WPGUARD_NC_CA_BUNDLE';
+	const OPTION_KEY    = 'wpthistle_backup_settings';
+	const SITE_ID_KEY   = 'wpthistle_backup_site_id';
+	const APP_PW_CONST  = 'WPTHISTLE_BACKUP_APP_PASSWORD';
+	const CA_BUNDLE_CONST = 'WPTHISTLE_BACKUP_CA_BUNDLE';
+	// 2.0.0 rename (WPGuard -> WPThistle): a wp-config.php defining the
+	// OLD constant name predates this release and isn't rewritten by the
+	// plugin cutover (that file is outside anything this plugin touches),
+	// so both the lock check and the read fall back to it rather than
+	// silently un-locking a credential an admin deliberately pinned.
+	const LEGACY_APP_PW_CONST    = 'WPGUARD_NC_APP_PASSWORD';
+	const LEGACY_CA_BUNDLE_CONST = 'WPGUARD_NC_CA_BUNDLE';
 
 	// Phase 2 (scheduling): a plain WP-Cron recurrence name, reused
 	// directly as both the stored setting value and the schedule's
@@ -99,24 +106,48 @@ class Settings {
 		return max( 0, $int );
 	}
 
+	/** Which defined constant name is actually locking the app password, '' if neither is. */
+	private static function active_app_pw_const(): string {
+		if ( defined( self::APP_PW_CONST ) && constant( self::APP_PW_CONST ) !== '' ) {
+			return self::APP_PW_CONST;
+		}
+		if ( defined( self::LEGACY_APP_PW_CONST ) && constant( self::LEGACY_APP_PW_CONST ) !== '' ) {
+			return self::LEGACY_APP_PW_CONST;
+		}
+		return '';
+	}
+
+	/** Which defined constant name is actually locking the CA bundle path, '' if neither is. */
+	private static function active_ca_bundle_const(): string {
+		if ( defined( self::CA_BUNDLE_CONST ) && constant( self::CA_BUNDLE_CONST ) !== '' ) {
+			return self::CA_BUNDLE_CONST;
+		}
+		if ( defined( self::LEGACY_CA_BUNDLE_CONST ) && constant( self::LEGACY_CA_BUNDLE_CONST ) !== '' ) {
+			return self::LEGACY_CA_BUNDLE_CONST;
+		}
+		return '';
+	}
+
 	public static function is_app_password_locked(): bool {
-		return defined( self::APP_PW_CONST ) && constant( self::APP_PW_CONST ) !== '';
+		return '' !== self::active_app_pw_const();
 	}
 
 	public static function is_ca_bundle_locked(): bool {
-		return defined( self::CA_BUNDLE_CONST ) && constant( self::CA_BUNDLE_CONST ) !== '';
+		return '' !== self::active_ca_bundle_const();
 	}
 
 	public static function get_app_password(): string {
-		if ( self::is_app_password_locked() ) {
-			return (string) constant( self::APP_PW_CONST );
+		$const = self::active_app_pw_const();
+		if ( '' !== $const ) {
+			return (string) constant( $const );
 		}
 		return (string) self::get_all()['app_password'];
 	}
 
 	public static function get_ca_bundle_path(): string {
-		if ( self::is_ca_bundle_locked() ) {
-			return (string) constant( self::CA_BUNDLE_CONST );
+		$const = self::active_ca_bundle_const();
+		if ( '' !== $const ) {
+			return (string) constant( $const );
 		}
 		return (string) self::get_all()['ca_bundle_path'];
 	}
@@ -160,16 +191,16 @@ class Settings {
 		$url = isset( $input['nextcloud_url'] ) ? trim( (string) $input['nextcloud_url'] ) : '';
 		$url = rtrim( $url, '/' );
 		if ( '' === $url || 0 !== strpos( $url, 'https://' ) ) {
-			$errors['nextcloud_url'] = __( 'Nextcloud URL must start with https:// — plain HTTP is not permitted.', 'wpguard-nc-backup' );
+			$errors['nextcloud_url'] = __( 'Nextcloud URL must start with https:// — plain HTTP is not permitted.', 'wpthistle-backup-restore' );
 		} elseif ( ! self::is_syntactically_valid_destination_url( $url ) ) {
-			$errors['nextcloud_url'] = __( 'That does not look like a valid URL.', 'wpguard-nc-backup' );
+			$errors['nextcloud_url'] = __( 'That does not look like a valid URL.', 'wpthistle-backup-restore' );
 		} else {
 			$clean['nextcloud_url'] = sanitize_text_field( $url );
 		}
 
 		$user = isset( $input['nextcloud_user'] ) ? sanitize_text_field( trim( (string) $input['nextcloud_user'] ) ) : '';
 		if ( '' === $user ) {
-			$errors['nextcloud_user'] = __( 'Nextcloud username is required.', 'wpguard-nc-backup' );
+			$errors['nextcloud_user'] = __( 'Nextcloud username is required.', 'wpthistle-backup-restore' );
 		} else {
 			$clean['nextcloud_user'] = $user;
 		}
@@ -177,9 +208,9 @@ class Settings {
 		$folder = isset( $input['remote_folder'] ) ? trim( (string) $input['remote_folder'] ) : '';
 		$folder = trim( $folder, '/' );
 		if ( '' === $folder ) {
-			$errors['remote_folder'] = __( 'Destination folder is required.', 'wpguard-nc-backup' );
+			$errors['remote_folder'] = __( 'Destination folder is required.', 'wpthistle-backup-restore' );
 		} elseif ( ! preg_match( '#^[A-Za-z0-9._/-]+$#', $folder ) || false !== strpos( $folder, '..' ) ) {
-			$errors['remote_folder'] = __( 'Destination folder may only contain letters, numbers, dots, dashes, underscores, and / as a separator, and may not contain ".."', 'wpguard-nc-backup' );
+			$errors['remote_folder'] = __( 'Destination folder may only contain letters, numbers, dots, dashes, underscores, and / as a separator, and may not contain ".."', 'wpthistle-backup-restore' );
 		} else {
 			$clean['remote_folder'] = $folder;
 		}
@@ -244,8 +275,8 @@ class Settings {
 		// invalidate both the old and new URL's cache on every save so
 		// switching servers (or the same server gaining/losing support
 		// across an upgrade) never has to wait out a stale cached probe.
-		delete_transient( 'wpguard_nc_chunk_v2_support_' . md5( $current['nextcloud_url'] ?? '' ) );
-		delete_transient( 'wpguard_nc_chunk_v2_support_' . md5( $clean['nextcloud_url'] ?? '' ) );
+		delete_transient( 'wpthistle_backup_chunk_v2_support_' . md5( $current['nextcloud_url'] ?? '' ) );
+		delete_transient( 'wpthistle_backup_chunk_v2_support_' . md5( $clean['nextcloud_url'] ?? '' ) );
 
 		update_option( self::OPTION_KEY, $clean, false );
 		return array( 'ok' => true, 'errors' => array() );
@@ -333,9 +364,16 @@ REGEX;
 	}
 
 	public static function redact_wp_config_contents( string $content ): string {
-		$names = preg_quote( self::APP_PW_CONST, '/' ) . '|' . preg_quote( self::CA_BUNDLE_CONST, '/' );
+		// 2.0.0 rename: must cover every constant name
+		// active_app_pw_const()/active_ca_bundle_const() can read, not
+		// just the current ones -- a site whose wp-config.php still
+		// defines the LEGACY name (the exact scenario that fallback
+		// exists for) would otherwise archive that line, plaintext
+		// credential and all, completely unredacted.
+		$names = preg_quote( self::APP_PW_CONST, '/' ) . '|' . preg_quote( self::CA_BUNDLE_CONST, '/' )
+			. '|' . preg_quote( self::LEGACY_APP_PW_CONST, '/' ) . '|' . preg_quote( self::LEGACY_CA_BUNDLE_CONST, '/' );
 		$pattern = '/define\s*\(\s*[\'"](?:' . $names . ')[\'"]\s*,\s*' . self::quoted_string_value_pattern() . '\s*\)\s*;/';
-		return preg_replace( $pattern, '// wpguard-nc-backup: line redacted from backup archive (credential constant).', $content );
+		return preg_replace( $pattern, '// wpthistle-backup-restore: line redacted from backup archive (credential constant).', $content );
 	}
 
 	/**
@@ -364,6 +402,6 @@ REGEX;
 		$db_consts = array( 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_HOST' );
 		$names = implode( '|', array_map( static fn( $c ) => preg_quote( $c, '/' ), $db_consts ) );
 		$pattern = '/define\s*\(\s*[\'"](?:' . $names . ')[\'"]\s*,\s*' . self::quoted_string_value_pattern() . '\s*\)\s*;/';
-		return preg_replace( $pattern, '// wpguard-nc-backup: line redacted from downloadable bundle (DB credential constant -- re-enter manually when restoring elsewhere).', $content );
+		return preg_replace( $pattern, '// wpthistle-backup-restore: line redacted from downloadable bundle (DB credential constant -- re-enter manually when restoring elsewhere).', $content );
 	}
 }

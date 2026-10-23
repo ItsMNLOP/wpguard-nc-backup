@@ -1,4 +1,4 @@
-# Agent operating notes — WPGuard Nextcloud Backup plugin repo
+# Agent operating notes — WPThistle Backup and Restore plugin repo
 
 For a replacement agent (human or AI) picking this up cold.
 
@@ -16,7 +16,7 @@ otherwise sync somewhere they shouldn't.
 - Never set `sslverify => false` anywhere. `tests/unit/NoInsecureTlsTest.php`
   greps for this; keep it passing.
 - Never let `database.sql*` or any archive component contain the live
-  `wpguard_nc_settings` option row — see `class-db-exporter.php`'s
+  `wpthistle_backup_settings` option row — see `class-db-exporter.php`'s
   `$exclude_sql` handling and threat-model T9.
 - Never report a backup `verified` without `COMPLETE.json` itself having
   been uploaded and read-back verified (`class-job-orchestrator.php`,

@@ -20,13 +20,13 @@ jobs:
           tools: composer, phpcs, phpstan
           extensions: mbstring, zip, mysqli, curl
       - name: Lint PHP syntax
-        run: find plugin/wpguard-nc-backup -name '*.php' -print0 | xargs -0 -n1 php -l
+        run: find plugin/wpthistle-backup-restore -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: WordPress Coding Standards
         run: |
           composer global require wp-coding-standards/wpcs --no-interaction || true
-          phpcs --standard=WordPress plugin/wpguard-nc-backup || true
+          phpcs --standard=WordPress plugin/wpthistle-backup-restore || true
       - name: Static analysis
-        run: phpstan analyse plugin/wpguard-nc-backup --level=5 || true
+        run: phpstan analyse plugin/wpthistle-backup-restore --level=5 || true
 
   unit-tests:
     runs-on: ubuntu-latest
@@ -79,11 +79,11 @@ jobs:
           }
 
           echo "Installing WordPress (source)..."
-          wp_source core install --url="http://127.0.0.1:8081" --title="WPGuard Source Test Site" \
+          wp_source core install --url="http://127.0.0.1:8081" --title="WPThistle Source Test Site" \
             --admin_user="$WP_ADMIN_USER" --admin_password="$WP_ADMIN_PASSWORD" --admin_email="$WP_ADMIN_EMAIL" --skip-email
 
           echo "Activating plugin on source site..."
-          wp_source plugin activate wpguard-nc-backup
+          wp_source plugin activate wpthistle-backup-restore
 
           echo "Seeding fixture content on source site..."
           wp_source eval-file /fixtures/seed-fixtures.php
@@ -93,7 +93,7 @@ jobs:
 
           echo "Creating dedicated non-admin Nextcloud backup account..."
           docker compose exec -T -e OC_PASS="$NC_BACKUP_USER_PASSWORD" nextcloud php occ user:add \
-            --password-from-env --display-name="WPGuard Backup (dedicated, non-admin)" "$NC_BACKUP_USER"
+            --password-from-env --display-name="WPThistle Backup (dedicated, non-admin)" "$NC_BACKUP_USER"
 
           echo "Generating Nextcloud app password for the backup account via OCS API..."
           APP_PASSWORD=$(curl -sk --cacert certs/wpguard-test-ca.crt -u "$NC_BACKUP_USER:$NC_BACKUP_USER_PASSWORD" \
@@ -105,6 +105,7 @@ jobs:
           docker compose run --rm \
             -e WORDPRESS_DB_HOST=db-source -e WORDPRESS_DB_NAME="$WP_SOURCE_DB_NAME" \
             -e WORDPRESS_DB_USER="$WP_SOURCE_DB_USER" -e WORDPRESS_DB_PASSWORD="$WP_SOURCE_DB_PASSWORD" \
+            -e WORDPRESS_TABLE_PREFIX="$WP_SOURCE_TABLE_PREFIX" \
             -e WPGUARD_TEST_NC_URL="https://nc-proxy.wpguard-test.local" \
             -e WPGUARD_TEST_NC_USER="$NC_BACKUP_USER" \
             -e WPGUARD_TEST_NC_APP_PASSWORD="$APP_PASSWORD" \
@@ -134,11 +135,11 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
-          git archive --format=zip --prefix=wpguard-nc-backup/ "$TAG:plugin/wpguard-nc-backup" -o "wpguard-nc-backup-${VERSION}.zip"
+          git archive --format=zip --prefix=wpthistle-backup-restore/ "$TAG:plugin/wpthistle-backup-restore" -o "wpthistle-backup-restore-${VERSION}.zip"
       - name: Attach to the GitHub Release for this tag
         uses: softprops/action-gh-release@v2
         with:
-          files: wpguard-nc-backup-*.zip
+          files: wpthistle-backup-restore-*.zip
           # A tag with a `-` suffix (e.g. v1.2.1-rc1) is marked prerelease,
           # which Update_Checker's /releases/latest query never returns --
           # this is how a real tag push can be tested without any live

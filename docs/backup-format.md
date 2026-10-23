@@ -38,7 +38,7 @@ fails safely rather than guessing.
   "site_id": "example-com-7f3a9c",
   "created_at_utc": "2026-10-19T15:32:45Z",
   "plugin_version": "0.1.0",
-  "generator": "wpguard-nc-backup",
+  "generator": "wpthistle-backup-restore",
   "source": {
     "wp_version": "7.1",
     "php_version": "8.3.14",
@@ -53,7 +53,7 @@ fails safely rather than guessing.
     "database": { "included": true, "tables": ["wp_posts", "..."] },
     "files": {
       "included_roots": ["wp-content", "wp-config.php", ".htaccess"],
-      "excluded_patterns": ["wp-content/cache/**", "wp-content/wpguard-nc-backup-tmp/**"],
+      "excluded_patterns": ["wp-content/cache/**", "wp-content/wpthistle-backup-restore-tmp/**"],
       "excluded_external_note": "Files outside the WordPress document root, and any symlink targets outside the site root, are not included. See docs/restore-manual.md."
     }
   },
@@ -126,7 +126,7 @@ plugin's own exporter (ADR 0005) — not a shelled-out `mysqldump` call (brief
 NFR-05: no shell dependency on shared hosting). Structure:
 
 ```sql
--- wpguard-nc-backup database export
+-- wpthistle-backup-restore database export
 -- format_version: 1
 -- generated_at_utc: 2026-10-19T15:33:01Z
 SET NAMES utf8mb4;

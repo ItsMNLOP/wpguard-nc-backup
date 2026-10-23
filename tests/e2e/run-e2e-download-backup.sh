@@ -48,13 +48,13 @@ docker compose -p wpguard-test exec -T db-restore mariadb -u root -p"$WP_RESTORE
 # never delete that path) and uploads so this test's own backup is just
 # its own small seeded fixture, deterministic regardless of run order.
 docker exec wpguard-test-wp-restore-1 sh -c "
-  find /var/www/html/wp-content/plugins -mindepth 1 -maxdepth 1 ! -name wpguard-nc-backup -exec rm -rf {} +
-  rm -rf /var/www/html/wp-content/uploads/* /var/www/html/wp-content/wpguard-nc-backup-tmp
+  find /var/www/html/wp-content/plugins -mindepth 1 -maxdepth 1 ! -name wpthistle-backup-restore -exec rm -rf {} +
+  rm -rf /var/www/html/wp-content/uploads/* /var/www/html/wp-content/wpthistle-backup-restore-tmp
 " || true
 wpr core install --url="$BASE_URL" --title="Download Backup E2E Test" \
   --admin_user="$ADMIN_USER" --admin_password="$ADMIN_PASS" --admin_email=wpadmin@wpguard-test.local --skip-email > /dev/null
-wpr plugin activate wpguard-nc-backup > /dev/null
-HAS_CREDS=$(wpr eval "echo \WPGuard\NCBackup\Settings::has_credentials() ? 'yes' : 'no';")
+wpr plugin activate wpthistle-backup-restore > /dev/null
+HAS_CREDS=$(wpr eval "echo \WPThistle\BackupRestore\Settings::has_credentials() ? 'yes' : 'no';")
 [ "$HAS_CREDS" = "no" ] || { echo "FAIL: wp-restore unexpectedly has Nextcloud credentials configured"; exit 1; }
 echo "OK  no Nextcloud credentials configured"
 
@@ -71,9 +71,9 @@ curl -s -c "$COOKIES" -b "$COOKIES" \
   --data-urlencode "log=$ADMIN_USER" --data-urlencode "pwd=$ADMIN_PASS" \
   -d "wp-submit=Log+In&redirect_to=$BASE_URL%2Fwp-admin%2F&testcookie=1" \
   "$BASE_URL/wp-login.php" -o /dev/null
-PAGE=$(curl -s -c "$COOKIES" -b "$COOKIES" "$BASE_URL/wp-admin/admin.php?page=wpguard-nc-backup")
+PAGE=$(curl -s -c "$COOKIES" -b "$COOKIES" "$BASE_URL/wp-admin/admin.php?page=wpthistle-backup-restore")
 echo "$PAGE" > "$SCRATCH/settings-page.html"
-[[ "$PAGE" == *"wpguard_nc_download_now"* ]] || { echo "FAIL: could not load the authenticated settings page (login failed?)"; exit 1; }
+[[ "$PAGE" == *"wpthistle_backup_download_now"* ]] || { echo "FAIL: could not load the authenticated settings page (login failed?)"; exit 1; }
 NONCE=$(echo "$PAGE" | sed -n 's/.*var nonce = "\([a-f0-9]*\)".*/\1/p')
 [ -n "$NONCE" ] || { echo "FAIL: could not extract nonce from settings page"; exit 1; }
 # security audit finding LOW-DL-4: the download link now uses its own dedicated
@@ -93,7 +93,7 @@ echo "OK  authenticated session established, nonce + downloadNonce extracted"
 # ever writes consistent with the one process that will later serve it
 # -- exactly how a real browser/WP-Cron-driven backup behaves.
 advance_via_http() {
-  curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpguard_nc_advance_job&nonce=$NONCE&job_id=$1" "$BASE_URL/wp-admin/admin-ajax.php"
+  curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpthistle_backup_advance_job&nonce=$NONCE&job_id=$1" "$BASE_URL/wp-admin/admin-ajax.php"
 }
 drive_to_verified() {
   local jid="$1" label="$2" res i
@@ -111,7 +111,7 @@ drive_to_verified() {
 
 echo
 echo "=== Start a Download Now backup via the REAL authenticated AJAX endpoint (destination=download, no creds configured) ==="
-START=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpguard_nc_start_backup&nonce=$NONCE&destination=download" "$BASE_URL/wp-admin/admin-ajax.php")
+START=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpthistle_backup_start_backup&nonce=$NONCE&destination=download" "$BASE_URL/wp-admin/admin-ajax.php")
 echo "$START" > "$SCRATCH/start.json"
 JOB_ID=$(echo "$START" | sed -n 's/.*"job_id":"\([^"]*\)".*/\1/p')
 [ -n "$JOB_ID" ] || { echo "FAIL: did not get a job_id back. Response: $START"; exit 1; }
@@ -122,12 +122,12 @@ echo "=== Drive the job to completion via the real HTTP AJAX endpoint ==="
 drive_to_verified "$JOB_ID" "download-only backup" || exit 1
 echo "OK  download-only backup verified"
 
-DOWNLOAD_TOKEN=$(wpr eval "\$cp = \WPGuard\NCBackup\Job_Store::get('$JOB_ID')['checkpoint']; echo \$cp['download_token'] ?? '';")
+DOWNLOAD_TOKEN=$(wpr eval "\$cp = \WPThistle\BackupRestore\Job_Store::get('$JOB_ID')['checkpoint']; echo \$cp['download_token'] ?? '';")
 [ -n "$DOWNLOAD_TOKEN" ] || { echo "FAIL: no download_token on the verified job's checkpoint"; exit 1; }
 
 echo
 echo "=== Negative auth checks on the real download endpoint ==="
-DOWNLOAD_URL="$BASE_URL/wp-admin/admin-post.php?action=wpguard_nc_download_bundle&job_id=$JOB_ID&nonce=$DOWNLOAD_NONCE"
+DOWNLOAD_URL="$BASE_URL/wp-admin/admin-post.php?action=wpthistle_backup_download_bundle&job_id=$JOB_ID&nonce=$DOWNLOAD_NONCE"
 
 # WordPress core itself blocks this before our handler ever runs: an
 # admin_post_{action} hook with no matching admin_post_nopriv_{action}
@@ -147,11 +147,11 @@ NOAUTH_MAGIC=$(head -c 2 "$SCRATCH/noauth.bin")
 [ "$NOAUTH_MAGIC" != "PK" ] || { echo "FAIL: unauthenticated request received real zip bytes (PK magic)"; exit 1; }
 echo "OK  unauthenticated request denied ($CODE_NOAUTH), response is not a zip"
 
-CODE_BADNONCE=$(curl -s -c "$COOKIES" -b "$COOKIES" -o "$SCRATCH/badnonce.bin" -w "%{http_code}" "$BASE_URL/wp-admin/admin-post.php?action=wpguard_nc_download_bundle&job_id=$JOB_ID&nonce=deadbeef")
+CODE_BADNONCE=$(curl -s -c "$COOKIES" -b "$COOKIES" -o "$SCRATCH/badnonce.bin" -w "%{http_code}" "$BASE_URL/wp-admin/admin-post.php?action=wpthistle_backup_download_bundle&job_id=$JOB_ID&nonce=deadbeef")
 [ "$CODE_BADNONCE" = "403" ] || { echo "FAIL: bad-nonce download request returned $CODE_BADNONCE, expected 403"; exit 1; }
 echo "OK  authenticated-but-bad-nonce request denied (403)"
 
-DIRECT_URL="$BASE_URL/wp-content/wpguard-nc-backup-tmp/downloads/$DOWNLOAD_TOKEN/"
+DIRECT_URL="$BASE_URL/wp-content/wpthistle-backup-restore-tmp/downloads/$DOWNLOAD_TOKEN/"
 CODE_DIRECT=$(curl -s -o /dev/null -w "%{http_code}" "$DIRECT_URL")
 [ "$CODE_DIRECT" != "200" ] || { echo "FAIL: the guarded downloads directory is directly web-listable/servable ($CODE_DIRECT)"; exit 1; }
 echo "OK  guarded downloads directory not directly web-accessible (got $CODE_DIRECT)"
@@ -178,7 +178,7 @@ echo "OK  bundle contains manifest.json, COMPLETE.json, database.sql.gz, files.p
 ziptool "unzip -p /d/bundle.zip manifest.json" > "$SCRATCH/manifest.json"
 # Checking files[].path specifically, not grepping the raw JSON text --
 # the manifest legitimately documents Inventory::EXCLUDED_PATTERNS
-# (which itself contains the literal string "wpguard-nc-backup-tmp") in
+# (which itself contains the literal string "wpthistle-backup-restore-tmp") in
 # its own scope.files.excluded_patterns field, so a raw text grep always
 # false-positives regardless of whether any FILE ENTRY actually
 # references it.
@@ -186,20 +186,20 @@ BAD_COUNT=$(MSYS_NO_PATHCONV=1 docker run --rm -v "$SCRATCH":/d php:8.3-cli php 
 $d = json_decode(file_get_contents("/d/manifest.json"), true);
 $bad = 0;
 foreach (($d["files"] ?? []) as $f) {
-  if (strpos($f["path"] ?? "", "wpguard-nc-backup-tmp") === 0) { $bad++; }
+  if (strpos($f["path"] ?? "", "wpthistle-backup-restore-tmp") === 0) { $bad++; }
 }
 echo $bad;
 ')
 [ "$BAD_COUNT" = "0" ] || { echo "FAIL: manifest.json's files[] references $BAD_COUNT entries under its own tmp staging directory -- Inventory exclusion regressed"; exit 1; }
-echo "OK  manifest.json's files[] contains no wpguard-nc-backup-tmp self-references"
+echo "OK  manifest.json's files[] contains no wpthistle-backup-restore-tmp self-references"
 
 echo
 echo "=== Cap-at-one: a second Download Now backup removes the first bundle ==="
-TOKEN_DIR_1=$(wpr eval "echo \WPGuard\NCBackup\Job_Orchestrator::download_dir_for_token('$DOWNLOAD_TOKEN');")
+TOKEN_DIR_1=$(wpr eval "echo \WPThistle\BackupRestore\Job_Orchestrator::download_dir_for_token('$DOWNLOAD_TOKEN');")
 EXISTS_BEFORE=$(wpcli_sh "[ -d '$TOKEN_DIR_1' ] && echo yes || echo no")
 [ "$EXISTS_BEFORE" = "yes" ] || { echo "FAIL: expected first bundle dir to still exist before starting a second backup"; exit 1; }
 
-START2=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpguard_nc_start_backup&nonce=$NONCE&destination=download" "$BASE_URL/wp-admin/admin-ajax.php")
+START2=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpthistle_backup_start_backup&nonce=$NONCE&destination=download" "$BASE_URL/wp-admin/admin-ajax.php")
 JOB_ID_2=$(echo "$START2" | sed -n 's/.*"job_id":"\([^"]*\)".*/\1/p')
 [ -n "$JOB_ID_2" ] || { echo "FAIL: second download backup did not start: $START2"; exit 1; }
 EXISTS_AFTER=$(wpcli_sh "[ -d '$TOKEN_DIR_1' ] && echo yes || echo no")
@@ -207,30 +207,30 @@ EXISTS_AFTER=$(wpcli_sh "[ -d '$TOKEN_DIR_1' ] && echo yes || echo no")
 echo "OK  starting a second local backup removed the prior pending bundle"
 
 drive_to_verified "$JOB_ID_2" "second download backup" || exit 1
-DOWNLOAD_TOKEN_2=$(wpr eval "\$cp = \WPGuard\NCBackup\Job_Store::get('$JOB_ID_2')['checkpoint']; echo \$cp['download_token'] ?? '';")
+DOWNLOAD_TOKEN_2=$(wpr eval "\$cp = \WPThistle\BackupRestore\Job_Store::get('$JOB_ID_2')['checkpoint']; echo \$cp['download_token'] ?? '';")
 [ -n "$DOWNLOAD_TOKEN_2" ] || { echo "FAIL: second job has no download_token"; exit 1; }
 echo "OK  second local backup verified ($DOWNLOAD_TOKEN_2)"
 
 echo
 echo "=== Explicit delete via the real authenticated AJAX endpoint ==="
-TOKEN_DIR_2=$(wpr eval "echo \WPGuard\NCBackup\Job_Orchestrator::download_dir_for_token('$DOWNLOAD_TOKEN_2');")
-curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpguard_nc_delete_download_bundle&nonce=$NONCE&job_id=$JOB_ID_2" "$BASE_URL/wp-admin/admin-ajax.php" > /dev/null
+TOKEN_DIR_2=$(wpr eval "echo \WPThistle\BackupRestore\Job_Orchestrator::download_dir_for_token('$DOWNLOAD_TOKEN_2');")
+curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpthistle_backup_delete_download_bundle&nonce=$NONCE&job_id=$JOB_ID_2" "$BASE_URL/wp-admin/admin-ajax.php" > /dev/null
 EXISTS_DELETED=$(wpcli_sh "[ -d '$TOKEN_DIR_2' ] && echo yes || echo no")
 [ "$EXISTS_DELETED" = "no" ] || { echo "FAIL: explicit delete did not remove the bundle directory"; exit 1; }
-CODE_AFTER_DELETE=$(curl -s -c "$COOKIES" -b "$COOKIES" -o /dev/null -w "%{http_code}" "$BASE_URL/wp-admin/admin-post.php?action=wpguard_nc_download_bundle&job_id=$JOB_ID_2&nonce=$DOWNLOAD_NONCE")
+CODE_AFTER_DELETE=$(curl -s -c "$COOKIES" -b "$COOKIES" -o /dev/null -w "%{http_code}" "$BASE_URL/wp-admin/admin-post.php?action=wpthistle_backup_download_bundle&job_id=$JOB_ID_2&nonce=$DOWNLOAD_NONCE")
 [ "$CODE_AFTER_DELETE" = "404" ] || { echo "FAIL: download endpoint did not 404 after explicit delete (got $CODE_AFTER_DELETE)"; exit 1; }
 echo "OK  explicit delete removes the bundle; endpoint 404s afterward"
 
 echo
 echo "=== TTL sweep: an artificially-aged bundle is removed by the TTL-only sweep ==="
-START_TTL=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpguard_nc_start_backup&nonce=$NONCE&destination=download" "$BASE_URL/wp-admin/admin-ajax.php")
+START_TTL=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpthistle_backup_start_backup&nonce=$NONCE&destination=download" "$BASE_URL/wp-admin/admin-ajax.php")
 JOB_ID_TTL=$(echo "$START_TTL" | sed -n 's/.*"job_id":"\([^"]*\)".*/\1/p')
 [ -n "$JOB_ID_TTL" ] || { echo "FAIL: TTL-test backup did not start"; exit 1; }
 drive_to_verified "$JOB_ID_TTL" "TTL-test backup" || exit 1
-TOKEN_DIR_TTL=$(wpr eval "\$cp = \WPGuard\NCBackup\Job_Store::get('$JOB_ID_TTL')['checkpoint']; echo \WPGuard\NCBackup\Job_Orchestrator::download_dir_for_token(\$cp['download_token'] ?? '');")
+TOKEN_DIR_TTL=$(wpr eval "\$cp = \WPThistle\BackupRestore\Job_Store::get('$JOB_ID_TTL')['checkpoint']; echo \WPThistle\BackupRestore\Job_Orchestrator::download_dir_for_token(\$cp['download_token'] ?? '');")
 [ -n "$TOKEN_DIR_TTL" ] || { echo "FAIL: could not resolve TTL-test bundle directory"; exit 1; }
 wpr eval "touch(rtrim('$TOKEN_DIR_TTL','/'), time() - 2 * DAY_IN_SECONDS);" > /dev/null
-wpr eval "\WPGuard\NCBackup\Job_Orchestrator::sweep_download_bundles(false);" > /dev/null
+wpr eval "\WPThistle\BackupRestore\Job_Orchestrator::sweep_download_bundles(false);" > /dev/null
 EXISTS_AFTER_TTL=$(wpcli_sh "[ -d '$TOKEN_DIR_TTL' ] && echo yes || echo no")
 [ "$EXISTS_AFTER_TTL" = "no" ] || { echo "FAIL: TTL-only sweep did not remove a bundle aged past the TTL"; exit 1; }
 echo "OK  TTL-only sweep removes an aged pending bundle"
@@ -242,13 +242,13 @@ echo "=== Round trip: feed the FIRST downloaded bundle back through the EXISTING
 # Docker) curl argument, including "application/zip" itself, corrupting
 # the upload (curl: (26) Failed to open/read local data). The handler
 # never inspects $_FILES['bundle']['type'] anyway, so it's not needed.
-UPLOAD_RESP=$(curl -s -c "$COOKIES" -b "$COOKIES" -F "action=wpguard_nc_upload_restore_bundle" -F "nonce=$NONCE" -F "bundle=@$SCRATCH/bundle.zip" "$BASE_URL/wp-admin/admin-ajax.php")
+UPLOAD_RESP=$(curl -s -c "$COOKIES" -b "$COOKIES" -F "action=wpthistle_backup_upload_restore_bundle" -F "nonce=$NONCE" -F "bundle=@$SCRATCH/bundle.zip" "$BASE_URL/wp-admin/admin-ajax.php")
 echo "$UPLOAD_RESP" > "$SCRATCH/upload-resp.json"
 UPLOAD_TOKEN=$(echo "$UPLOAD_RESP" | sed -n 's/.*"upload_token":"\([^"]*\)".*/\1/p')
 [ -n "$UPLOAD_TOKEN" ] || { echo "FAIL: upload-restore-bundle rejected the downloaded bundle: $UPLOAD_RESP"; exit 1; }
 echo "OK  downloaded bundle accepted by the existing upload-restore endpoint"
 
-RESTORE_START=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpguard_nc_start_restore&nonce=$NONCE&source=upload&upload_token=$UPLOAD_TOKEN&confirm_url_mismatch=1" "$BASE_URL/wp-admin/admin-ajax.php")
+RESTORE_START=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpthistle_backup_start_restore&nonce=$NONCE&source=upload&upload_token=$UPLOAD_TOKEN&confirm_url_mismatch=1" "$BASE_URL/wp-admin/admin-ajax.php")
 RESTORE_JOB_ID=$(echo "$RESTORE_START" | sed -n 's/.*"job_id":"\([^"]*\)".*/\1/p')
 [ -n "$RESTORE_JOB_ID" ] || { echo "FAIL: restore did not start: $RESTORE_START"; exit 1; }
 echo "OK  restore job started from the downloaded bundle: $RESTORE_JOB_ID"
@@ -266,16 +266,16 @@ echo "OK  sentinel option present and correct after round-trip restore"
 
 echo
 echo "=== Deactivate-purge: a pending bundle is removed when the plugin deactivates ==="
-START3=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpguard_nc_start_backup&nonce=$NONCE&destination=download" "$BASE_URL/wp-admin/admin-ajax.php")
+START3=$(curl -s -c "$COOKIES" -b "$COOKIES" -d "action=wpthistle_backup_start_backup&nonce=$NONCE&destination=download" "$BASE_URL/wp-admin/admin-ajax.php")
 JOB_ID_3=$(echo "$START3" | sed -n 's/.*"job_id":"\([^"]*\)".*/\1/p')
 [ -n "$JOB_ID_3" ] || { echo "FAIL: third download backup did not start"; exit 1; }
 drive_to_verified "$JOB_ID_3" "third download backup" || exit 1
-TOKEN_DIR_3=$(wpr eval "\$cp = \WPGuard\NCBackup\Job_Store::get('$JOB_ID_3')['checkpoint']; echo \WPGuard\NCBackup\Job_Orchestrator::download_dir_for_token(\$cp['download_token'] ?? '');")
+TOKEN_DIR_3=$(wpr eval "\$cp = \WPThistle\BackupRestore\Job_Store::get('$JOB_ID_3')['checkpoint']; echo \WPThistle\BackupRestore\Job_Orchestrator::download_dir_for_token(\$cp['download_token'] ?? '');")
 [ -n "$TOKEN_DIR_3" ] || { echo "FAIL: could not resolve third bundle's directory"; exit 1; }
 
-wpr plugin deactivate wpguard-nc-backup > /dev/null
+wpr plugin deactivate wpthistle-backup-restore > /dev/null
 EXISTS_AFTER_DEACTIVATE=$(wpcli_sh "[ -d '$TOKEN_DIR_3' ] && echo yes || echo no")
-wpr plugin activate wpguard-nc-backup > /dev/null
+wpr plugin activate wpthistle-backup-restore > /dev/null
 [ "$EXISTS_AFTER_DEACTIVATE" = "no" ] || { echo "FAIL: pending bundle directory survived plugin deactivation"; exit 1; }
 echo "OK  deactivating the plugin purges the pending bundle (plugin reactivated afterward)"
 

@@ -64,13 +64,13 @@ wp_source_scratch() {
 # manifest.json, once this script left wp-source pointed at its own
 # "wpguard-chunked-e2e" folder instead). Captured and restored on exit,
 # same pattern.
-ORIGINAL_SETTINGS_JSON=$(wp_source option get wpguard_nc_settings --format=json)
+ORIGINAL_SETTINGS_JSON=$(wp_source option get wpthistle_backup_settings --format=json)
 printf '%s' "$ORIGINAL_SETTINGS_JSON" > "$SCRATCH/original-settings.json"
 restore_original_settings() {
   echo "=== Restoring wp-source's original plugin settings ==="
   wp_source_scratch eval '
     $data = json_decode( file_get_contents( "/scratch/original-settings.json" ), true );
-    $r = \WPGuard\NCBackup\Settings::save( $data );
+    $r = \WPThistle\BackupRestore\Settings::save( $data );
     echo $r["ok"] ? "restored ok\n" : "RESTORE FAILED: " . wp_json_encode( $r["errors"] ) . "\n";
   '
 }
@@ -121,17 +121,17 @@ run_chunked_proof() {
   echo "### Backend: $backend (expect chunking-v2 support: $expect_chunking) ###"
 
   SUPPORTED=$(wp_source eval '
-    $logger = new \WPGuard\NCBackup\Logger( array() );
-    $client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( $logger );
+    $logger = new \WPThistle\BackupRestore\Logger( array() );
+    $client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( $logger );
     echo $client->supports_chunked_upload_v2() ? "yes" : "no";
   ')
   [ "$SUPPORTED" = "$expect_chunking" ] || { echo "FAIL ($backend): supports_chunked_upload_v2() returned '$SUPPORTED', expected '$expect_chunking'"; exit 1; }
   echo "OK  ($backend) supports_chunked_upload_v2() = $SUPPORTED"
 
   RESULT=$(wp_source_scratch eval '
-    $logger = new \WPGuard\NCBackup\Logger( array() );
-    $client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( $logger );
-    $client->mkcol_recursive( trim( \WPGuard\NCBackup\Settings::get_remote_folder(), "/" ) );
+    $logger = new \WPThistle\BackupRestore\Logger( array() );
+    $client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( $logger );
+    $client->mkcol_recursive( trim( \WPThistle\BackupRestore\Settings::get_remote_folder(), "/" ) );
     $rel = $client->relative_path( "chunked-proof.bin" );
     $r = $client->upload_part( "/scratch/big.bin", $rel, "proof-upload-id-'"$RUN_ID"'" );
     if ( is_wp_error( $r ) ) { echo "ERROR:" . $r->get_error_message(); exit; }
@@ -146,8 +146,8 @@ run_chunked_proof() {
   rm -f "$SCRATCH/downloaded.bin"
 
   wp_source eval '
-    $logger = new \WPGuard\NCBackup\Logger( array() );
-    $client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( $logger );
+    $logger = new \WPThistle\BackupRestore\Logger( array() );
+    $client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( $logger );
     $client->delete( $client->relative_path( "chunked-proof.bin" ) );
   ' > /dev/null || true
 }
@@ -209,9 +209,9 @@ echo "$PLANT_RESULT" | grep -qE 'mkcol=(201|405) put=(200|201|204)' || { echo "F
 echo "OK  wrong chunk 0 planted directly on the server: $PLANT_RESULT"
 
 RESUME_RESULT=$(wp_source_scratch eval '
-	$logger = new \WPGuard\NCBackup\Logger( array() );
-	$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( $logger );
-	$client->mkcol_recursive( trim( \WPGuard\NCBackup\Settings::get_remote_folder(), "/" ) );
+	$logger = new \WPThistle\BackupRestore\Logger( array() );
+	$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( $logger );
+	$client->mkcol_recursive( trim( \WPThistle\BackupRestore\Settings::get_remote_folder(), "/" ) );
 	$rel = $client->relative_path( "resume-proof.bin" );
 	$r = $client->upload_part( "/scratch/big.bin", $rel, "resume-proof-upload-id-'"$RUN_ID"'" );
 	if ( is_wp_error( $r ) ) { echo "ERROR:" . $r->get_error_message(); exit; }
@@ -236,8 +236,8 @@ REST_EXPECTED=$(tail -c +"$((WRONG_CHUNK_SIZE + 1))" "$SCRATCH/big.bin" | sha256
 echo "OK  every byte after chunk 0 matches the real source file -- the remaining chunks uploaded correctly this call"
 
 wp_source eval '
-	$logger = new \WPGuard\NCBackup\Logger( array() );
-	$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( $logger );
+	$logger = new \WPThistle\BackupRestore\Logger( array() );
+	$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( $logger );
 	$client->delete( $client->relative_path( "resume-proof.bin" ) );
 ' > /dev/null || true
 

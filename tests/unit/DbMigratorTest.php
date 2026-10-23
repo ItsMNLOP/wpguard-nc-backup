@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\DB_Migrator;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\DB_Migrator;
 
 // Phase 2.5 (migration on restore): checking "this backup is from a
 // different site" now means migration, not merely "proceed anyway" --

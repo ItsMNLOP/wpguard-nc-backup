@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Restore_Orchestrator;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Restore_Orchestrator;
 
 /**
  * Restore_Orchestrator::extract_bundle_zip() -- extracted out of

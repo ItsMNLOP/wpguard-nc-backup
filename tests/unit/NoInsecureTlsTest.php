@@ -1,8 +1,8 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
+namespace WPThistle\BackupRestore\Tests;
 
 function test_no_sslverify_false_anywhere_in_plugin_source() {
-	$dir = dirname( __DIR__, 2 ) . '/plugin/wpguard-nc-backup';
+	$dir = dirname( __DIR__, 2 ) . '/plugin/wpthistle-backup-restore';
 	$offenders = array();
 	$iterator = new \RecursiveIteratorIterator( new \RecursiveDirectoryIterator( $dir ) );
 	foreach ( $iterator as $file ) {

@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 /**
  * Self-hosted update feed (Phase 2, item 4): checks GitHub Releases for
@@ -17,9 +17,9 @@ namespace WPGuard\NCBackup;
  * asset means no update offered, not a fallback to the wrong package.
  */
 class Update_Checker {
-	const GITHUB_REPO = 'ItsMNLOP/wpguard-nc-backup';
-	const SLUG         = 'wpguard-nc-backup';
-	const CACHE_KEY     = 'wpguard_nc_update_check';
+	const GITHUB_REPO = 'ItsMNLOP/wpthistle-backup-restore';
+	const SLUG         = 'wpthistle-backup-restore';
+	const CACHE_KEY     = 'wpthistle_backup_update_check';
 	const CACHE_TTL      = 12 * HOUR_IN_SECONDS;
 	const FAILURE_CACHE_TTL = HOUR_IN_SECONDS;
 
@@ -133,7 +133,7 @@ class Update_Checker {
 				'timeout' => 10,
 				'headers' => array(
 					'Accept'     => 'application/vnd.github+json',
-					'User-Agent' => 'WPGuard-NC-Backup/' . WPGUARD_NC_VERSION,
+					'User-Agent' => 'WPThistle-Backup-Restore/' . WPTHISTLE_BACKUP_VERSION,
 				),
 			)
 		);
@@ -169,7 +169,7 @@ class Update_Checker {
 		// query api.wordpress.org for this slug and could populate this
 		// same transient key with a WP.org-sourced entry -- including
 		// from an attacker who registers the still-unclaimed
-		// `wpguard-nc-backup` slug there. Unconditionally clearing any
+		// `wpthistle-backup-restore` slug there. Unconditionally clearing any
 		// existing entry here, before deciding whether to replace it
 		// with our own GitHub-sourced one, means no other update source
 		// can ever survive under our basename regardless of whether a
@@ -180,7 +180,7 @@ class Update_Checker {
 		if ( ! $release || empty( $release['package'] ) || ! self::is_trusted_package_url( $release['package'] ) ) {
 			return $transient;
 		}
-		if ( ! self::is_newer_version( $release['version'], WPGUARD_NC_VERSION ) ) {
+		if ( ! self::is_newer_version( $release['version'], WPTHISTLE_BACKUP_VERSION ) ) {
 			return $transient;
 		}
 
@@ -211,14 +211,14 @@ class Update_Checker {
 			// Returning our own error instead of passing $result through
 			// means this slug's details are owned by this feed, full
 			// stop, never by whatever a prior filter produced.
-			return new \WP_Error( 'wpguard_nc_no_release', __( 'No published release found. Check github.com/ItsMNLOP/wpguard-nc-backup.', 'wpguard-nc-backup' ) );
+			return new \WP_Error( 'wpthistle_backup_no_release', __( 'No published release found. Check github.com/ItsMNLOP/wpthistle-backup-restore.', 'wpthistle-backup-restore' ) );
 		}
 
 		$info                = new \stdClass();
-		$info->name          = 'WPGuard Backup and Restore';
+		$info->name          = 'WPThistle Backup and Restore';
 		$info->slug          = self::SLUG;
 		$info->version       = $release['version'];
-		$info->author        = 'WPGuard project';
+		$info->author        = 'WPThistle project';
 		$info->homepage      = $release['html_url'];
 		$info->requires      = '6.4';
 		$info->requires_php  = '8.1';

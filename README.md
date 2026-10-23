@@ -1,6 +1,6 @@
-# WPGuard Nextcloud Backup
+# WPThistle Backup and Restore
 
-[![CI](https://github.com/ItsMNLOP/wpguard-nc-backup/actions/workflows/ci.yml/badge.svg)](https://github.com/ItsMNLOP/wpguard-nc-backup/actions/workflows/ci.yml)
+[![CI](https://github.com/ItsMNLOP/wpthistle-backup-restore/actions/workflows/ci.yml/badge.svg)](https://github.com/ItsMNLOP/wpthistle-backup-restore/actions/workflows/ci.yml)
 
 A WordPress plugin that backs up your site's database and files to a
 Nextcloud server you control, over authenticated HTTPS WebDAV — with
@@ -50,7 +50,7 @@ security model.
 - Self-hosted update feed via GitHub Releases — no wordpress.org
   listing required.
 - Admin UI with live job status/log, plus a WP-CLI command
-  (`wp wpguard-nc-backup run` / `status`).
+  (`wp wpthistle-backup-restore run` / `status`).
 
 ## Requirements
 
@@ -66,7 +66,7 @@ security model.
 1. Download the latest release ZIP, or build one yourself with
    `docker/scripts/package.ps1`.
 2. Upload and activate the plugin in WordPress.
-3. Go to **WPGuard > Nextcloud Backup**.
+3. Go to **WPThistle > Backup and Restore**.
 4. Enter your Nextcloud URL, the dedicated account's username, its app
    password, and a destination folder.
 5. Click **Test Connection**, then **Back Up Now**.
@@ -76,14 +76,14 @@ configured Nextcloud destination or an uploaded backup bundle — check
 "this backup is from a different site" if the backup came from
 somewhere other than this exact site/domain, which also migrates every
 URL it contains to this site's own address. See
-`plugin/wpguard-nc-backup/readme.txt` for the WordPress.org-style
+`plugin/wpthistle-backup-restore/readme.txt` for the WordPress.org-style
 plugin readme, and `docs/restore-manual.md` for the manual (non-UI)
 restore procedure, kept as a documented fallback.
 
 ## Repo layout
 
 ```
-plugin/wpguard-nc-backup/   The installable plugin (zip this directory's contents).
+plugin/wpthistle-backup-restore/   The installable plugin (zip this directory's contents).
 docs/                        ADRs, threat model, backup format, restore runbook, architecture.
 tests/unit/                  Pure-PHP logic tests, no WordPress/Docker needed.
 tests/e2e/                   Fixture seeding + full backup/restore drill scripts.
@@ -110,10 +110,10 @@ Source site: `http://127.0.0.1:8081/wp-admin` · Restore target:
 — trusted by the test containers only, never added to the host's trust
 store).
 
-**Gotcha:** `wp-source` (8081) bind-mounts the `plugin/wpguard-nc-backup/`
+**Gotcha:** `wp-source` (8081) bind-mounts the `plugin/wpthistle-backup-restore/`
 dev folder directly into its container. WP admin's "Delete" on that
 install deletes the actual files on your host disk (recoverable via
-`git checkout -- plugin/wpguard-nc-backup/`), and uploading the packaged
+`git checkout -- plugin/wpthistle-backup-restore/`), and uploading the packaged
 ZIP there collides with the existing folder. To test the packaged ZIP's
 real install/activate flow, use **8082** (`wp-restore`, no bind mount)
 instead — that's also what `package.ps1`'s own smoke test does.

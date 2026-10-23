@@ -2,7 +2,7 @@
 
 **If you're restoring this exact site, in place, and the plugin is still
 installed and running on it: use the plugin's own one-click restore
-(WPGuard > Nextcloud Backup > Restore) instead of this document.** It
+(WPThistle > Backup and Restore > Restore) instead of this document.** It
 handles every step below automatically, verified against real production
 data (`tests/e2e/run-e2e-restore.sh`, `docs/operations.md`'s "One-click
 restore" section, `docs/threat-model.md` T20). This manual runbook exists
@@ -11,7 +11,7 @@ gone, offline, or unreachable, and you're recovering onto a **different**
 host using only the Nextcloud archive and these instructions.
 
 **Read this before you need it.** This procedure does **not** require the
-WPGuard plugin, or even a WordPress install, to be present on the recovery
+WPThistle Backup and Restore plugin, or even a WordPress install, to be present on the recovery
 machine for steps 1–3. You need: a WebDAV-capable client (or `curl`), a
 MySQL/MariaDB client, `unzip`/`ZipArchive`, and a fresh target WordPress
 install (steps 4+).
@@ -239,8 +239,8 @@ archived one. Instead:
 3. Leave the target's own `DB_NAME`/`DB_USER`/`DB_PASSWORD`/`DB_HOST`
    pointing at the target database you created in step 4 — do not copy the
    source site's DB credentials over the target's.
-4. If the archived file defines `WPGUARD_NC_APP_PASSWORD` or
-   `WPGUARD_NC_CA_BUNDLE`, do not carry those over blindly either; re-enter
+4. If the archived file defines `WPTHISTLE_BACKUP_APP_PASSWORD` or
+   `WPTHISTLE_BACKUP_CA_BUNDLE`, do not carry those over blindly either; re-enter
    them deliberately if you intend to keep backing up from the restored
    site, since the "same Nextcloud account" assumption may not hold on a new
    host.

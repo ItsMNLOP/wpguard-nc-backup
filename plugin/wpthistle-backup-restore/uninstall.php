@@ -5,14 +5,14 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 
 global $wpdb;
 
-delete_option( 'wpguard_nc_settings' );
-delete_option( 'wpguard_nc_site_id' );
-delete_option( 'wpguard_nc_db_schema_version' );
+delete_option( 'wpthistle_backup_settings' );
+delete_option( 'wpthistle_backup_site_id' );
+delete_option( 'wpthistle_backup_db_schema_version' );
 
-$table = $wpdb->prefix . 'wpguard_nc_jobs';
+$table = $wpdb->prefix . 'wpthistle_backup_jobs';
 $wpdb->query( "DROP TABLE IF EXISTS `{$table}`" ); // phpcs:ignore -- table name is a hardcoded constant prefix, not user input.
 
-$tmp_dir = rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/';
+$tmp_dir = rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpthistle-backup-restore-tmp/';
 if ( is_dir( $tmp_dir ) ) {
 	$items = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $tmp_dir, FilesystemIterator::SKIP_DOTS ), RecursiveIteratorIterator::CHILD_FIRST );
 	foreach ( $items as $item ) {

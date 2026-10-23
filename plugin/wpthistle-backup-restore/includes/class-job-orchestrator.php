@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -88,7 +88,7 @@ class Job_Orchestrator {
 	const MIN_STALE_LOCK_SECONDS = 60;
 
 	public static function tmp_dir_for( string $backup_id ): string {
-		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/' . $backup_id . '/';
+		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpthistle-backup-restore-tmp/' . $backup_id . '/';
 	}
 
 	/**
@@ -97,15 +97,15 @@ class Job_Orchestrator {
 	 * random bits -- plenty for a short-lived upload/restore staging dir,
 	 * not for something meant to persist up to DOWNLOAD_BUNDLE_TTL_SECONDS
 	 * holding a full DB dump + wp-config.php). Nested under the existing
-	 * guarded wpguard-nc-backup-tmp/ base -- inherits its .htaccess
+	 * guarded wpthistle-backup-restore-tmp/ base -- inherits its .htaccess
 	 * (Apache "Require all denied" applies to descendants too) and is
 	 * already covered by Inventory::EXCLUDED_PATTERNS's
-	 * 'wp-content/wpguard-nc-backup-tmp' exact-match entry, which stops
+	 * 'wp-content/wpthistle-backup-restore-tmp' exact-match entry, which stops
 	 * the enumeration walk before it ever descends into this directory at
 	 * all -- no separate exclusion pattern needed.
 	 */
 	public static function download_base_dir(): string {
-		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/downloads/';
+		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpthistle-backup-restore-tmp/downloads/';
 	}
 
 	public static function new_download_token(): string {
@@ -134,7 +134,7 @@ class Job_Orchestrator {
 		if ( ! is_dir( $base ) ) {
 			return;
 		}
-		$ttl = max( self::MIN_DOWNLOAD_BUNDLE_TTL_SECONDS, (int) apply_filters( 'wpguard_nc_download_bundle_ttl_seconds', self::DOWNLOAD_BUNDLE_TTL_SECONDS ) );
+		$ttl = max( self::MIN_DOWNLOAD_BUNDLE_TTL_SECONDS, (int) apply_filters( 'wpthistle_backup_download_bundle_ttl_seconds', self::DOWNLOAD_BUNDLE_TTL_SECONDS ) );
 		foreach ( new \DirectoryIterator( $base ) as $item ) {
 			if ( $item->isDot() || ! $item->isDir() ) {
 				continue;
@@ -156,7 +156,7 @@ class Job_Orchestrator {
 	}
 
 	private static function ensure_tmp_guarded(): void {
-		$base = rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-backup-tmp/';
+		$base = rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpthistle-backup-restore-tmp/';
 		if ( ! is_dir( $base ) ) {
 			wp_mkdir_p( $base );
 		}
@@ -200,7 +200,7 @@ class Job_Orchestrator {
 	 * each other, not just against themselves.
 	 */
 	public static function create_job_lock_name(): string {
-		return 'wpguard_nc_create_' . substr( md5( Settings::get_site_id() ), 0, 20 );
+		return 'wpthistle_backup_create_' . substr( md5( Settings::get_site_id() ), 0, 20 );
 	}
 
 	public static function create_job( string $destination = 'nextcloud' ): string {
@@ -245,7 +245,7 @@ class Job_Orchestrator {
 	 * so the fix applies the moment anyone next tries to back up --
 	 * no admin action and no real server-cron (JOB-02, separate item)
 	 * required -- and also from a recurring WP-Cron safety-net event
-	 * (see wpguard-nc-backup.php) so a stuck job doesn't sit untouched
+	 * (see wpthistle-backup-restore.php) so a stuck job doesn't sit untouched
 	 * indefinitely just because nobody happens to press "Back Up Now".
 	 *
 	 * Uses the same try_lock()/release_lock() pair as cancel() (security audit
@@ -262,7 +262,7 @@ class Job_Orchestrator {
 		if ( null === $job ) {
 			return null;
 		}
-		$threshold = max( self::MIN_STALE_LOCK_SECONDS, (int) apply_filters( 'wpguard_nc_stale_lock_seconds', self::STALE_LOCK_SECONDS ) );
+		$threshold = max( self::MIN_STALE_LOCK_SECONDS, (int) apply_filters( 'wpthistle_backup_stale_lock_seconds', self::STALE_LOCK_SECONDS ) );
 		$age = time() - strtotime( $job['updated_at'] . ' UTC' );
 		if ( $age < $threshold ) {
 			return null;
@@ -362,7 +362,7 @@ class Job_Orchestrator {
 		$job = Job_Store::get( $job_id );
 		// security audit finding L-01: cleanup_tmp() previously only ran on the success
 		// path, leaving partial database/archive files under
-		// wp-content/wpguard-nc-backup-tmp/ indefinitely on failure —
+		// wp-content/wpthistle-backup-restore-tmp/ indefinitely on failure —
 		// .htaccess-protected on Apache but directly web-accessible on
 		// Nginx with no equivalent guard.
 		if ( null !== $job && ! empty( $job['backup_id'] ) ) {
@@ -773,7 +773,7 @@ class Job_Orchestrator {
 		if ( Settings::is_app_password_locked() ) {
 			$secret = Settings::get_app_password();
 			if ( '' !== $secret && false !== strpos( $redacted, $secret ) ) {
-				return new \WP_Error( 'wpguard_nc_wp_config_redaction_failed', 'wp-config.php redaction did not remove the active credential; refusing to archive it.' );
+				return new \WP_Error( 'wpthistle_backup_wp_config_redaction_failed', 'wp-config.php redaction did not remove the active credential; refusing to archive it.' );
 			}
 		}
 
@@ -789,7 +789,7 @@ class Job_Orchestrator {
 		if ( 'download' === $destination ) {
 			$redacted = Settings::redact_wp_config_db_credentials( $redacted );
 			if ( defined( 'DB_PASSWORD' ) && '' !== DB_PASSWORD && false !== strpos( $redacted, DB_PASSWORD ) ) {
-				return new \WP_Error( 'wpguard_nc_wp_config_db_redaction_failed', 'wp-config.php redaction did not remove the real database credential; refusing to archive it.' );
+				return new \WP_Error( 'wpthistle_backup_wp_config_db_redaction_failed', 'wp-config.php redaction did not remove the real database credential; refusing to archive it.' );
 			}
 		}
 
@@ -858,17 +858,17 @@ class Job_Orchestrator {
 		foreach ( $by_part as $part_name => $entries ) {
 			$zip = new \ZipArchive();
 			if ( true !== $zip->open( $tmp . $part_name ) ) {
-				return new \WP_Error( 'wpguard_nc_part_unreadable', "Archive part {$part_name} could not be opened for pre-upload verification." );
+				return new \WP_Error( 'wpthistle_backup_part_unreadable', "Archive part {$part_name} could not be opened for pre-upload verification." );
 			}
 			foreach ( $entries as $entry ) {
 				$stat = $zip->statName( $entry['path'] );
 				if ( false === $stat ) {
 					$zip->close();
-					return new \WP_Error( 'wpguard_nc_file_missing_from_part', "File \"{$entry['path']}\" is missing from its own archive part ({$part_name}) -- the backup cannot be trusted as complete." );
+					return new \WP_Error( 'wpthistle_backup_file_missing_from_part', "File \"{$entry['path']}\" is missing from its own archive part ({$part_name}) -- the backup cannot be trusted as complete." );
 				}
 				if ( (int) $stat['size'] !== (int) $entry['size'] ) {
 					$zip->close();
-					return new \WP_Error( 'wpguard_nc_file_size_mismatch', "File \"{$entry['path']}\" inside {$part_name} is {$stat['size']} bytes but the manifest claims {$entry['size']} -- the backup cannot be trusted as complete." );
+					return new \WP_Error( 'wpthistle_backup_file_size_mismatch', "File \"{$entry['path']}\" inside {$part_name} is {$stat['size']} bytes but the manifest claims {$entry['size']} -- the backup cannot be trusted as complete." );
 				}
 			}
 			$zip->close();
@@ -1075,7 +1075,7 @@ class Job_Orchestrator {
 			return self::fail( $job_id, 'bundle_local', sprintf( 'Not enough free disk space to assemble the downloadable bundle (need at least %s, have %s).', size_format( $needed_bytes ), size_format( $free_bytes ) ) );
 		}
 
-		$bundle_path = $dir . 'wpguard-' . $job['backup_id'] . '.zip';
+		$bundle_path = $dir . 'wpthistle-' . $job['backup_id'] . '.zip';
 
 		// A failure anywhere below this point means the bundle isn't
 		// trustworthy -- the whole token directory is disposable until
@@ -1205,7 +1205,7 @@ class Job_Orchestrator {
 	 * Reuses the $client already built for this job's upload instead of
 	 * constructing a second one.
 	 */
-	const RETENTION_ERROR_OPTION = 'wpguard_nc_retention_last_error';
+	const RETENTION_ERROR_OPTION = 'wpthistle_backup_retention_last_error';
 
 	/**
 	 * security audit finding LOW-RETAIN-1: Retention::prune()'s fail-closed abort (if

@@ -23,7 +23,7 @@ wp_source() {
     wpcli wp --path=/var/www/html-source "$@" 2>&1 | grep -v '^ Container' || true
 }
 
-TEST_PARENT="wpguard-nc-backup-retention-test-$(date +%s)"
+TEST_PARENT="wpthistle-backup-restore-retention-test-$(date +%s)"
 echo "=== Isolated test folder: $TEST_PARENT (not the real backups path) ==="
 
 echo
@@ -31,7 +31,7 @@ echo "=== Setup: create 5 real-shaped VERIFIED backup folders (backup_id format 
 for n in 1 2 3 4 5; do
   NAME=$(printf '2026010%dT000000Z-aaaa000%d' "$n" "$n")
   wp_source eval "
-    \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) ) );
+    \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array( \WPThistle\BackupRestore\Settings::get_app_password() ) ) );
     \$parent = \$client->relative_path( '$TEST_PARENT' );
     \$mk = \$client->mkcol_recursive( \$parent . '/$NAME' );
     \$put = \$client->put_bytes( \$parent . '/$NAME/marker.txt', 'test' );
@@ -55,7 +55,7 @@ echo
 echo "=== Setup: also create a FAILED-job stub -- backup_id-shaped folder, no COMPLETE.json (RETENTION-2) ==="
 FAILED_NAME="20260106T000000Z-bbbb0006"
 wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array( \WPThistle\BackupRestore\Settings::get_app_password() ) ) );
   \$parent = \$client->relative_path( '$TEST_PARENT' );
   \$mk = \$client->mkcol_recursive( \$parent . '/$FAILED_NAME' );
   \$put = \$client->put_bytes( \$parent . '/$FAILED_NAME/job-log.json', '[]' );
@@ -67,7 +67,7 @@ echo "OK  failed-job stub folder created (job-log.json only, no COMPLETE.json) -
 echo
 echo "=== Case A: list_children() must see exactly all 6 folders just created (5 verified + 1 failed stub), and nothing else under this isolated parent ==="
 LISTED=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
   \$parent = \$client->relative_path( '$TEST_PARENT' );
   \$children = \$client->list_children( \$parent );
   sort(\$children);
@@ -80,14 +80,14 @@ echo "OK  list_children() returned exactly the 6 real folders, correctly excludi
 echo
 echo "=== Case B: keep=0 (disabled) must be a true no-op -- nothing deleted ==="
 RESULT_KEEP0=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
   \$parent = \$client->relative_path( '$TEST_PARENT' );
-  \$r = \WPGuard\NCBackup\Retention::prune( \$client, \$parent, 0 );
+  \$r = \WPThistle\BackupRestore\Retention::prune( \$client, \$parent, 0 );
   echo count(\$r['deleted']) . '|' . \$r['kept'];
 ")
 [ "$RESULT_KEEP0" = "0|-1" ] || { echo "FAIL: keep=0 should delete nothing and report kept=-1 (sentinel for disabled), got '$RESULT_KEEP0'"; exit 1; }
 LISTED_AFTER_KEEP0=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
   echo count(\$client->list_children( \$client->relative_path( '$TEST_PARENT' ) ));
 ")
 [ "$LISTED_AFTER_KEEP0" = "6" ] || { echo "FAIL: keep=0 must not have deleted anything, but only $LISTED_AFTER_KEEP0 of 6 folders remain"; exit 1; }
@@ -96,9 +96,9 @@ echo "OK  keep=0 left all 6 folders untouched"
 echo
 echo "=== Case C (RETENTION-2): keep=3 must count only the 5 VERIFIED backups, delete exactly the 2 oldest verified ones, and never touch the failed-job stub ==="
 RESULT_KEEP3=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
   \$parent = \$client->relative_path( '$TEST_PARENT' );
-  \$r = \WPGuard\NCBackup\Retention::prune( \$client, \$parent, 3 );
+  \$r = \WPThistle\BackupRestore\Retention::prune( \$client, \$parent, 3 );
   \$deleted = \$r['deleted'];
   sort(\$deleted);
   echo implode(',', \$deleted) . '||' . \$r['kept'];
@@ -108,7 +108,7 @@ echo "result: $RESULT_KEEP3"
 echo "OK  Retention::prune() deleted exactly the 2 oldest verified backups, reported kept=3 -- the failed stub was correctly excluded from the count (if it had been wrongly counted, excess would have been 3 and a verified backup would have been deleted too)"
 
 LISTED_AFTER_PRUNE=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
   \$children = \$client->list_children( \$client->relative_path( '$TEST_PARENT' ) );
   sort(\$children);
   echo implode(',', \$children);
@@ -119,14 +119,14 @@ echo "OK  real Nextcloud state independently confirms: oldest 2 verified backups
 echo
 echo "=== Case D: keep=10 with only 3 verified remaining must be a no-op (fewer verified entries than the keep count), and still must not touch the failed stub ==="
 RESULT_KEEP10=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
   \$parent = \$client->relative_path( '$TEST_PARENT' );
-  \$r = \WPGuard\NCBackup\Retention::prune( \$client, \$parent, 10 );
+  \$r = \WPThistle\BackupRestore\Retention::prune( \$client, \$parent, 10 );
   echo count(\$r['deleted']) . '|' . \$r['kept'];
 ")
 [ "$RESULT_KEEP10" = "0|3" ] || { echo "FAIL: keep=10 with only 3 verified present should delete nothing and report kept=3, got '$RESULT_KEEP10'"; exit 1; }
 LISTED_AFTER_KEEP10=$(wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
   echo count(\$client->list_children( \$client->relative_path( '$TEST_PARENT' ) ));
 ")
 [ "$LISTED_AFTER_KEEP10" = "4" ] || { echo "FAIL: expected the 3 verified + 1 failed stub (4 total) still present, got $LISTED_AFTER_KEEP10"; exit 1; }
@@ -135,7 +135,7 @@ echo "OK  keep count higher than what exists is correctly a no-op, failed stub s
 echo
 echo "=== Cleanup: delete the remaining fixture folders and the isolated test parent ==="
 wp_source eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array() ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array() ) );
   \$client->delete( \$client->relative_path( '$TEST_PARENT' ) );
 " > /dev/null
 
@@ -144,14 +144,14 @@ echo "=== Case E (RETENTION-3 integration): a real backup run through the actual
 echo "This is the exact class of bug that shipped undetected: maybe_prune_old_backups() called Retention::prune() with the wrong number of arguments, silently caught by its own try/catch, never exercised by a direct-call test of prune() alone."
 
 wp_source eval "
-  \WPGuard\NCBackup\Settings::save(array(
-    'nextcloud_url' => \WPGuard\NCBackup\Settings::get_nextcloud_url(),
-    'nextcloud_user' => \WPGuard\NCBackup\Settings::get_nextcloud_user(),
-    'remote_folder' => \WPGuard\NCBackup\Settings::get_remote_folder(),
+  \WPThistle\BackupRestore\Settings::save(array(
+    'nextcloud_url' => \WPThistle\BackupRestore\Settings::get_nextcloud_url(),
+    'nextcloud_user' => \WPThistle\BackupRestore\Settings::get_nextcloud_user(),
+    'remote_folder' => \WPThistle\BackupRestore\Settings::get_remote_folder(),
     'retention_count' => 2,
   ));
 " > /dev/null
-wp_source db query "UPDATE wp_wpguard_nc_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
+wp_source db query "UPDATE ${WP_SOURCE_TABLE_PREFIX}wpthistle_backup_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
 
 # security re-verification note: seed enough old-looking verified fixtures
 # directly under the real site-id/backups/ parent (deterministic,
@@ -159,11 +159,11 @@ wp_source db query "UPDATE wp_wpguard_nc_jobs SET status='failed' WHERE status I
 # left there) so retention_count=2 is GUARANTEED to have more than 2
 # verified entries to choose from -- the real backup about to be
 # created is always the newest, so it never collides with these.
-SITE_ID=$(wp_source eval 'echo \WPGuard\NCBackup\Settings::get_site_id();')
+SITE_ID=$(wp_source eval 'echo \WPThistle\BackupRestore\Settings::get_site_id();')
 for n in 1 2; do
   FIXTURE_NAME=$(printf '2020010%dT000000Z-eeee000%d' "$n" "$n")
   wp_source eval "
-    \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) ) );
+    \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array( \WPThistle\BackupRestore\Settings::get_app_password() ) ) );
     \$parent = \$client->relative_path( '$SITE_ID/backups' );
     \$client->mkcol_recursive( \$parent . '/$FIXTURE_NAME' );
     \$client->put_bytes( \$parent . '/$FIXTURE_NAME/manifest.json', '{\"format_version\":2,\"backup_mode\":\"full\",\"files\":[]}' );
@@ -172,16 +172,16 @@ for n in 1 2; do
 done
 echo "OK  seeded 2 deterministic old verified fixtures under the real backups folder"
 
-echo "Running one real backup via WP-CLI (wp wpguard-nc-backup run) -- this is the same real backup path run-e2e.sh exercises, expect this to take a couple of minutes..."
-wp_source wpguard-nc-backup run > "$SCRATCH/real_backup_run.log" 2>&1 || true
+echo "Running one real backup via WP-CLI (wp wpthistle-backup-restore run) -- this is the same real backup path run-e2e.sh exercises, expect this to take a couple of minutes..."
+wp_source wpthistle-backup-restore run > "$SCRATCH/real_backup_run.log" 2>&1 || true
 tail -5 "$SCRATCH/real_backup_run.log"
 
-REAL_JOB_ID=$(wp_source eval 'echo \WPGuard\NCBackup\Job_Store::get_latest()["job_id"];')
-REAL_STATUS=$(wp_source eval "echo \WPGuard\NCBackup\Job_Store::get('$REAL_JOB_ID')['status'];")
+REAL_JOB_ID=$(wp_source eval 'echo \WPThistle\BackupRestore\Job_Store::get_latest()["job_id"];')
+REAL_STATUS=$(wp_source eval "echo \WPThistle\BackupRestore\Job_Store::get('$REAL_JOB_ID')['status'];")
 [ "$REAL_STATUS" = "verified" ] || { echo "FAIL: the real backup itself did not reach 'verified' (got '$REAL_STATUS') -- can't test retention's integration on top of a failed backup"; exit 1; }
 echo "OK  real backup reached 'verified'"
 
-REAL_LOG=$(wp_source eval "echo wp_json_encode(\WPGuard\NCBackup\Job_Store::get('$REAL_JOB_ID')['log']);")
+REAL_LOG=$(wp_source eval "echo wp_json_encode(\WPThistle\BackupRestore\Job_Store::get('$REAL_JOB_ID')['log']);")
 
 # security re-verification note: the original assertion here only checked
 # for the ABSENCE of an error, which can't tell a genuine success
@@ -198,10 +198,10 @@ echo "OK  retention explicitly logged a real deletion on the real step_finalize(
 
 echo "=== Cleanup: restore retention_count to 0 (keep-all) so it doesn't affect unrelated future test runs against the real shared backups folder ==="
 wp_source eval "
-  \WPGuard\NCBackup\Settings::save(array(
-    'nextcloud_url' => \WPGuard\NCBackup\Settings::get_nextcloud_url(),
-    'nextcloud_user' => \WPGuard\NCBackup\Settings::get_nextcloud_user(),
-    'remote_folder' => \WPGuard\NCBackup\Settings::get_remote_folder(),
+  \WPThistle\BackupRestore\Settings::save(array(
+    'nextcloud_url' => \WPThistle\BackupRestore\Settings::get_nextcloud_url(),
+    'nextcloud_user' => \WPThistle\BackupRestore\Settings::get_nextcloud_user(),
+    'remote_folder' => \WPThistle\BackupRestore\Settings::get_remote_folder(),
     'retention_count' => 0,
   ));
 " > /dev/null

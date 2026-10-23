@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Restore_Orchestrator;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Restore_Orchestrator;
 
 // Found live, restoring a real cross-site backup onto a plain-HTTP
 // disposable instance: WordPress core infers FORCE_SSL_ADMIN from

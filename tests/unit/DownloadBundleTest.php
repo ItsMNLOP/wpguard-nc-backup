@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Job_Orchestrator;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Job_Orchestrator;
 
 /**
  * Phase 3 (downloadable backups), security audit finding LOW-DL-5: download_dir_for_token()

@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -14,12 +14,37 @@ class DB_Exporter {
 
 	const BATCH_SIZE = 500;
 
-	/** @return string[] All tables under the current $wpdb prefix (not just core tables — BKP-01). */
+	/**
+	 * @return string[] All tables under the current $wpdb prefix (not
+	 * just core tables — BKP-01), except this plugin's own job-tracking
+	 * table.
+	 *
+	 * Found live (2.0.0 rename rehearsal): a restore job's own checkpoint
+	 * legitimately holds a `captured_options` snapshot with the real
+	 * app password/app token in it (needed to re-apply settings after
+	 * the DB swap — see Restore_Orchestrator::restore_swap()), for as
+	 * long as that job row exists. The options-row exclusion below only
+	 * ever covered the settings option itself; it had no way to catch
+	 * the same credential sitting in a completely different table's
+	 * completely different column. Proven live by `run-e2e.sh`'s own
+	 * credential-leak check failing on exactly this after a restore job
+	 * ran on the same site before the next backup. Restore already never
+	 * imports this table at all (threat-model T20) -- excluding it from
+	 * export too is the symmetric fix, and removes the whole class of
+	 * "something new gets added to a checkpoint someday" risk rather
+	 * than trying to redact specific fields.
+	 */
 	public static function list_tables(): array {
 		global $wpdb;
 		$like = $wpdb->esc_like( $wpdb->prefix ) . '%';
 		$rows = $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $like ) );
-		return is_array( $rows ) ? $rows : array();
+		$rows = is_array( $rows ) ? $rows : array();
+		// A pre-2.0.0 migrated site can have a resurrected/leftover
+		// wpguard_nc_jobs table (restoring an old backup that predates
+		// the restore-side skip fix below would recreate it) -- excluded
+		// here too, same reasoning as the current table.
+		$excluded = array( Job_Store::table_name(), $wpdb->prefix . 'wpguard_nc_jobs' );
+		return array_values( array_diff( $rows, $excluded ) );
 	}
 
 	/**
@@ -78,9 +103,21 @@ class DB_Exporter {
 		// Threat-model T9: never export the plugin's own credential-bearing
 		// option row. Row-level exclusion, not whole-table exclusion — the
 		// options table holds everything else WordPress needs restored.
+		//
+		// 2.0.0 rename (WPGuard -> WPThistle): found live -- a site
+		// migrated from the old plugin keeps its OLD settings row
+		// (wpguard_nc_settings) sitting in wp_options too, deliberately
+		// not deleted by migrate_from_legacy_wpguard() (rollback safety).
+		// That row holds the same real app password and was never
+		// covered by this exclusion, which only ever knew about the
+		// current key -- confirmed live via run-e2e.sh's own
+		// credential-leak check failing the very first backup taken
+		// after a migration. Excluded by the same row-level rule,
+		// permanently, regardless of whether a given site ever
+		// actually migrated from it.
 		$exclude_sql = '';
 		if ( $table_esc === $wpdb->prefix . 'options' ) {
-			$exclude_sql = $wpdb->prepare( ' AND option_name != %s', Settings::OPTION_KEY );
+			$exclude_sql = $wpdb->prepare( ' AND option_name NOT IN (%s, %s)', Settings::OPTION_KEY, 'wpguard_nc_settings' );
 		}
 
 		if ( null !== $pk ) {
@@ -155,8 +192,8 @@ class DB_Exporter {
 	}
 
 	public static function write_header( $fh ): void {
-		fwrite( $fh, "-- wpguard-nc-backup database export\n" );
-		fwrite( $fh, '-- format_version: ' . WPGUARD_NC_FORMAT_VERSION . "\n" );
+		fwrite( $fh, "-- wpthistle-backup-restore database export\n" );
+		fwrite( $fh, '-- format_version: ' . WPTHISTLE_BACKUP_FORMAT_VERSION . "\n" );
 		fwrite( $fh, '-- generated_at_utc: ' . gmdate( 'Y-m-d\TH:i:s\Z' ) . "\n" );
 		fwrite( $fh, "SET NAMES utf8mb4;\n" );
 		fwrite( $fh, "SET FOREIGN_KEY_CHECKS=0;\n" );

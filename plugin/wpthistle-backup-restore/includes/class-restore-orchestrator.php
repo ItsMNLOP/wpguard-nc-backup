@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * One-click restore (Phase 2, RST-04 -- built with the owner's explicit
  * approval given the brief's own gate on this specific feature; see
  * STATUS.md). Reuses Job_Orchestrator's exact job-state-machine shape
- * (same wp_wpguard_nc_jobs table, same status vocabulary, same
+ * (same wp_wpthistle_backup_jobs table, same status vocabulary, same
  * try_lock()/release_lock() mutual exclusion via Job_Store) so a
  * restore in progress automatically blocks a new backup from starting
  * and vice versa -- Job_Store::has_running_job() only ever looks at
@@ -38,7 +38,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Restore_Orchestrator {
 
-	const UPLOAD_DIR_NAME = 'wpguard-nc-restore-upload';
+	const UPLOAD_DIR_NAME = 'wpthistle-restore-upload';
 	const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
 	const STEP_TIME_BUDGET_SECONDS = 5.0;
 
@@ -49,7 +49,7 @@ class Restore_Orchestrator {
 	const MAX_PART_BYTES_FALLBACK = 512 * 1024 * 1024;
 
 	public static function tmp_dir_for( string $job_id ): string {
-		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpguard-nc-restore-tmp/' . $job_id . '/';
+		return rtrim( WP_CONTENT_DIR, '/\\' ) . '/wpthistle-restore-tmp/' . $job_id . '/';
 	}
 
 	/**
@@ -123,13 +123,37 @@ class Restore_Orchestrator {
 	 */
 	private static function own_plugin_dir_prefix(): string {
 		$abspath = rtrim( str_replace( '\\', '/', ABSPATH ), '/' );
-		$plugin_dir = rtrim( str_replace( '\\', '/', WPGUARD_NC_DIR ), '/' );
+		$plugin_dir = rtrim( str_replace( '\\', '/', WPTHISTLE_BACKUP_DIR ), '/' );
 		return ltrim( substr( $plugin_dir, strlen( $abspath ) ), '/' ) . '/';
 	}
 
 	/**
+	 * 2.0.0 rename (WPGuard -> WPThistle): own_plugin_dir_prefix() is
+	 * derived from WPTHISTLE_BACKUP_DIR, the CURRENT plugin directory --
+	 * found live, restoring a real pre-rename backup, that this means
+	 * the never-touched-path protection does NOT recognize a backup's
+	 * own archived copy of the OLD plugin's files
+	 * (wp-content/plugins/wpguard-nc-backup/...) as "my own directory"
+	 * at all. restore_apply_files tried to write them back to that now
+	 * nonexistent path and failed outright in this rehearsal -- had the
+	 * old plugin's folder still existed on disk (the documented safe
+	 * cutover order deliberately leaves it in place until an admin
+	 * confirms the new plugin, specifically so this isn't instant), the
+	 * restore would have silently resurrected the old plugin's dead code
+	 * verbatim, with none of the protection this method exists to
+	 * provide. Every legacy prefix a backup taken under a now-retired
+	 * slug could reference gets the exact same exclusion as the current
+	 * one.
+	 *
+	 * @return string[]
+	 */
+	private static function legacy_own_plugin_dir_prefixes(): array {
+		return array( 'wp-content/plugins/wpguard-nc-backup/' );
+	}
+
+	/**
 	 * security audit finding HIGH-PATH-1: a path like './wp-config.php' or
-	 * 'wp-content//plugins/wpguard-nc-backup/evil.php' resolves to
+	 * 'wp-content//plugins/wpthistle-backup-restore/evil.php' resolves to
 	 * exactly the protected target at the filesystem layer (PHP/the OS
 	 * both treat '.' segments and doubled separators as no-ops), but
 	 * neither matched the plain string comparison below -- meaning a
@@ -173,7 +197,15 @@ class Restore_Orchestrator {
 
 	private static function is_never_restored_path( string $relative ): bool {
 		$relative = self::normalize_relative_path( $relative );
-		return 0 === strcasecmp( 'wp-config.php', $relative ) || 0 === strpos( $relative, self::own_plugin_dir_prefix() );
+		if ( 0 === strcasecmp( 'wp-config.php', $relative ) || 0 === strpos( $relative, self::own_plugin_dir_prefix() ) ) {
+			return true;
+		}
+		foreach ( self::legacy_own_plugin_dir_prefixes() as $legacy_prefix ) {
+			if ( 0 === strpos( $relative, $legacy_prefix ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -227,7 +259,7 @@ class Restore_Orchestrator {
 	public static function extract_bundle_zip( string $zip_path, string $holding_dir ) {
 		$zip = new \ZipArchive();
 		if ( true !== $zip->open( $zip_path ) ) {
-			return new \WP_Error( 'invalid_zip', __( 'File is not a valid .zip archive.', 'wpguard-nc-backup' ) );
+			return new \WP_Error( 'invalid_zip', __( 'File is not a valid .zip archive.', 'wpthistle-backup-restore' ) );
 		}
 
 		$entry_names = array();
@@ -278,7 +310,7 @@ class Restore_Orchestrator {
 				// to validate an arbitrary nested layout.
 				$zip->close();
 				/* translators: %s: the offending zip entry name. */
-				return new \WP_Error( 'unsafe_path', sprintf( __( 'Refusing to extract unexpected nested path in bundle: %s', 'wpguard-nc-backup' ), $name ) );
+				return new \WP_Error( 'unsafe_path', sprintf( __( 'Refusing to extract unexpected nested path in bundle: %s', 'wpthistle-backup-restore' ), $name ) );
 			}
 			$content = $zip->getFromName( $name );
 			if ( false === $content ) {
@@ -565,7 +597,7 @@ class Restore_Orchestrator {
 			$manifest_path_local = rtrim( $source['upload_dir'], '/\\' ) . '/manifest.json';
 			$complete_path_local = rtrim( $source['upload_dir'], '/\\' ) . '/COMPLETE.json';
 			if ( ! file_exists( $manifest_path_local ) || ! file_exists( $complete_path_local ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_upload_incomplete', 'Uploaded bundle is missing manifest.json and/or COMPLETE.json.' );
+				return new \WP_Error( 'wpthistle_backup_restore_upload_incomplete', 'Uploaded bundle is missing manifest.json and/or COMPLETE.json.' );
 			}
 			$manifest_raw = file_get_contents( $manifest_path_local );
 			$complete_raw = file_get_contents( $complete_path_local );
@@ -586,21 +618,21 @@ class Restore_Orchestrator {
 
 		$manifest = json_decode( $manifest_raw, true );
 		if ( ! is_array( $manifest ) ) {
-			return new \WP_Error( 'wpguard_nc_restore_bad_manifest', 'manifest.json is not valid JSON.' );
+			return new \WP_Error( 'wpthistle_backup_restore_bad_manifest', 'manifest.json is not valid JSON.' );
 		}
 		$version_check = Manifest::validate_format_version( $manifest );
 		if ( true !== $version_check ) {
-			return new \WP_Error( 'wpguard_nc_restore_bad_format_version', $version_check );
+			return new \WP_Error( 'wpthistle_backup_restore_bad_format_version', $version_check );
 		}
 		$complete = json_decode( $complete_raw, true );
 		if ( ! is_array( $complete ) || empty( $complete['manifest_sha256'] ) ) {
-			return new \WP_Error( 'wpguard_nc_restore_bad_complete', 'COMPLETE.json is missing or not valid JSON.' );
+			return new \WP_Error( 'wpthistle_backup_restore_bad_complete', 'COMPLETE.json is missing or not valid JSON.' );
 		}
 		if ( ( $complete['backup_id'] ?? '' ) !== $job['backup_id'] ) {
-			return new \WP_Error( 'wpguard_nc_restore_backup_id_mismatch', 'COMPLETE.json\'s backup_id does not match the folder it was fetched from.' );
+			return new \WP_Error( 'wpthistle_backup_restore_backup_id_mismatch', 'COMPLETE.json\'s backup_id does not match the folder it was fetched from.' );
 		}
 		if ( ! hash_equals( (string) $complete['manifest_sha256'], hash( 'sha256', $manifest_raw ) ) ) {
-			return new \WP_Error( 'wpguard_nc_restore_manifest_hash_mismatch', 'manifest.json does not match the hash recorded in COMPLETE.json -- refusing to trust a backup that failed its own completion check.' );
+			return new \WP_Error( 'wpthistle_backup_restore_manifest_hash_mismatch', 'manifest.json does not match the hash recorded in COMPLETE.json -- refusing to trust a backup that failed its own completion check.' );
 		}
 
 		$mode = $manifest['backup_mode'] ?? 'full';
@@ -615,7 +647,7 @@ class Restore_Orchestrator {
 		if ( 'incremental' === $mode && ! empty( $manifest['files'] ) ) {
 			foreach ( (array) $manifest['files'] as $entry ) {
 				if ( empty( $entry['source_backup_id'] ) || empty( $entry['source_part'] ) ) {
-					return new \WP_Error( 'wpguard_nc_restore_bad_file_entry', 'manifest.json has a files[] entry missing source_backup_id/source_part -- refusing to guess.' );
+					return new \WP_Error( 'wpthistle_backup_restore_bad_file_entry', 'manifest.json has a files[] entry missing source_backup_id/source_part -- refusing to guess.' );
 				}
 				$key = $entry['source_backup_id'] . '/' . $entry['source_part'];
 				$needed[ $key ] = array( 'source_backup_id' => $entry['source_backup_id'], 'source_part' => $entry['source_part'] );
@@ -651,7 +683,7 @@ class Restore_Orchestrator {
 		}
 		$content = file_get_contents( $local );
 		@unlink( $local );
-		return false === $content ? new \WP_Error( 'wpguard_nc_restore_read_failed', "Could not read downloaded object: {$relative_path}" ) : $content;
+		return false === $content ? new \WP_Error( 'wpthistle_backup_restore_read_failed', "Could not read downloaded object: {$relative_path}" ) : $content;
 	}
 
 	/** @return true|\WP_Error */
@@ -664,7 +696,7 @@ class Restore_Orchestrator {
 		$expected_sha256 = '';
 		if ( $source_backup_id === $job['backup_id'] ) {
 			if ( empty( $cp['own_parts'][ $part_name ] ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_unknown_part', "manifest.json references {$part_name} as its own, but no matching components[] entry exists." );
+				return new \WP_Error( 'wpthistle_backup_restore_unknown_part', "manifest.json references {$part_name} as its own, but no matching components[] entry exists." );
 			}
 			$expected_bytes = $cp['own_parts'][ $part_name ]['bytes'];
 			$expected_sha256 = $cp['own_parts'][ $part_name ]['sha256'];
@@ -688,17 +720,17 @@ class Restore_Orchestrator {
 				$expected_bytes = self::MAX_PART_BYTES_FALLBACK;
 			}
 		} else {
-			return new \WP_Error( 'wpguard_nc_restore_chain_needs_nextcloud', "This backup references an ancestor backup ({$source_backup_id}) and cannot be restored from a local upload alone -- use the Nextcloud source instead." );
+			return new \WP_Error( 'wpthistle_backup_restore_chain_needs_nextcloud', "This backup references an ancestor backup ({$source_backup_id}) and cannot be restored from a local upload alone -- use the Nextcloud source instead." );
 		}
 
 		$local_path = $tmp . 'part-' . md5( $key ) . '.zip';
 		if ( 'upload' === $cp['source']['type'] ) {
 			$source_path = rtrim( $cp['source']['upload_dir'], '/\\' ) . '/' . $part_name;
 			if ( ! file_exists( $source_path ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_upload_missing_part', "Uploaded bundle is missing {$part_name}." );
+				return new \WP_Error( 'wpthistle_backup_restore_upload_missing_part', "Uploaded bundle is missing {$part_name}." );
 			}
 			if ( ! copy( $source_path, $local_path ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_copy_failed', "Could not stage {$part_name} from the uploaded bundle." );
+				return new \WP_Error( 'wpthistle_backup_restore_copy_failed', "Could not stage {$part_name} from the uploaded bundle." );
 			}
 		} else {
 			$client = Nextcloud_Client::from_settings( self::logger() );
@@ -713,7 +745,7 @@ class Restore_Orchestrator {
 			$actual = hash_file( 'sha256', $local_path );
 			if ( ! hash_equals( $expected_sha256, $actual ) ) {
 				@unlink( $local_path );
-				return new \WP_Error( 'wpguard_nc_restore_part_hash_mismatch', "{$part_name} (from {$source_backup_id}) does not match its recorded checksum -- refusing to restore from a corrupted or tampered part." );
+				return new \WP_Error( 'wpthistle_backup_restore_part_hash_mismatch', "{$part_name} (from {$source_backup_id}) does not match its recorded checksum -- refusing to restore from a corrupted or tampered part." );
 			}
 		}
 
@@ -734,7 +766,7 @@ class Restore_Orchestrator {
 		}
 		$manifest = json_decode( $raw, true );
 		if ( ! is_array( $manifest ) ) {
-			return new \WP_Error( 'wpguard_nc_restore_ancestor_unreadable', "Ancestor backup {$ancestor_backup_id}'s manifest.json could not be read -- refusing to trust an unverifiable chain link." );
+			return new \WP_Error( 'wpthistle_backup_restore_ancestor_unreadable', "Ancestor backup {$ancestor_backup_id}'s manifest.json could not be read -- refusing to trust an unverifiable chain link." );
 		}
 		$components = array();
 		foreach ( (array) ( $manifest['components'] ?? array() ) as $component ) {
@@ -755,14 +787,14 @@ class Restore_Orchestrator {
 			}
 		}
 		if ( null === $db_component ) {
-			return new \WP_Error( 'wpguard_nc_restore_no_db_component', 'manifest.json has no database component.' );
+			return new \WP_Error( 'wpthistle_backup_restore_no_db_component', 'manifest.json has no database component.' );
 		}
 
 		$local_path = $tmp . 'database.sql.gz';
 		if ( 'upload' === $cp['source']['type'] ) {
 			$source_path = rtrim( $cp['source']['upload_dir'], '/\\' ) . '/' . $db_component['path'];
 			if ( ! file_exists( $source_path ) || ! copy( $source_path, $local_path ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_upload_missing_db', 'Uploaded bundle is missing the database component.' );
+				return new \WP_Error( 'wpthistle_backup_restore_upload_missing_db', 'Uploaded bundle is missing the database component.' );
 			}
 		} else {
 			$client = Nextcloud_Client::from_settings( self::logger() );
@@ -776,7 +808,7 @@ class Restore_Orchestrator {
 		$actual = hash_file( 'sha256', $local_path );
 		if ( ! hash_equals( (string) $db_component['sha256'], $actual ) ) {
 			@unlink( $local_path );
-			return new \WP_Error( 'wpguard_nc_restore_db_hash_mismatch', 'database.sql.gz does not match its recorded checksum -- refusing to restore from a corrupted or tampered export.' );
+			return new \WP_Error( 'wpthistle_backup_restore_db_hash_mismatch', 'database.sql.gz does not match its recorded checksum -- refusing to restore from a corrupted or tampered export.' );
 		}
 
 		$cp['database_staged'] = $local_path;
@@ -861,7 +893,7 @@ class Restore_Orchestrator {
 			Settings::OPTION_KEY                     => get_option( Settings::OPTION_KEY, array() ),
 			Settings::SITE_ID_KEY                     => get_option( Settings::SITE_ID_KEY, '' ),
 			Backup_Chain::STATE_OPTION                => get_option( Backup_Chain::STATE_OPTION, null ),
-			'wpguard_nc_db_schema_version'             => get_option( 'wpguard_nc_db_schema_version', 0 ),
+			'wpthistle_backup_db_schema_version'             => get_option( 'wpthistle_backup_db_schema_version', 0 ),
 			Job_Orchestrator::RETENTION_ERROR_OPTION   => get_option( Job_Orchestrator::RETENTION_ERROR_OPTION, '' ),
 		);
 
@@ -928,7 +960,7 @@ class Restore_Orchestrator {
 		foreach ( $cp['own_parts'] as $part_name => $info ) {
 			$key = $job['backup_id'] . '/' . $part_name;
 			if ( empty( $cp['staged_parts'][ $key ] ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_part_not_staged', "Expected {$part_name} to already be staged." );
+				return new \WP_Error( 'wpthistle_backup_restore_part_not_staged', "Expected {$part_name} to already be staged." );
 			}
 			$entries = self::list_zip_entries( $cp['staged_parts'][ $key ] );
 			if ( is_wp_error( $entries ) ) {
@@ -960,7 +992,7 @@ class Restore_Orchestrator {
 	private static function list_zip_entries( string $zip_path ) {
 		$zip = new \ZipArchive();
 		if ( true !== $zip->open( $zip_path ) ) {
-			return new \WP_Error( 'wpguard_nc_restore_zip_unreadable', "Could not open {$zip_path} to list its contents." );
+			return new \WP_Error( 'wpthistle_backup_restore_zip_unreadable', "Could not open {$zip_path} to list its contents." );
 		}
 		$entries = array();
 		for ( $i = 0; $i < $zip->numFiles; $i++ ) {
@@ -987,7 +1019,7 @@ class Restore_Orchestrator {
 		$free = @disk_free_space( ABSPATH );
 		if ( false !== $free && $free < $needed ) {
 			return new \WP_Error(
-				'wpguard_nc_restore_low_disk_space',
+				'wpthistle_backup_restore_low_disk_space',
 				sprintf( 'Not enough free disk space for this restore: need roughly %s, only %s available.', size_format( $needed ), size_format( $free ) )
 			);
 		}
@@ -1157,17 +1189,17 @@ class Restore_Orchestrator {
 	private static function prepare_db_statements( array $job, array $cp ) {
 		$gz = file_get_contents( $cp['database_staged'] );
 		if ( false === $gz ) {
-			return new \WP_Error( 'wpguard_nc_restore_db_read_failed', 'Could not read the staged database export.' );
+			return new \WP_Error( 'wpthistle_backup_restore_db_read_failed', 'Could not read the staged database export.' );
 		}
 		$sql = gzdecode( $gz );
 		unset( $gz );
 		if ( false === $sql ) {
-			return new \WP_Error( 'wpguard_nc_restore_db_decompress_failed', 'Could not decompress the staged database export -- it may be corrupted.' );
+			return new \WP_Error( 'wpthistle_backup_restore_db_decompress_failed', 'Could not decompress the staged database export -- it may be corrupted.' );
 		}
 
 		$source_prefix = (string) ( self::get_manifest( $job['job_id'] )['source']['table_prefix'] ?? '' );
 		if ( '' === $source_prefix ) {
-			return new \WP_Error( 'wpguard_nc_restore_no_table_prefix', 'manifest.json does not record a source table_prefix -- refusing to guess which tables to rename.' );
+			return new \WP_Error( 'wpthistle_backup_restore_no_table_prefix', 'manifest.json does not record a source table_prefix -- refusing to guess which tables to rename.' );
 		}
 
 		$blocks = explode( "\n-- Table: ", $sql );
@@ -1191,10 +1223,18 @@ class Restore_Orchestrator {
 			$rest = substr( $block, $newline_pos + 1 );
 
 			if ( 0 !== strpos( $table_name, $source_prefix ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_unexpected_table_name', "Table \"{$table_name}\" in the database export doesn't start with the recorded source prefix \"{$source_prefix}\" -- refusing to guess how to rename it." );
+				return new \WP_Error( 'wpthistle_backup_restore_unexpected_table_name', "Table \"{$table_name}\" in the database export doesn't start with the recorded source prefix \"{$source_prefix}\" -- refusing to guess how to rename it." );
 			}
 			$suffix = substr( $table_name, strlen( $source_prefix ) );
-			if ( 'wpguard_nc_jobs' === $suffix ) {
+			// 2.0.0 rename: a pre-rename backup's own dump names this
+			// table wpguard_nc_jobs, not wpthistle_backup_jobs -- found
+			// live, restoring one, that the old suffix sailed straight
+			// through this check and got imported/swapped in for real
+			// (resurrecting a legacy jobs table, complete with any
+			// credential-bearing checkpoints it held -- see
+			// DB_Exporter::list_tables()'s matching fix on the export
+			// side). Both names must be skipped, not just the current one.
+			if ( 'wpthistle_backup_jobs' === $suffix || 'wpguard_nc_jobs' === $suffix ) {
 				// Never imported at all -- this plugin's own job-tracking
 				// table must never be a candidate for the later swap,
 				// and skipping it here (rather than only excluding it at
@@ -1255,7 +1295,7 @@ class Restore_Orchestrator {
 			// possibly-inconsistent bootstraps this phase spans.
 			$captured = get_option( 'active_plugins', array() );
 			$cp['captured_active_plugins'] = $captured;
-			update_option( 'active_plugins', array( plugin_basename( WPGUARD_NC_DIR . 'wpguard-nc-backup.php' ) ) );
+			update_option( 'active_plugins', array( plugin_basename( WPTHISTLE_BACKUP_DIR . 'wpthistle-backup-restore.php' ) ) );
 			// security re-verification finding NEW-LOW-1: persist captured_active_plugins
 			// before entering either loop below. If this specific write
 			// fails, fail()'s own DB-reload won't see it (the checkpoint on
@@ -1345,11 +1385,11 @@ class Restore_Orchestrator {
 		$key = $entry['source_backup_id'] . '/' . $entry['source_part'];
 		if ( ! isset( $open_zips[ $key ] ) ) {
 			if ( empty( $cp['staged_parts'][ $key ] ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_part_missing_for_file', "No staged part found for {$entry['path']} (expected from {$key})." );
+				return new \WP_Error( 'wpthistle_backup_restore_part_missing_for_file', "No staged part found for {$entry['path']} (expected from {$key})." );
 			}
 			$zip = new \ZipArchive();
 			if ( true !== $zip->open( $cp['staged_parts'][ $key ] ) ) {
-				return new \WP_Error( 'wpguard_nc_restore_zip_open_failed', "Could not open {$key} to extract {$entry['path']}." );
+				return new \WP_Error( 'wpthistle_backup_restore_zip_open_failed', "Could not open {$key} to extract {$entry['path']}." );
 			}
 			$open_zips[ $key ] = $zip;
 		}
@@ -1361,15 +1401,15 @@ class Restore_Orchestrator {
 		// could in principle have been tampered with between backup and
 		// restore, independent of the sha256 check below.
 		if ( ! Archive_Writer::is_path_safe( $entry['path'] ) ) {
-			return new \WP_Error( 'wpguard_nc_restore_unsafe_path', "Refusing to extract unsafe path: {$entry['path']}" );
+			return new \WP_Error( 'wpthistle_backup_restore_unsafe_path', "Refusing to extract unsafe path: {$entry['path']}" );
 		}
 
 		$content = $zip->getFromName( $entry['path'] );
 		if ( false === $content ) {
-			return new \WP_Error( 'wpguard_nc_restore_file_missing_in_part', "{$entry['path']} is missing from its claimed archive part ({$entry['source_part']})." );
+			return new \WP_Error( 'wpthistle_backup_restore_file_missing_in_part', "{$entry['path']} is missing from its claimed archive part ({$entry['source_part']})." );
 		}
 		if ( null !== $entry['sha256'] && ! hash_equals( $entry['sha256'], hash( 'sha256', $content ) ) ) {
-			return new \WP_Error( 'wpguard_nc_restore_file_hash_mismatch', "{$entry['path']} does not match its recorded checksum -- refusing to restore a corrupted or tampered file." );
+			return new \WP_Error( 'wpthistle_backup_restore_file_hash_mismatch', "{$entry['path']} does not match its recorded checksum -- refusing to restore a corrupted or tampered file." );
 		}
 
 		$target_abs = $abspath . '/' . $entry['path'];
@@ -1392,14 +1432,14 @@ class Restore_Orchestrator {
 			// couldn't actually preserve a copy of.
 			if ( ! @rename( $target_abs, $dest ) ) {
 				return new \WP_Error(
-					'wpguard_nc_restore_rollback_failed',
+					'wpthistle_backup_restore_rollback_failed',
 					"Could not move the existing {$entry['path']} into the rollback directory before overwriting it (often a file-ownership mismatch between this PHP process and the existing file). Stopped without overwriting it."
 				);
 			}
 		}
 		wp_mkdir_p( dirname( $target_abs ) );
 		if ( false === file_put_contents( $target_abs, $content ) ) {
-			return new \WP_Error( 'wpguard_nc_restore_write_failed', "Could not write {$entry['path']} to its target location." );
+			return new \WP_Error( 'wpthistle_backup_restore_write_failed', "Could not write {$entry['path']} to its target location." );
 		}
 		if ( null !== ( $entry['mtime'] ?? null ) ) {
 			@touch( $target_abs, (int) $entry['mtime'] );
@@ -1472,6 +1512,23 @@ class Restore_Orchestrator {
 		}
 		if ( ! empty( $cp['captured_home'] ) ) {
 			update_option( 'home', self::reconcile_url_scheme( $cp['captured_home'], get_option( 'home', '' ) ), false );
+		}
+
+		// 2.0.0 rename (WPGuard -> WPThistle): the swap just made this
+		// backup's OWN historical active_plugins list live, which is the
+		// right general behavior (a restore brings back that backup's
+		// plugin state) -- but a backup taken under the old plugin slug
+		// references a basename that no longer exists on disk once that
+		// old plugin is gone, silently dropping this plugin out of
+		// active_plugins after what otherwise looks like a successful
+		// restore. Ensure only this plugin's own current basename, so
+		// every other plugin the backup legitimately activated is left
+		// exactly as the dump specified.
+		$own_basename = plugin_basename( WPTHISTLE_BACKUP_DIR . 'wpthistle-backup-restore.php' );
+		$restored_active_plugins = get_option( 'active_plugins', array() );
+		if ( ! in_array( $own_basename, $restored_active_plugins, true ) ) {
+			$restored_active_plugins[] = $own_basename;
+			update_option( 'active_plugins', $restored_active_plugins );
 		}
 
 		self::log( $job_id, 'restore_swap', 'info', sprintf(

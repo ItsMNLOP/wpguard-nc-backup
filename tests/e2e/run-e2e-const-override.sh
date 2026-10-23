@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # security audit finding H-02 regression test: the constant-override credential path
-# (ADR 0002's "more secure" escape hatch — define('WPGUARD_NC_APP_PASSWORD',
+# (ADR 0002's "more secure" escape hatch — define('WPTHISTLE_BACKUP_APP_PASSWORD',
 # ...) in wp-config.php instead of storing it in wp_options) is the one
 # the main E2E drill (run-e2e.sh) never exercises, because it always
 # configures the plugin through Settings::save() (wp_options storage).
@@ -51,73 +51,95 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=== Step 1: capture the already-configured app password (wp_options-stored, not printed) ==="
-REAL_APP_PASSWORD=$(wp_source option get wpguard_nc_settings --format=json | python3 -c "import sys,json; print(json.load(sys.stdin)['app_password'])")
+REAL_APP_PASSWORD=$(wp_source option get wpthistle_backup_settings --format=json | python3 -c "import sys,json; print(json.load(sys.stdin)['app_password'])")
 [ -n "$REAL_APP_PASSWORD" ] || { echo "FAIL: could not read the real app password from wp_options"; exit 1; }
 
-echo "=== Step 2: inject a literal define() into the real on-disk wp-config.php (simulates a conventional non-Docker host using ADR 0002's constant override) ==="
-PHP_SNIPPET="
+run_round() {
+  local const_name="$1" round_label="$2"
+  local extracted_dir="$SCRATCH/extracted-$round_label"
+  rm -rf "$extracted_dir" && mkdir -p "$extracted_dir"
+
+  echo "=== [$round_label] Step 2: inject a literal define('$const_name', ...) into the real on-disk wp-config.php ==="
+  PHP_SNIPPET="
 ${START_MARKER}
-define('WPGUARD_NC_APP_PASSWORD', '${REAL_APP_PASSWORD}');
+define('${const_name}', '${REAL_APP_PASSWORD}');
 ${END_MARKER}
 "
-printf '%s\n' "$PHP_SNIPPET" > "$SCRATCH/inject.php"
-SCRATCH_WIN="$(cygpath -w "$SCRATCH")"
-MSYS_NO_PATHCONV=1 docker run --rm --user 0:0 \
-  -v wpguard-test_wp_source_html:/target \
-  -v "$SCRATCH_WIN:/inject:ro" \
-  wordpress:cli sh -c "cat /inject/inject.php >> /target/wp-config.php"
+  printf '%s\n' "$PHP_SNIPPET" > "$SCRATCH/inject.php"
+  SCRATCH_WIN="$(cygpath -w "$SCRATCH")"
+  MSYS_NO_PATHCONV=1 docker run --rm --user 0:0 \
+    -v wpguard-test_wp_source_html:/target \
+    -v "$SCRATCH_WIN:/inject:ro" \
+    wordpress:cli sh -c "cat /inject/inject.php >> /target/wp-config.php"
 
-echo "=== Step 3: sanity check — plugin must now read the credential from the constant, not wp_options ==="
-LOCKED=$(wp_source eval 'echo \WPGuard\NCBackup\Settings::is_app_password_locked() ? "yes" : "no";')
-[ "$LOCKED" = "yes" ] || { echo "FAIL: constant override not recognized as locked"; exit 1; }
-echo "OK  app password is constant-locked for this run"
+  echo "=== [$round_label] Step 3: sanity check — plugin must now read the credential from the constant, not wp_options ==="
+  LOCKED=$(wp_source eval 'echo \WPThistle\BackupRestore\Settings::is_app_password_locked() ? "yes" : "no";')
+  [ "$LOCKED" = "yes" ] || { echo "FAIL [$round_label]: constant override not recognized as locked"; exit 1; }
+  echo "OK  [$round_label] app password is constant-locked for this run"
 
-echo "=== Step 4: run a real backup through the constant-override path ==="
-wp_source wpguard-nc-backup run
+  echo "=== [$round_label] Step 4: run a real backup through the constant-override path ==="
+  wp_source wpthistle-backup-restore run
 
-STATUS=$(wp_source wpguard-nc-backup status | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
-[ "$STATUS" = "verified" ] || { echo "FAIL: backup did not reach verified status (status=$STATUS)"; exit 1; }
-echo "OK  backup verified while running under the constant-override path"
+  STATUS=$(wp_source wpthistle-backup-restore status | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  [ "$STATUS" = "verified" ] || { echo "FAIL [$round_label]: backup did not reach verified status (status=$STATUS)"; exit 1; }
+  echo "OK  [$round_label] backup verified while running under the constant-override path"
 
-echo "=== Step 5: fetch and extract the backed-up files archive, check for the leaked credential ==="
-BACKUP_ID=$(wp_source wpguard-nc-backup status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
-SITE_ID=$(wp_source eval 'echo \WPGuard\NCBackup\Settings::get_site_id();')
-APP_PASSWORD=$(curl -sk --cacert certs/wpguard-test-ca.crt -u "$NC_BACKUP_USER:$NC_BACKUP_USER_PASSWORD" \
-  -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
-  https://127.0.0.1:8443/ocs/v2.php/core/getapppassword | sed -n 's/.*"apppassword":"\([^"]*\)".*/\1/p')
-BASE="https://127.0.0.1:8443/remote.php/dav/files/$NC_BACKUP_USER/wpguard-backups/$SITE_ID/backups/$BACKUP_ID"
+  echo "=== [$round_label] Step 5: fetch and extract the backed-up files archive, check for the leaked credential ==="
+  BACKUP_ID=$(wp_source wpthistle-backup-restore status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
+  SITE_ID=$(wp_source eval 'echo \WPThistle\BackupRestore\Settings::get_site_id();')
+  APP_PASSWORD=$(curl -sk --cacert certs/wpguard-test-ca.crt -u "$NC_BACKUP_USER:$NC_BACKUP_USER_PASSWORD" \
+    -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+    https://127.0.0.1:8443/ocs/v2.php/core/getapppassword | sed -n 's/.*"apppassword":"\([^"]*\)".*/\1/p')
+  BASE="https://127.0.0.1:8443/remote.php/dav/files/$NC_BACKUP_USER/wpguard-backups/$SITE_ID/backups/$BACKUP_ID"
 
-PART=1
-while curl -sk --cacert certs/wpguard-test-ca.crt -u "$NC_BACKUP_USER:$APP_PASSWORD" \
-  -o "$SCRATCH/files.part-$(printf %04d $PART).zip" --fail "$BASE/files.part-$(printf %04d $PART).zip"; do
-  PART=$((PART+1))
-done
-rm -f "$SCRATCH/files.part-$(printf %04d $PART).zip"
+  PART=1
+  while curl -sk --cacert certs/wpguard-test-ca.crt -u "$NC_BACKUP_USER:$APP_PASSWORD" \
+    -o "$SCRATCH/files.part-$(printf %04d $PART).zip" --fail "$BASE/files.part-$(printf %04d $PART).zip"; do
+    PART=$((PART+1))
+  done
+  rm -f "$SCRATCH/files.part-$(printf %04d $PART).zip"
 
-mkdir -p "$SCRATCH/extracted"
-for p in "$SCRATCH"/files.part-*.zip; do
-  [ -f "$p" ] && unzip -o -q "$p" -d "$SCRATCH/extracted"
-done
+  for p in "$SCRATCH"/files.part-*.zip; do
+    [ -f "$p" ] && unzip -o -q "$p" -d "$extracted_dir"
+  done
+  rm -f "$SCRATCH"/files.part-*.zip
 
-[ -f "$SCRATCH/extracted/wp-config.php" ] || { echo "FAIL: wp-config.php not found in the archived files (expected it to be present, just redacted)"; exit 1; }
+  [ -f "$extracted_dir/wp-config.php" ] || { echo "FAIL [$round_label]: wp-config.php not found in the archived files (expected it to be present, just redacted)"; exit 1; }
 
-if grep -q "$REAL_APP_PASSWORD" "$SCRATCH/extracted/wp-config.php"; then
-  echo "FAIL: app password literal found in archived wp-config.php — H-02 regression!"
-  exit 1
-fi
-echo "OK  app password absent from archived wp-config.php"
+  if grep -q "$REAL_APP_PASSWORD" "$extracted_dir/wp-config.php"; then
+    echo "FAIL [$round_label]: app password literal found in archived wp-config.php — H-02 regression!"
+    exit 1
+  fi
+  echo "OK  [$round_label] app password absent from archived wp-config.php"
 
-if ! grep -q 'line redacted from backup archive' "$SCRATCH/extracted/wp-config.php"; then
-  echo "FAIL: redaction marker comment missing — redaction path may not have run at all"
-  exit 1
-fi
-echo "OK  redaction marker present — confirms the redaction code path actually ran"
+  if ! grep -q 'line redacted from backup archive' "$extracted_dir/wp-config.php"; then
+    echo "FAIL [$round_label]: redaction marker comment missing — redaction path may not have run at all"
+    exit 1
+  fi
+  echo "OK  [$round_label] redaction marker present — confirms the redaction code path actually ran"
 
-if ! grep -q "define( 'DB_NAME'" "$SCRATCH/extracted/wp-config.php"; then
-  echo "FAIL: unrelated wp-config.php content (DB_NAME) missing — redaction over-stripped the file"
-  exit 1
-fi
-echo "OK  unrelated wp-config.php content preserved (redaction is surgical, not wholesale)"
+  if ! grep -q "define( 'DB_NAME'" "$extracted_dir/wp-config.php"; then
+    echo "FAIL [$round_label]: unrelated wp-config.php content (DB_NAME) missing — redaction over-stripped the file"
+    exit 1
+  fi
+  echo "OK  [$round_label] unrelated wp-config.php content preserved (redaction is surgical, not wholesale)"
+
+  echo "=== [$round_label] Cleanup: reverting this round's wp-config.php test injection ==="
+  MSYS_NO_PATHCONV=1 docker compose -p wpguard-test --env-file .env exec -T wp-source \
+    sh -c "sed -i '/WPGUARD_H02_TEST_CONST_OVERRIDE_START/,/WPGUARD_H02_TEST_CONST_OVERRIDE_END/d' /var/www/html/wp-config.php" \
+    2>&1 | grep -v '^ Container' || true
+}
+
+# Proves the current constant name redacts correctly (the ordinary,
+# already-on-the-new-release case).
+run_round 'WPTHISTLE_BACKUP_APP_PASSWORD' 'current-constant'
+
+# 2.0.0 rename: WPGUARD_NC_APP_PASSWORD still works as a fallback for a
+# site whose wp-config.php hasn't been updated to the new constant name
+# yet -- proves redact_wp_config_contents() covers that name too, not
+# just the current one. This is exactly the gap that would otherwise
+# have shipped undetected, the same way H-02 originally did.
+run_round 'WPGUARD_NC_APP_PASSWORD' 'legacy-constant'
 
 echo
-echo "=== H-02 CONSTANT-OVERRIDE REGRESSION TEST PASSED ==="
+echo "=== H-02 CONSTANT-OVERRIDE REGRESSION TEST PASSED (current and legacy constant names) ==="

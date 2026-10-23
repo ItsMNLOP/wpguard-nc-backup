@@ -15,7 +15,7 @@ $attempts = 0;
 $acquired = false;
 while ( $attempts < $max_attempts ) {
 	$attempts++;
-	if ( \WPGuard\NCBackup\Job_Store::try_lock( $job_id ) ) {
+	if ( \WPThistle\BackupRestore\Job_Store::try_lock( $job_id ) ) {
 		$acquired = true;
 		break;
 	}
@@ -25,5 +25,5 @@ while ( $attempts < $max_attempts ) {
 echo 'WAITER attempts=' . $attempts . ' acquired=' . ( $acquired ? '1' : '0' ) . ' at=' . microtime( true ) . "\n";
 
 if ( $acquired ) {
-	\WPGuard\NCBackup\Job_Store::release_lock( $job_id );
+	\WPThistle\BackupRestore\Job_Store::release_lock( $job_id );
 }

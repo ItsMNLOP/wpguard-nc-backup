@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -11,10 +11,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  * which is why the E2E test harness uses this instead of simulating
  * browser polling.
  *
- * Usage: wp wpguard-nc-backup run [--destination=nextcloud|download]
- *        wp wpguard-nc-backup restore <backup_id> [--confirm-url-mismatch]
- *        wp wpguard-nc-backup restore_local <path-to-zip> [--confirm-url-mismatch]
- *        wp wpguard-nc-backup status
+ * Usage: wp wpthistle-backup-restore run [--destination=nextcloud|download]
+ *        wp wpthistle-backup-restore restore <backup_id> [--confirm-url-mismatch]
+ *        wp wpthistle-backup-restore restore_local <path-to-zip> [--confirm-url-mismatch]
+ *        wp wpthistle-backup-restore status
  */
 class CLI_Command {
 
@@ -28,7 +28,7 @@ class CLI_Command {
 		// (ajax_start_backup()) -- a download-destination backup needs
 		// no Nextcloud destination configured at all.
 		if ( 'nextcloud' === $destination && ! Settings::has_credentials() ) {
-			\WP_CLI::error( 'Nextcloud URL, username, and app password must be configured first (wp option update wpguard_nc_settings, or the admin UI), or pass --destination=download.' );
+			\WP_CLI::error( 'Nextcloud URL, username, and app password must be configured first (wp option update wpthistle_backup_settings, or the admin UI), or pass --destination=download.' );
 			return;
 		}
 		$job_id = Job_Orchestrator::create_job( $destination );
@@ -79,7 +79,7 @@ class CLI_Command {
 	 * the same synchronous way run() drives backups -- what the E2E
 	 * restore test harness uses.
 	 *
-	 * Usage: wp wpguard-nc-backup restore <backup_id> [--confirm-url-mismatch]
+	 * Usage: wp wpthistle-backup-restore restore <backup_id> [--confirm-url-mismatch]
 	 */
 	public function restore( $args, $assoc_args ) {
 		if ( ! Settings::has_credentials() ) {
@@ -88,7 +88,7 @@ class CLI_Command {
 		}
 		$backup_id = $args[0] ?? '';
 		if ( '' === $backup_id ) {
-			\WP_CLI::error( 'Usage: wp wpguard-nc-backup restore <backup_id> [--confirm-url-mismatch]' );
+			\WP_CLI::error( 'Usage: wp wpthistle-backup-restore restore <backup_id> [--confirm-url-mismatch]' );
 			return;
 		}
 		$confirm = isset( $assoc_args['confirm-url-mismatch'] );
@@ -123,12 +123,12 @@ class CLI_Command {
 	 * the exact same extraction and 'upload'-source restore mechanism
 	 * rather than a separate one.
 	 *
-	 * Usage: wp wpguard-nc-backup restore_local <path-to-zip> [--confirm-url-mismatch]
+	 * Usage: wp wpthistle-backup-restore restore_local <path-to-zip> [--confirm-url-mismatch]
 	 */
 	public function restore_local( $args, $assoc_args ) {
 		$zip_path = $args[0] ?? '';
 		if ( '' === $zip_path || ! is_readable( $zip_path ) ) {
-			\WP_CLI::error( 'Usage: wp wpguard-nc-backup restore_local <path-to-zip> [--confirm-url-mismatch]' );
+			\WP_CLI::error( 'Usage: wp wpthistle-backup-restore restore_local <path-to-zip> [--confirm-url-mismatch]' );
 			return;
 		}
 

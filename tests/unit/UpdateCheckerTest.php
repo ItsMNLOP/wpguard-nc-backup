@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Update_Checker;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Update_Checker;
 
 // Phase 2 (update feed). Covers only the pure transforms (parse_release,
 // select_package_asset, is_newer_version, is_trusted_package_url) -- the
@@ -10,14 +10,14 @@ use WPGuard\NCBackup\Update_Checker;
 
 function test_select_package_asset_picks_matching_zip() {
 	$assets = array(
-		array( 'name' => 'wpguard-nc-backup.zip', 'browser_download_url' => 'https://example.test/wpguard-nc-backup.zip' ),
+		array( 'name' => 'wpthistle-backup-restore.zip', 'browser_download_url' => 'https://example.test/wpthistle-backup-restore.zip' ),
 	);
-	wpguard_assert_equals( 'https://example.test/wpguard-nc-backup.zip', Update_Checker::select_package_asset( $assets ), 'a .zip asset whose name starts with the plugin slug must be selected' );
+	wpguard_assert_equals( 'https://example.test/wpthistle-backup-restore.zip', Update_Checker::select_package_asset( $assets ), 'a .zip asset whose name starts with the plugin slug must be selected' );
 }
 
 function test_select_package_asset_ignores_non_matching_assets() {
 	$assets = array(
-		array( 'name' => 'wpguard-nc-backup.zip.sha256', 'browser_download_url' => 'https://example.test/checksum' ),
+		array( 'name' => 'wpthistle-backup-restore.zip.sha256', 'browser_download_url' => 'https://example.test/checksum' ),
 		array( 'name' => 'source.tar.gz', 'browser_download_url' => 'https://example.test/source.tar.gz' ),
 	);
 	wpguard_assert_equals( '', Update_Checker::select_package_asset( $assets ), 'a checksum file or non-.zip asset must never be selected as the install package' );
@@ -59,11 +59,11 @@ function test_is_newer_version_false_for_older_or_blank() {
 // specific repo's own release assets, not just any github.com URL,
 // before it's trusted enough to hand to WP core's installer.
 function test_is_trusted_package_url_accepts_this_repos_release_asset() {
-	wpguard_assert( true === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.1.0/wpguard-nc-backup.zip' ), 'a release asset URL from this exact repo must be trusted' );
+	wpguard_assert( true === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v1.1.0/wpthistle-backup-restore.zip' ), 'a release asset URL from this exact repo must be trusted' );
 }
 
 function test_is_trusted_package_url_rejects_different_repo_same_host() {
-	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/someone-else/other-repo/releases/download/v1/wpguard-nc-backup.zip' ), 'a release asset from a different repo must never be trusted just because it is also on github.com' );
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/someone-else/other-repo/releases/download/v1/wpthistle-backup-restore.zip' ), 'a release asset from a different repo must never be trusted just because it is also on github.com' );
 }
 
 function test_is_trusted_package_url_rejects_bare_host_url() {
@@ -71,7 +71,7 @@ function test_is_trusted_package_url_rejects_bare_host_url() {
 }
 
 function test_is_trusted_package_url_rejects_non_https() {
-	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'http://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1/wpguard-nc-backup.zip' ), 'a plain http:// URL must never be trusted, even with an otherwise-matching path' );
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'http://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v1/wpthistle-backup-restore.zip' ), 'a plain http:// URL must never be trusted, even with an otherwise-matching path' );
 }
 
 function test_is_trusted_package_url_accepts_empty_string() {
@@ -84,27 +84,27 @@ function test_is_trusted_package_url_accepts_empty_string() {
 // shapes proven live against the real GitHub CDN, plus adjacent
 // injection vectors the anchored regex must also close.
 function test_is_trusted_package_url_rejects_plain_traversal() {
-	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/../../../../attacker/repo/releases/download/v1/x.zip' ), 'a plain ../ path-traversal tag segment must be rejected' );
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/../../../../attacker/repo/releases/download/v1/x.zip' ), 'a plain ../ path-traversal tag segment must be rejected' );
 }
 
 function test_is_trusted_package_url_rejects_url_encoded_traversal() {
-	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/%2e%2e/%2e%2e/attacker/file.zip' ), 'a URL-encoded ../ path-traversal tag segment must be rejected' );
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/%2e%2e/%2e%2e/attacker/file.zip' ), 'a URL-encoded ../ path-traversal tag segment must be rejected' );
 }
 
 function test_is_trusted_package_url_rejects_mixed_encoded_traversal() {
-	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/..%2f..%2fattacker/file.zip' ), 'a mixed literal/encoded traversal tag segment must be rejected' );
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/..%2f..%2fattacker/file.zip' ), 'a mixed literal/encoded traversal tag segment must be rejected' );
 }
 
 function test_is_trusted_package_url_rejects_query_string_injection() {
-	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.1.0/wpguard-nc-backup.zip?q=evil' ), 'a trailing query string must be rejected -- the filename must end exactly at .zip' );
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v1.1.0/wpthistle-backup-restore.zip?q=evil' ), 'a trailing query string must be rejected -- the filename must end exactly at .zip' );
 }
 
 function test_is_trusted_package_url_rejects_fragment_injection() {
-	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.1.0/wpguard-nc-backup.zip#evil' ), 'a trailing fragment must be rejected -- the filename must end exactly at .zip' );
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( 'https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v1.1.0/wpthistle-backup-restore.zip#evil' ), 'a trailing fragment must be rejected -- the filename must end exactly at .zip' );
 }
 
 function test_is_trusted_package_url_rejects_trailing_newline() {
-	wpguard_assert( false === Update_Checker::is_trusted_package_url( "https://github.com/ItsMNLOP/wpguard-nc-backup/releases/download/v1.1.0/wpguard-nc-backup.zip\n" ), 'a trailing newline must be rejected -- \\z anchors at the true end of string, not just before a trailing newline the way $ would' );
+	wpguard_assert( false === Update_Checker::is_trusted_package_url( "https://github.com/ItsMNLOP/wpthistle-backup-restore/releases/download/v1.1.0/wpthistle-backup-restore.zip\n" ), 'a trailing newline must be rejected -- \\z anchors at the true end of string, not just before a trailing newline the way $ would' );
 }
 
 return array(

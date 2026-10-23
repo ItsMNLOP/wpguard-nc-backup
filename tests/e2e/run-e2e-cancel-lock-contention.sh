@@ -23,11 +23,11 @@ wp_source() {
 }
 
 echo "=== Clear any pre-existing job row ==="
-wp_source db query "UPDATE wp_wpguard_nc_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
+wp_source db query "UPDATE ${WP_SOURCE_TABLE_PREFIX}wpthistle_backup_jobs SET status='failed' WHERE status IN ('queued','running','uploaded-unverified');" || true
 
 echo "=== Create a job (un-advanced) to cancel against ==="
 JOB_ID=$(wp_source eval '
-  $id = \WPGuard\NCBackup\Job_Orchestrator::create_job();
+  $id = \WPThistle\BackupRestore\Job_Orchestrator::create_job();
   echo $id;
 ')
 [ -n "$JOB_ID" ] || { echo "FAIL: could not create a job"; exit 1; }
@@ -54,7 +54,7 @@ CONTENDED_RESULT=$(grep -oP 'cancel_result=\K\S+' "$SCRATCH/canceller1.log" || t
 echo "OK  cancel() correctly reported lock_contended, not success, while advance()'s lock was held"
 
 STATUS_AFTER_CONTENDED=$(wp_source eval "
-  \$job = \WPGuard\NCBackup\Job_Store::get('$JOB_ID');
+  \$job = \WPThistle\BackupRestore\Job_Store::get('$JOB_ID');
   echo \$job['status'];
 ")
 [ "$STATUS_AFTER_CONTENDED" = "queued" ] || { echo "FAIL: job status should be untouched (queued), got: $STATUS_AFTER_CONTENDED"; exit 1; }

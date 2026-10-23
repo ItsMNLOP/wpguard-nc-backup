@@ -10,5 +10,5 @@
  */
 $job_id = $args[0];
 
-$job = \WPGuard\NCBackup\Job_Orchestrator::cancel( $job_id );
+$job = \WPThistle\BackupRestore\Job_Orchestrator::cancel( $job_id );
 echo 'CANCELLER cancel_result=' . ( $job['cancel_result'] ?? '' ) . ' status=' . ( $job['status'] ?? '' ) . ' at=' . microtime( true ) . "\n";

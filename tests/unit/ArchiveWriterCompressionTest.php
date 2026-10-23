@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Archive_Writer;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Archive_Writer;
 
 /**
  * Perf fix (2026-10-20): already-compressed binary extensions are stored

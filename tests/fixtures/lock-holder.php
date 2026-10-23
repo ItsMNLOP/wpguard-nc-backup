@@ -10,11 +10,11 @@
 $job_id = $args[0];
 $hold_seconds = (float) $args[1];
 
-$acquired = \WPGuard\NCBackup\Job_Store::try_lock( $job_id );
+$acquired = \WPThistle\BackupRestore\Job_Store::try_lock( $job_id );
 echo 'HOLDER acquired=' . ( $acquired ? '1' : '0' ) . ' at=' . microtime( true ) . "\n";
 
 if ( $acquired ) {
 	usleep( (int) ( $hold_seconds * 1000000 ) );
-	\WPGuard\NCBackup\Job_Store::release_lock( $job_id );
+	\WPThistle\BackupRestore\Job_Store::release_lock( $job_id );
 	echo 'HOLDER released at=' . microtime( true ) . "\n";
 }

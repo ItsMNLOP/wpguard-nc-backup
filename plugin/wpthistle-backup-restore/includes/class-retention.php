@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -134,7 +134,7 @@ class Retention {
 				// the failure, rather than losing that information by
 				// returning only the error.
 				return new \WP_Error(
-					'wpguard_nc_retention_delete_failed',
+					'wpthistle_backup_retention_delete_failed',
 					sprintf( 'Deleted %d of %d old backup(s) before a delete failed: %s', count( $deleted ), count( $to_delete ), $result->get_error_message() ),
 					array( 'deleted' => $deleted )
 				);

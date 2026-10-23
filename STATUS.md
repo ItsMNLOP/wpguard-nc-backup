@@ -1,4 +1,194 @@
-# STATUS — WPGuard Nextcloud Backup plugin
+# STATUS — WPThistle Backup and Restore plugin (formerly WPGuard Nextcloud Backup, see 2.0.0 entry)
+
+## 2.0.0 rename: WPGuard Nextcloud Backup -> WPThistle Backup and Restore, 2026-10-23
+
+With Phase 2 and Phase 3 both complete, the question came up of
+whether "WPGuard" needed reconsidering now that the family menu (built
+this session, see the family-hub entry below) was going to host
+plugins that have nothing to do with "guarding" anything. Checked
+before building anything further: "WPGuard" turned out to collide with
+**WP Guard Pty Ltd** (wpguard.ai), an active, incorporated Australian
+company selling managed WordPress security/backup services under
+essentially the same name, in the same space. "WPGuards"/"WP Guard"
+(CodeCanyon firewall plugin) and "WP Guardian" (wpguardian.com, a
+WebPros product in the cPanel store) are close enough to add to the
+confusion risk. Not urgent while this stayed personal/self-hosted, but
+real enough that renaming now -- before more WPThistle-family plugins
+exist to drag along -- was clearly cheaper than renaming later.
+
+New family name, picked after several discarded rounds (WPBulwark/
+WPWarden/WPCustodian all re-hit the same "guard" theme problem;
+WPForge/WPFoundry turned out to be taken too, by an active WP hosting
+company and a real desktop WP-admin app, respectively): **WPThistle**
+-- the thistle became Scotland's national emblem as a defensive
+symbol, which keeps a faint echo of the original "guard" spirit without
+committing every future sibling plugin to a security/protection theme.
+Checked clean: no WordPress plugin, company, or product under that
+name anywhere; domain unregistered.
+
+**Full rename, not just cosmetic.** Plugin slug/folder/main file ->
+`wpthistle-backup-restore`; PHP namespace `WPGuard\NCBackup` ->
+`WPThistle\BackupRestore`; every `wpguard_nc_*` option/hook/nonce/
+transient name, the `WPGUARD_NC_*` constants, the jobs table, the
+WP-CLI command, admin menu slugs, and the (zero-consumer, so free)
+`wpguard_family_status_cards` filter all renamed to match. GitHub repo
+renamed in place (`gh repo rename`, confirmed the old URL still
+redirects) rather than a fresh repo, so history/issues weren't lost.
+Display name: "WPThistle Backup and Restore" (dropped "Nextcloud" from
+the plugin's own name too, in the same pass, now that ownCloud/
+OpenCloud/local-download are equally first-class).
+
+**Why this isn't just a find-and-replace on a live site**: a new slug
+is, to WordPress, a different plugin. `activate()` now runs
+`migrate_from_legacy_wpguard()` first -- if this plugin's settings
+option is absent but the old plugin's is present, it copies settings/
+site_id/schema-version/chain-state/retention-error-flag across and
+renames the old jobs table in place (`RENAME TABLE`, not a copy),
+rather than losing backup/incremental-chain history on cutover.
+Non-destructive: nothing under the old names is touched beyond that
+copy -- the old plugin's own `uninstall.php` (confirmed: it does
+`delete_option()` and `DROP TABLE` on actual uninstall, not mere
+deactivation) is what would actually lose that data, so the documented
+cutover order is deactivate-old -> activate-new (migration runs) ->
+verify -> delete-old, never skipping straight to delete.
+`WPGUARD_NC_APP_PASSWORD`/`WPGUARD_NC_CA_BUNDLE` wp-config.php
+constants still work as a fallback, so an existing site's wp-config.php
+doesn't need editing as part of the cutover itself.
+
+**Found and fixed along the way, a real correctness gap the rename
+would otherwise have introduced**: restoring a backup taken under the
+*old* plugin, post-rename, would silently leave this plugin out of
+`active_plugins` afterward -- the backup's own historical
+`active_plugins` snapshot (which the DB swap makes live verbatim, by
+design, since restoring a backup is supposed to bring back that
+backup's actual plugin state) names a slug that no longer exists once
+the old plugin's files are gone. Fixed by ensuring this plugin's own
+*current* basename is present in `active_plugins` after every
+successful restore (merged in, never replacing what the backup
+legitimately had active) -- every other plugin's restored state is
+untouched, only this plugin's own self-continuity is guaranteed.
+Separately, the same rename-the-literal-filename work also fixed the
+related self-preservation line `restore_apply_files` already relied on
+(`plugin_basename( ...DIR . 'wpguard-nc-backup.php' )` -- had this
+single literal been missed, every mid-restore AJAX/cron bootstrap
+would have seen active_plugins restricted to a basename that doesn't
+match the actually-running plugin, meaning this plugin's own code
+wouldn't load at all during its own restore).
+
+**Found live, unrelated to the rename itself, while rehearsing it**:
+confirmed via the first full `run-e2e.sh` rehearsal run that
+`wp_source()` (every E2E script's own helper, local and CI alike) never
+passed `WORDPRESS_TABLE_PREFIX` to its wpcli container, silently
+defaulting to `wp_` -- while the real wp-source apache container reads
+the deliberately different `wps_` from `.env` (chosen specifically to
+catch prefix-handling bugs). The real installed tables were under
+`wp_`, meaning wp-source's own apache container had been returning
+"not installed" over real HTTP the entire time this project has been
+tested -- every E2E proof up to this point went through wpcli only,
+which happened to default around the mismatch. Fixed the data side by
+renaming the live tables (and the two prefix-embedded keys,
+`wp_user_roles`/`wp_capabilities`/`wp_user_level`) to `wps_` rather
+than reinstalling, so real job history wasn't lost; fixed the actual
+bug everywhere `wp_source()` is defined. `run-e2e.sh` now passes
+end to end with the manifest correctly recording `table_prefix: wps_`.
+
+**Three further credential/correctness gaps found live while rehearsing
+the actual cutover on real data** (not synthetic fixtures -- the
+disposable stack's wp-source instance already had real settings, real
+site_id, and real job history from this session's own earlier testing):
+
+- **A real, previously-latent credential leak, predating the rename**:
+  a restore job's own checkpoint legitimately holds a `captured_options`
+  snapshot with the real app password/app token in it, for as long as
+  that job row exists (needed to re-apply settings after the DB swap).
+  `DB_Exporter::list_tables()` never excluded the jobs table from export
+  at all -- only the settings option *row* was ever excluded -- so any
+  backup taken on a site that had ever run a one-click restore archived
+  that checkpoint, plaintext credential included, in `database.sql.gz`.
+  Caught by `run-e2e.sh`'s own credential-leak check failing after this
+  session's restore rehearsal left two restore-job rows behind on
+  wp-source. Fixed by excluding the jobs table from export entirely
+  (symmetric with restore already never importing it, per the
+  pre-existing T20 design) rather than trying to redact specific fields.
+  **This is a pre-existing issue, not introduced by the rename**: any
+  v1.x site that has ever run a one-click restore has this same
+  credential sitting in its own `database.sql.gz` from every backup
+  taken since. Flagged for Vex to disclose explicitly; if this site's
+  real app password/token was ever in a backup taken after a restore,
+  rotate it.
+- **The never-touched-path restore protection didn't recognize the OLD
+  plugin's own directory.** `is_never_restored_path()` derives its
+  exclusion from the *current* `WPTHISTLE_BACKUP_DIR` -- restoring a
+  real pre-rename backup tried to write the old plugin's own archived
+  files back to `wp-content/plugins/wpguard-nc-backup/...`, which would
+  have silently resurrected the old plugin's dead code verbatim had
+  that folder still existed on disk (the documented cutover order
+  deliberately leaves it there until confirmed). Fixed with an explicit
+  legacy-prefix list, checked alongside the current one.
+- **`active_plugins` self-continuity across a cross-version restore.**
+  Restoring a backup correctly makes that backup's own historical
+  `active_plugins` live (the right general behavior) -- but a pre-rename
+  backup's own snapshot names a slug that's gone once the old plugin's
+  files are. Fixed by merging this plugin's current basename into
+  `active_plugins` after every successful restore, never replacing
+  what the backup legitimately had active.
+- **The wp-config.php redaction only covered the current constant
+  names.** `WPGUARD_NC_APP_PASSWORD`/`WPGUARD_NC_CA_BUNDLE` are kept as
+  a read fallback (so a site's wp-config.php doesn't need editing as
+  part of the cutover) -- but `redact_wp_config_contents()` only ever
+  stripped the current names, so exactly the site that fallback exists
+  for would have archived its real credential, unredacted, in its
+  wp-config.php copy. Fixed to cover both names; both the unit test
+  and `run-e2e-const-override.sh` (H-02's original regression test)
+  now prove the legacy name redacts correctly too, not just the current
+  one.
+- Also found and fixed along the way: the jobs table itself can get
+  resurrected on restore the same way (a pre-rename backup's own dump
+  names it `wpguard_nc_jobs`, which the import-time skip didn't
+  recognize either) -- fixed on both the import-skip and export-exclude
+  sides. And several E2E scripts hard-coded a `wp_` table prefix for
+  wp-source's own jobs table instead of using `$WP_SOURCE_TABLE_PREFIX`
+  (`wps_` on this stack) -- silent no-ops behind `|| true`, never
+  actually doing anything, until the full suite was re-run and one
+  assertion (checking the restore job's own row survives the swap)
+  caught it structurally rather than by accident.
+
+156/156 unit tests (153 going in, +3: the two legacy-constant-fallback
+cases above, plus one proving the legacy plugin-dir restore exclusion).
+Full 16-suite E2E regression re-run clean after
+every fix above, including the specific scenario that found them
+(restore a real pre-rename backup, then take another real backup).
+Full detail on the migration code's own review: see the Vex
+security-audit entry immediately following this one once it's run.
+
+## Family hub landing page (top-level "WPGuard" menu 404 fix), 2026-10-23
+
+The top-level "WPGuard" admin menu item had no page callback at all --
+clicking it 404'd. `Admin::render_family_hub()` gives it a real page: a
+status-card grid any WPGuard-family plugin (now WPThistle-family,
+post-rename) can register into via a new, zero-consumer-until-now
+filter (`wpguard_family_status_cards`, renamed to
+`wpthistle_family_status_cards` in the 2.0.0 rename above), with this
+plugin contributing its own card (config state, last-job status,
+time-ago). Verified live: rendered via wp-cli against real job data,
+then full browser-path HTTP proof (logged into wp-admin, hit
+`admin.php?page=wpguard`, got the real hub instead of a 404; the
+Nextcloud Backup submenu still worked).
+
+Also dropped "Nextcloud" from every user-facing name/string (plugin
+header, readme, admin menu/page titles, update-feed metadata) in the
+same pass, since ownCloud, OpenCloud, and local-download are equally
+first-class destinations now -- "WPGuard Backup and Restore" instead
+of "WPGuard Nextcloud Backup" (further renamed to "WPThistle Backup
+and Restore" in the 2.0.0 entry above).
+
+Side find while verifying this live: wp-source's own apache container
+had drifted onto the wrong DB table prefix (intended `wps_` per
+`.env.example`, actual tables were `wp_`) -- the whole stack's
+browser/HTTP path had been silently untestable all session up to this
+point. See the table-prefix fix folded into the 2.0.0 entry above for
+the full story and the actual root cause (every E2E script's own
+`wp_source()` helper never passed `WORDPRESS_TABLE_PREFIX`).
 
 ## WebDAV chunking v2 (TRN-04, the last Phase 2 item), CLEAR TO SHIP, 2026-10-23
 

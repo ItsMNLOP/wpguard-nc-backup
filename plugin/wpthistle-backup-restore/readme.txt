@@ -1,10 +1,10 @@
-=== WPGuard Backup and Restore ===
+=== WPThistle Backup and Restore ===
 Contributors: itsmnlop
 Tags: backup, restore, nextcloud, webdav, disaster-recovery
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.4.0
+Stable tag: 2.0.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,18 +24,23 @@ A backup is never reported successful until every uploaded component has been re
 == Installation ==
 
 1. Upload and activate the plugin.
-2. Go to WPGuard > Backup and Restore.
+2. Go to WPThistle > Backup and Restore.
 3. Enter your Nextcloud URL, the dedicated account's username, its app password, and a destination folder.
 4. Click Test Connection.
 5. Click Back Up Now.
 
 == Changelog ==
 
+= 2.0.0 =
+Renamed from "WPGuard Nextcloud Backup" to "WPThistle Backup and Restore" — the plugin outgrew its old name once it covered ownCloud, OpenCloud, and zero-cloud local downloads, and "WPGuard" turned out to already be in active use elsewhere in the WordPress security space. This is a breaking change from WordPress's point of view: a new plugin slug, so it shows up as a separate install. Your settings, backup history, and site identity carry over automatically the first time this version activates — deactivate the old plugin first (do not delete it yet), activate this one, confirm everything looks right, then delete the old plugin's files. See docs/releasing.md and STATUS.md for the full migration detail and what was checked before shipping this.
+
+Also fixes a credential-handling gap found while rehearsing this migration, present in every version back to 1.0.0: a one-click restore's own job record legitimately holds your app password/app token temporarily, and backups taken afterward did not exclude that record from the exported database — only the separate settings row was ever excluded. If you have ever used one-click restore on this site, any backup taken since then has that credential in its database.sql.gz. This release excludes it going forward. If that applies to you, rotate your Nextcloud/ownCloud/OpenCloud app password/token as a precaution.
+
 = 1.4.0 =
 Phase 2 release (final item): resumable WebDAV chunking v2 for backup parts bigger than one chunk, on servers that support it (Nextcloud, ownCloud — confirmed live; OpenCloud keeps the existing single-PUT transport, confirmed live it doesn't support this dialect). If a connection drops mid-upload, the next attempt resumes from whatever the server already has instead of re-sending the whole part, with no change to how backups are configured or run. Security audit: one MEDIUM, two LOW, all fixed and re-verified before release — see this project's STATUS.md and docs/threat-model.md (T24) for the full history.
 
 = 1.3.0 =
-Phase 3 release: a shared top-level WPGuard admin menu (future WPGuard-family plugins land as submenus); "Download Now" — a second, independent backup destination that packages a backup into a flat zip and serves it to your browser, with zero Nextcloud dependency; multi-backend support (ownCloud, OpenCloud, anything speaking the same WebDAV dialect, alongside Nextcloud); and WP-CLI parity for both of the above (`run --destination=download`, `restore_local`). Every feature went through an independent security audit, fixes applied, and re-verification before shipping — see this project's STATUS.md and docs/threat-model.md (T21–T23) for the full history.
+Phase 3 release: a shared top-level WPThistle admin menu (future WPThistle-family plugins land as submenus); "Download Now" — a second, independent backup destination that packages a backup into a flat zip and serves it to your browser, with zero Nextcloud dependency; multi-backend support (ownCloud, OpenCloud, anything speaking the same WebDAV dialect, alongside Nextcloud); and WP-CLI parity for both of the above (`run --destination=download`, `restore_local`). Every feature went through an independent security audit, fixes applied, and re-verification before shipping — see this project's STATUS.md and docs/threat-model.md (T21–T23) for the full history.
 
 = 1.2.0 =
 Phase 2.5 release: checking "this backup is from a different site" on restore now means migration, not just "proceed anyway" — every URL in the backup (including inside PHP-serialized data) is rewritten to match this site's own address before anything is restored live, so logging into the restored site actually works. Four rounds of independent security audit findings, all fixed and re-verified, including two distinct PHP serialization-amplification attack shapes found via live adversarial testing against real production backup data. See this project's STATUS.md and docs/threat-model.md for the full history.

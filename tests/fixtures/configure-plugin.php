@@ -7,7 +7,7 @@
  * ever written into this file or the command line history.
  */
 
-use WPGuard\NCBackup\Settings;
+use WPThistle\BackupRestore\Settings;
 
 $input = array(
 	// Phase 3 (multi-backend): wording hint only, defaults to the

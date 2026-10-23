@@ -43,7 +43,7 @@ configure_nextcloud() {
     -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
     https://127.0.0.1:8443/ocs/v2.php/core/getapppassword | sed -n 's/.*"apppassword":"\([^"]*\)".*/\1/p')
   wpr eval "
-    \WPGuard\NCBackup\Settings::save(array(
+    \WPThistle\BackupRestore\Settings::save(array(
       'nextcloud_url' => 'https://nc-proxy.wpguard-test.local',
       'nextcloud_user' => '$NC_BACKUP_USER',
       'app_password' => '$APP_PASSWORD',
@@ -57,7 +57,7 @@ echo "=== Old site: fresh WordPress at https://old-site.example, seeded with con
 fresh_db
 wpr core install --url="https://old-site.example" --title="Old Site" \
   --admin_user=wpadmin --admin_password=MigrationE2EAdminPW --admin_email=wpadmin@wpguard-test.local --skip-email > /dev/null
-wpr plugin activate wpguard-nc-backup > /dev/null
+wpr plugin activate wpthistle-backup-restore > /dev/null
 configure_nextcloud
 echo "OK  old site installed at https://old-site.example, plugin configured"
 
@@ -82,10 +82,10 @@ echo "OK  seeded a PHP-serialized widget option containing a nested URL to the o
 
 echo
 echo "=== Backup A: taken from the old site ==="
-wpr wpguard-nc-backup run > /dev/null 2>&1 || true
+wpr wpthistle-backup-restore run > /dev/null 2>&1 || true
 RESULT_A=""
 for attempt in 1 2 3 4 5; do
-  RESULT_A=$(wpr eval '$j = \WPGuard\NCBackup\Job_Store::get_latest(); echo ($j["backup_id"] ?? "") . "|" . ($j["status"] ?? "");')
+  RESULT_A=$(wpr eval '$j = \WPThistle\BackupRestore\Job_Store::get_latest(); echo ($j["backup_id"] ?? "") . "|" . ($j["status"] ?? "");')
   [ -n "$RESULT_A" ] && [[ "$RESULT_A" == *"|"* ]] && break
   sleep 2
 done
@@ -95,7 +95,7 @@ STATUS_A="${RESULT_A##*|}"
 [ "$STATUS_A" = "verified" ] || { echo "FAIL: backup A did not verify, got '$STATUS_A'"; exit 1; }
 echo "OK  backup A ($BACKUP_A) verified"
 
-OLD_SITE_ID=$(wpr eval "echo \WPGuard\NCBackup\Settings::get_site_id();")
+OLD_SITE_ID=$(wpr eval "echo \WPThistle\BackupRestore\Settings::get_site_id();")
 [ -n "$OLD_SITE_ID" ] || { echo "FAIL: could not read old site's site_id"; exit 1; }
 echo "OK  old site's site_id: $OLD_SITE_ID"
 
@@ -104,14 +104,14 @@ echo "=== New site: fresh WordPress at http://127.0.0.1:8082 (a genuinely differ
 fresh_db
 wpr core install --url="http://127.0.0.1:8082" --title="New Site" \
   --admin_user=wpadmin --admin_password=MigrationE2EAdminPW --admin_email=wpadmin@wpguard-test.local --skip-email > /dev/null
-wpr plugin activate wpguard-nc-backup > /dev/null
+wpr plugin activate wpthistle-backup-restore > /dev/null
 configure_nextcloud
 echo "OK  new site installed at http://127.0.0.1:8082"
 
 echo
 echo "=== Downloading backup A's files into a local upload-style holding dir (same mechanism a real admin's manual download+upload uses -- the Nextcloud picker is site_id-scoped and can never reach another site's backup, confirmed earlier in this project) ==="
 wpr eval "
-  \$client = \WPGuard\NCBackup\Nextcloud_Client::from_settings( new \WPGuard\NCBackup\Logger( array( \WPGuard\NCBackup\Settings::get_app_password() ) ) );
+  \$client = \WPThistle\BackupRestore\Nextcloud_Client::from_settings( new \WPThistle\BackupRestore\Logger( array( \WPThistle\BackupRestore\Settings::get_app_password() ) ) );
   \$parent_rel = \$client->relative_path( '$OLD_SITE_ID/backups/$BACKUP_A' );
   \$holding = '/var/www/html-restore/wp-content/migration-test-upload/';
   wp_mkdir_p( \$holding );
@@ -128,19 +128,19 @@ echo "OK  backup A's files staged into /var/www/html-restore/wp-content/migratio
 
 echo
 echo "=== Restoring backup A onto the new site from that upload dir, box checked (confirm_url_mismatch) ==="
-JOB_ID=$(wpr eval "echo \WPGuard\NCBackup\Restore_Orchestrator::create_restore_job(array('type'=>'upload','upload_dir'=>'/var/www/html-restore/wp-content/migration-test-upload/'), '$BACKUP_A', true);")
+JOB_ID=$(wpr eval "echo \WPThistle\BackupRestore\Restore_Orchestrator::create_restore_job(array('type'=>'upload','upload_dir'=>'/var/www/html-restore/wp-content/migration-test-upload/'), '$BACKUP_A', true);")
 echo "job=$JOB_ID"
 [ -n "$JOB_ID" ] || { echo "FAIL: could not create restore job"; exit 1; }
 
 for i in $(seq 1 200); do
-  RESULT=$(wpr eval "\$j = \WPGuard\NCBackup\Restore_Orchestrator::advance('$JOB_ID'); echo \$j['step'] . '|' . \$j['status'];")
+  RESULT=$(wpr eval "\$j = \WPThistle\BackupRestore\Restore_Orchestrator::advance('$JOB_ID'); echo \$j['step'] . '|' . \$j['status'];")
   [[ "$RESULT" == *"|verified"* ]] && break
   if [[ "$RESULT" == *"|failed"* ]]; then
     echo "FAIL: restore job failed: $RESULT"
     exit 1
   fi
 done
-FINAL_STATUS=$(wpr eval "echo \WPGuard\NCBackup\Job_Store::get('$JOB_ID')['status'];")
+FINAL_STATUS=$(wpr eval "echo \WPThistle\BackupRestore\Job_Store::get('$JOB_ID')['status'];")
 [ "$FINAL_STATUS" = "verified" ] || { echo "FAIL: restore did not reach 'verified', got '$FINAL_STATUS'"; exit 1; }
 echo "OK  restore reached 'verified'"
 

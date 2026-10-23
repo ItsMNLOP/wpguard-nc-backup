@@ -1,7 +1,7 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Nextcloud_Client;
-use WPGuard\NCBackup\Logger;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Nextcloud_Client;
+use WPThistle\BackupRestore\Logger;
 
 /**
  * ADR 0010 (WebDAV chunking v2). Covers the purely algorithmic pieces

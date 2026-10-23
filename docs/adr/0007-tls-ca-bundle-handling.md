@@ -28,7 +28,7 @@ explicitly.
   default bundle. If unset (the common case — public Nextcloud instance,
   Let's Encrypt or similar), default verification against the system bundle
   applies, unchanged.
-- This setting can also be supplied via the `WPGUARD_NC_CA_BUNDLE` constant
+- This setting can also be supplied via the `WPTHISTLE_BACKUP_CA_BUNDLE` constant
   (see ADR 0002), taking precedence over the stored option, for operators who
   don't want even a filesystem path sitting in the database.
 - The admin UI documents, next to this field, that pointing it at a CA you do
@@ -40,7 +40,7 @@ explicitly.
 
 - Local integration tests exercise exactly this path: a disposable CA is
   generated for the test Nextcloud container, and the test harness sets
-  `WPGUARD_NC_CA_BUNDLE` in the test WordPress container's `wp-config.php` —
+  `WPTHISTLE_BACKUP_CA_BUNDLE` in the test WordPress container's `wp-config.php` —
   the same code path a self-hosted-with-private-CA admin would use in
   production. No test-only TLS bypass exists anywhere in the codebase.
 - A misconfigured CA bundle path fails closed (request errors out, reported

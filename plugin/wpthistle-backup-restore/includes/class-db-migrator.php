@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -91,7 +91,7 @@ class DB_Migrator {
 			// output in every one of those shapes.
 			if ( '' !== $pair[0] && ( 0 === strpos( $pair[1], $pair[0] . '/' ) || 0 === strpos( $pair[1], $pair[0] . '?' ) ) ) {
 				return new \WP_Error(
-					'wpguard_nc_migrate_unsafe_pair',
+					'wpthistle_backup_migrate_unsafe_pair',
 					"Migrating to {$pair[1]} from {$pair[0]} would extend the old URL with a path this replacement can't safely repeat if a restore batch is ever retried (e.g. moving into a subdirectory). Refusing to migrate URLs for this restore rather than risk corrupting them on a retry."
 				);
 			}
@@ -364,7 +364,7 @@ class DB_Migrator {
 			// into a real circular or deeply-shared reference) must
 			// unwind all the way back to the original raw bytes rather
 			// than returning a partially-rebuilt structure from here.
-			throw new \RuntimeException( 'wpguard_nc_migrate_recursion_depth_exceeded' );
+			throw new \RuntimeException( 'wpthistle_backup_migrate_recursion_depth_exceeded' );
 		}
 		if ( is_array( $data ) || is_object( $data ) ) {
 			// Security audit MEDIUM-DAG-1: counts actual node visits,
@@ -374,7 +374,7 @@ class DB_Migrator {
 			// doubling total work at every level of sharing. Same
 			// throw/catch-at-depth-0 unwind as the depth cap above.
 			if ( --self::$node_budget <= 0 ) {
-				throw new \RuntimeException( 'wpguard_nc_migrate_recursion_depth_exceeded' );
+				throw new \RuntimeException( 'wpthistle_backup_migrate_recursion_depth_exceeded' );
 			}
 		}
 		if ( is_string( $data ) ) {

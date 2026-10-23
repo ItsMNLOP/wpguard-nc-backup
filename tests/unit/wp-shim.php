@@ -9,17 +9,17 @@
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }
-if ( ! defined( 'WPGUARD_NC_DIR' ) ) {
-	define( 'WPGUARD_NC_DIR', ABSPATH . 'wp-content/plugins/wpguard-nc-backup/' );
+if ( ! defined( 'WPTHISTLE_BACKUP_DIR' ) ) {
+	define( 'WPTHISTLE_BACKUP_DIR', ABSPATH . 'wp-content/plugins/wpthistle-backup-restore/' );
 }
 if ( ! defined( 'WP_CONTENT_DIR' ) ) {
 	define( 'WP_CONTENT_DIR', ABSPATH . 'wp-content' );
 }
-if ( ! defined( 'WPGUARD_NC_FORMAT_VERSION' ) ) {
-	define( 'WPGUARD_NC_FORMAT_VERSION', 2 );
+if ( ! defined( 'WPTHISTLE_BACKUP_FORMAT_VERSION' ) ) {
+	define( 'WPTHISTLE_BACKUP_FORMAT_VERSION', 2 );
 }
-if ( ! defined( 'WPGUARD_NC_VERSION' ) ) {
-	define( 'WPGUARD_NC_VERSION', '1.0.0' );
+if ( ! defined( 'WPTHISTLE_BACKUP_VERSION' ) ) {
+	define( 'WPTHISTLE_BACKUP_VERSION', '1.0.0' );
 }
 if ( ! defined( 'HOUR_IN_SECONDS' ) ) {
 	define( 'HOUR_IN_SECONDS', 3600 );

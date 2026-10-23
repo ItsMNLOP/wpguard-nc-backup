@@ -42,12 +42,12 @@ wp_restore() {
 echo "=== Step 1: three successive backups ==="
 for i in 1 2 3; do
   echo "--- backup run $i ---"
-  wp_source wpguard-nc-backup run
+  wp_source wpthistle-backup-restore run
 done
 
 echo "=== Step 2: locate latest verified backup, fetch via independent client, verify hashes ==="
-BACKUP_ID=$(wp_source wpguard-nc-backup status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
-SITE_ID=$(wp_source eval 'echo \WPGuard\NCBackup\Settings::get_site_id();')
+BACKUP_ID=$(wp_source wpthistle-backup-restore status | python3 -c "import sys,json; print(json.load(sys.stdin)['backup_id'])")
+SITE_ID=$(wp_source eval 'echo \WPThistle\BackupRestore\Settings::get_site_id();')
 echo "backup_id=$BACKUP_ID site_id=$SITE_ID"
 
 APP_PASSWORD=$(curl -sk --cacert certs/wpguard-test-ca.crt -u "$NC_BACKUP_USER:$NC_BACKUP_USER_PASSWORD" \
@@ -130,7 +130,7 @@ ACTIVE_THEME=$(wp_restore "$TABLE_PREFIX" theme list --status=active --field=nam
 echo "OK  active theme restored: $ACTIVE_THEME"
 
 echo "=== Step 5: credential-leak check ==="
-STORED_PW=$(wp_source option get wpguard_nc_settings --format=json | python3 -c "import sys,json;print(json.load(sys.stdin)['app_password'])")
+STORED_PW=$(wp_source option get wpthistle_backup_settings --format=json | python3 -c "import sys,json;print(json.load(sys.stdin)['app_password'])")
 if grep -q "$STORED_PW" "$SCRATCH/database.sql"; then
   echo "FAIL: app password found in SQL dump"; exit 1
 fi

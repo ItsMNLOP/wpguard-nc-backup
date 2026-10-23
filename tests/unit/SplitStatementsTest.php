@@ -1,6 +1,6 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\DB_Exporter;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\DB_Exporter;
 
 // Phase 2 (one-click restore). $wpdb->query() runs exactly one
 // statement per call, so the restore DB-apply step must split a dump

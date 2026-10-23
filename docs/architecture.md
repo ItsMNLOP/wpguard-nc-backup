@@ -19,7 +19,7 @@ includes/
                              class that knows WebDAV URL shapes (MNT-03).
   class-job-orchestrator.php Job state machine: create/advance/get-status.
                              Persists checkpoints to a custom table
-                             (wp_wpguard_nc_jobs) - see ADR below in this file.
+                             (wp_wpthistle_backup_jobs) - see ADR below in this file.
   class-inventory.php        Enumerate files under ABSPATH per inclusion/
                              exclusion rules; symlink policy (never follow
                              outside site root).
@@ -40,23 +40,23 @@ includes/
 
 **Decision (recorded here, not a separate ADR file since it's a single
 clear call with no real alternative debate):** job state lives in a small
-custom table `{$prefix}wpguard_nc_jobs` (job_id, status, step, checkpoint
+custom table `{$prefix}wpthistle_backup_jobs` (job_id, status, step, checkpoint
 JSON, created_at, updated_at), not `wp_options`. Rationale: a job's
 checkpoint JSON can grow (file lists, part hashes) and churns on every
 step; options table autoload/serialization overhead and the lack of an
 indexed-by-job-id lookup make a dedicated table a better fit, and WordPress
 explicitly supports custom tables via `dbDelta()` for exactly this shape of
 data. The table is created/upgraded in the plugin's activation hook via
-`dbDelta()`, versioned via a stored `wpguard_nc_db_schema_version` option
+`dbDelta()`, versioned via a stored `wpthistle_backup_db_schema_version` option
 (MNT-05 migration hook point for later).
 
 ## Request flow — manual backup
 
 1. Admin clicks "Back Up Now" on the settings page.
-2. JS posts `wpguard_nc_start_backup` AJAX action (nonce + capability
+2. JS posts `wpthistle_backup_start_backup` AJAX action (nonce + capability
    checked server-side) -> `Job_Orchestrator::create_job()` inserts a job
    row, status `queued`, returns `job_id`.
-3. JS immediately posts `wpguard_nc_advance_job` with that `job_id`
+3. JS immediately posts `wpthistle_backup_advance_job` with that `job_id`
    (nonce+capability checked again — every step, not just job creation).
    Each call processes one bounded unit (one DB batch, one file enumerated,
    one part uploaded+verified) and returns updated status/progress; JS
@@ -67,7 +67,7 @@ data. The table is created/upgraded in the plugin's activation hook via
 5. On terminal state, the job row's final status and any sanitized error
    is what the admin page and `docs/operations.md`-described log reflect.
 
-WP-CLI (`wp wpguard-nc-backup run`) calls the same `create_job`/`advance`
+WP-CLI (`wp wpthistle-backup-restore run`) calls the same `create_job`/`advance`
 functions synchronously in a loop until terminal, for deterministic
 scripting/testing — no AJAX, no cron, no timing dependency.
 
@@ -80,4 +80,4 @@ hand-written, unit-tested code small enough to review in full. MNT-12
 supported WordPress/PHP APIs when sufficient") is read here as: for MVP,
 sufficient. PHPCS/PHPStan/PHPUnit are **dev-only** tooling, never shipped in
 the release ZIP (enforced by the packaging script, `docker/scripts/package.ps1`,
-which copies only `plugin/wpguard-nc-backup/` contents).
+which copies only `plugin/wpthistle-backup-restore/` contents).

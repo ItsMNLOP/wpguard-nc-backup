@@ -1,14 +1,14 @@
 <?php
-namespace WPGuard\NCBackup\Tests;
-use WPGuard\NCBackup\Manifest;
+namespace WPThistle\BackupRestore\Tests;
+use WPThistle\BackupRestore\Manifest;
 
 function test_accepts_current_format_version() {
-	$result = Manifest::validate_format_version( array( 'format_version' => \WPGUARD_NC_FORMAT_VERSION ) );
+	$result = Manifest::validate_format_version( array( 'format_version' => \WPTHISTLE_BACKUP_FORMAT_VERSION ) );
 	wpguard_assert( true === $result, 'current format_version must validate' );
 }
 
 function test_rejects_future_format_version() {
-	$result = Manifest::validate_format_version( array( 'format_version' => \WPGUARD_NC_FORMAT_VERSION + 1 ) );
+	$result = Manifest::validate_format_version( array( 'format_version' => \WPTHISTLE_BACKUP_FORMAT_VERSION + 1 ) );
 	wpguard_assert( is_string( $result ), 'a newer-than-supported format_version must be rejected, not guessed at' );
 }
 

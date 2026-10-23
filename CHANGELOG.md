@@ -2,6 +2,88 @@
 
 All notable changes to this project are documented here.
 
+## [2.0.0] — 2026-10-23 — Rename: WPGuard Nextcloud Backup -> WPThistle Backup and Restore
+
+### Changed
+- **Full rename, slug and all.** "WPGuard" turned out to collide with an
+  active, incorporated company selling WordPress security/backup
+  services under essentially the same name (wpguard.ai) -- found while
+  checking the name before building out more WPGuard-family plugins, as
+  the project was about to broaden beyond backups into things that have
+  nothing to do with "guarding." New plugin slug/folder/main file:
+  `wpthistle-backup-restore`. New PHP namespace: `WPThistle\BackupRestore`
+  (was `WPGuard\NCBackup`). New GitHub repo:
+  `ItsMNLOP/wpthistle-backup-restore` (renamed in place via
+  `gh repo rename`, so the old URL still redirects). New WP-CLI command
+  name, admin menu slugs, nonce/AJAX action names, cron hook names, and
+  the `wpthistle_family_status_cards` filter (zero consumers before this,
+  so free to rename). Display name: "WPThistle Backup and Restore".
+- **Breaking from WordPress's point of view, migrated under the hood.**
+  A new plugin slug means WordPress treats this as a different plugin
+  from "WPGuard Nextcloud Backup" -- the two cannot run side by side
+  (they'd fight over the same remote folder, site_id, and jobs table).
+  `activate()` now runs `migrate_from_legacy_wpguard()` first: if this
+  plugin's own settings option is absent but the old plugin's is
+  present, it copies settings/site_id/schema-version/chain-state/
+  retention-error-flag to the new option keys and renames the old jobs
+  table (`{prefix}wpguard_nc_jobs` -> `{prefix}wpthistle_backup_jobs`)
+  rather than losing backup/incremental-chain history. Non-destructive:
+  nothing under the old names is deleted (that only happens if the old
+  plugin is itself uninstalled via its own `uninstall.php`, untouched by
+  this). Safe cutover order: deactivate the old plugin, activate this
+  one, verify, then delete the old plugin's files.
+- **Backward-compatible wp-config.php constants.** `WPGUARD_NC_APP_PASSWORD`
+  and `WPGUARD_NC_CA_BUNDLE` still work as a fallback if a site's
+  wp-config.php hasn't been updated to the new constant names yet.
+- **A cross-version restore stays self-consistent.** A backup taken
+  under the old plugin has the old slug in its own `active_plugins`
+  snapshot; restoring it post-rename now ensures this plugin's own
+  current basename is present afterward too (merged in, not replacing
+  whatever else that backup legitimately had active), so restoring an
+  old backup can't silently leave this plugin deactivated.
+- Found and fixed along the way, unrelated to the rename itself but
+  uncovered while rehearsing it: every `wp_source()` E2E test helper
+  (local scripts and CI alike) built its wpcli container without
+  `WORDPRESS_TABLE_PREFIX`, silently defaulting to `wp_` while the real
+  apache container read the deliberately-different `wps_` from `.env` --
+  meaning the apache/browser path had been unreachable over real HTTP
+  all along, every prior E2E proof having gone through wpcli only. Fixed
+  in both places; full `run-e2e.sh` drill re-run green with the correct
+  prefix recorded in the manifest.
+
+### Fixed
+- **Pre-existing credential leak, not caused by the rename**: a restore
+  job's own checkpoint legitimately holds the real app password/app
+  token (needed to re-apply settings after the DB swap), and the jobs
+  table was never excluded from a backup's own SQL export -- only the
+  settings option row was. Any site that ever ran a one-click restore
+  had that credential sitting in plaintext in every `database.sql.gz`
+  taken afterward. Fixed by excluding the jobs table from export
+  entirely, symmetric with restore already never importing it.
+  **If this plugin's real app password/token was ever present in a
+  backup taken after a restore, rotate it.**
+- The never-touched-path restore protection, the wp-config.php
+  credential redaction, and the jobs-table import-skip all only ever
+  recognized the *current* plugin directory/constant names/table
+  suffix -- each silently failed to protect the equivalent *legacy*
+  (pre-rename) name. Fixed all three: restoring an old backup no
+  longer tries to resurrect the old plugin's files, a legacy
+  `WPGUARD_NC_APP_PASSWORD`/`WPGUARD_NC_CA_BUNDLE` constant redacts
+  correctly in an archived wp-config.php, and an old backup's own
+  `wpguard_nc_jobs` table is skipped on import, not resurrected.
+- `active_plugins` now correctly keeps this plugin's own current
+  basename active after restoring any backup, including one taken
+  under the old plugin -- previously, that case silently dropped this
+  plugin out of `active_plugins` after a successful restore.
+- Several E2E scripts hard-coded a `wp_` table prefix for wp-source's
+  own jobs table instead of the stack's actual `wps_` -- silent no-ops
+  behind `|| true`, caught once the full 16-suite regression was
+  re-run rather than by any single script on its own.
+
+See `STATUS.md` for the full narrative (why the name had to change, what
+was checked, the security audit of the migration path) and
+`docs/releasing.md` for the exact cutover steps.
+
 ## [1.4.0] — 2026-10-23 — Phase 2 (final item): WebDAV chunking v2
 
 ### Added

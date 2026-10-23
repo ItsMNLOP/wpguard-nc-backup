@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -12,7 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Admin {
 
-	const NONCE_ACTION = 'wpguard_nc_admin';
+	const NONCE_ACTION = 'wpthistle_backup_admin';
 
 	/**
 	 * Phase 3, security audit finding LOW-DL-4: the download link previously reused
@@ -24,28 +24,28 @@ class Admin {
 	 * A nonce alone (without the session cookie) can't perform any
 	 * privileged action, but least-privilege nonce scoping is cheap here.
 	 */
-	const NONCE_ACTION_DOWNLOAD = 'wpguard_nc_download_bundle';
+	const NONCE_ACTION_DOWNLOAD = 'wpthistle_backup_download_bundle';
 
 	/**
-	 * Shared top-level menu slug for the whole WPGuard plugin family, not
-	 * just this plugin. Every WPGuard plugin's admin.php should carry an
+	 * Shared top-level menu slug for the whole WPThistle plugin family, not
+	 * just this plugin. Every WPThistle plugin's admin.php should carry an
 	 * identical copy of add_menu() below: whichever plugin's admin_menu
-	 * callback runs first creates the 'WPGuard' parent (and immediately
+	 * callback runs first creates the 'WPThistle' parent (and immediately
 	 * removes the duplicate landing submenu WP auto-adds under it, since
-	 * no plugin owns a real page there), and every other WPGuard plugin
+	 * no plugin owns a real page there), and every other WPThistle plugin
 	 * just finds it already in $menu and adds its own submenu under it.
 	 * No shared code loads across plugin boundaries -- this is the same
 	 * "copy the idempotent snippet, let whichever loads first win"
 	 * pattern WP libraries like Action Scheduler use, since separate
 	 * plugin zips can't literally share a PHP class.
 	 */
-	const FAMILY_PARENT_SLUG = 'wpguard';
+	const FAMILY_PARENT_SLUG = 'wpthistle';
 
 	/**
-	 * Phase 4 (family hub landing page): the contract any WPGuard-family
+	 * Phase 4 (family hub landing page): the contract any WPThistle-family
 	 * plugin hooks into to appear on the shared parent page's status
 	 * grid. A card is a plain associative array:
-	 *   slug         string  unique across the family (this plugin's: 'nc-backup')
+	 *   slug         string  unique across the family (this plugin's: 'backup-restore')
 	 *   title        string  plain text, no markup
 	 *   icon         string  a 'dashicons-*' class name
 	 *   status_class string  one of 'ok' | 'warn' | 'error' | 'neutral'
@@ -54,31 +54,31 @@ class Admin {
 	 *   url          string  this plugin's own settings page URL
 	 * Every field is treated as plain text and escaped on render
 	 * (esc_html/esc_url/a dashicons-class allowlist) -- a sibling
-	 * WPGuard plugin's bug is still foreign input to this one once it
+	 * WPThistle plugin's bug is still foreign input to this one once it
 	 * crosses the filter, same as any other untrusted string this
 	 * codebase renders.
 	 */
-	const STATUS_CARDS_FILTER = 'wpguard_family_status_cards';
+	const STATUS_CARDS_FILTER = 'wpthistle_family_status_cards';
 
 	public function register(): void {
 		add_action( 'admin_menu', array( $this, 'add_menu' ) );
 		add_filter( self::STATUS_CARDS_FILTER, array( $this, 'add_own_status_card' ) );
-		add_action( 'wp_ajax_wpguard_nc_save_settings', array( $this, 'ajax_save_settings' ) );
-		add_action( 'wp_ajax_wpguard_nc_test_connection', array( $this, 'ajax_test_connection' ) );
-		add_action( 'wp_ajax_wpguard_nc_start_backup', array( $this, 'ajax_start_backup' ) );
-		add_action( 'wp_ajax_wpguard_nc_advance_job', array( $this, 'ajax_advance_job' ) );
-		add_action( 'wp_ajax_wpguard_nc_job_status', array( $this, 'ajax_job_status' ) );
-		add_action( 'wp_ajax_wpguard_nc_cancel_job', array( $this, 'ajax_cancel_job' ) );
-		add_action( 'wp_ajax_wpguard_nc_list_restorable_backups', array( $this, 'ajax_list_restorable_backups' ) );
-		add_action( 'wp_ajax_wpguard_nc_upload_restore_bundle', array( $this, 'ajax_upload_restore_bundle' ) );
-		add_action( 'wp_ajax_wpguard_nc_start_restore', array( $this, 'ajax_start_restore' ) );
+		add_action( 'wp_ajax_wpthistle_backup_save_settings', array( $this, 'ajax_save_settings' ) );
+		add_action( 'wp_ajax_wpthistle_backup_test_connection', array( $this, 'ajax_test_connection' ) );
+		add_action( 'wp_ajax_wpthistle_backup_start_backup', array( $this, 'ajax_start_backup' ) );
+		add_action( 'wp_ajax_wpthistle_backup_advance_job', array( $this, 'ajax_advance_job' ) );
+		add_action( 'wp_ajax_wpthistle_backup_job_status', array( $this, 'ajax_job_status' ) );
+		add_action( 'wp_ajax_wpthistle_backup_cancel_job', array( $this, 'ajax_cancel_job' ) );
+		add_action( 'wp_ajax_wpthistle_backup_list_restorable_backups', array( $this, 'ajax_list_restorable_backups' ) );
+		add_action( 'wp_ajax_wpthistle_backup_upload_restore_bundle', array( $this, 'ajax_upload_restore_bundle' ) );
+		add_action( 'wp_ajax_wpthistle_backup_start_restore', array( $this, 'ajax_start_restore' ) );
 		// Phase 3 (downloadable backups): a navigable GET, not AJAX --
 		// fetch() would buffer the whole zip in browser memory before
 		// handing it to the user, a real problem for a full-site backup.
 		// The priv-only admin_post_ hook refuses an unauthenticated request
 		// before this callback is even reached.
-		add_action( 'admin_post_wpguard_nc_download_bundle', array( $this, 'handle_download_bundle' ) );
-		add_action( 'wp_ajax_wpguard_nc_delete_download_bundle', array( $this, 'ajax_delete_download_bundle' ) );
+		add_action( 'admin_post_wpthistle_backup_download_bundle', array( $this, 'handle_download_bundle' ) );
+		add_action( 'wp_ajax_wpthistle_backup_delete_download_bundle', array( $this, 'ajax_delete_download_bundle' ) );
 	}
 
 	public function add_menu(): void {
@@ -92,14 +92,14 @@ class Admin {
 		}
 		if ( ! $parent_exists ) {
 			add_menu_page(
-				__( 'WPGuard', 'wpguard-nc-backup' ),
-				__( 'WPGuard', 'wpguard-nc-backup' ),
+				__( 'WPThistle', 'wpthistle-backup-restore' ),
+				__( 'WPThistle', 'wpthistle-backup-restore' ),
 				'manage_options',
 				self::FAMILY_PARENT_SLUG,
 				// Phase 4: this used to be '' (no callback), so clicking the
 				// parent menu item itself 404'd -- WP only auto-adds a
 				// submenu matching the parent slug for a landing page, and
-				// nothing rendered one. Whichever WPGuard plugin's
+				// nothing rendered one. Whichever WPThistle plugin's
 				// admin_menu callback runs first now owns the real family
 				// hub page instead of a dead link, same "first one wins"
 				// rule already governing who creates the parent at all.
@@ -114,17 +114,17 @@ class Admin {
 		}
 		add_submenu_page(
 			self::FAMILY_PARENT_SLUG,
-			__( 'WPGuard Backup and Restore', 'wpguard-nc-backup' ),
-			__( 'Backup and Restore', 'wpguard-nc-backup' ),
+			__( 'WPThistle Backup and Restore', 'wpthistle-backup-restore' ),
+			__( 'Backup and Restore', 'wpthistle-backup-restore' ),
 			'manage_options',
-			'wpguard-nc-backup',
+			'wpthistle-backup-restore',
 			array( $this, 'render_page' )
 		);
 	}
 
 	/**
-	 * The family hub landing page (top-level "WPGuard" click target).
-	 * Renders a status card per installed WPGuard plugin, gathered via
+	 * The family hub landing page (top-level "WPThistle" click target).
+	 * Renders a status card per installed WPThistle plugin, gathered via
 	 * self::STATUS_CARDS_FILTER -- see that constant's docblock for the
 	 * card contract. Every field from a card is treated as untrusted
 	 * plain text regardless of origin (this plugin's own card included),
@@ -137,11 +137,11 @@ class Admin {
 		$cards = apply_filters( self::STATUS_CARDS_FILTER, array() );
 		?>
 		<div class="wrap">
-			<h1><?php esc_html_e( 'WPGuard', 'wpguard-nc-backup' ); ?></h1>
-			<p><?php esc_html_e( 'A home base for every WPGuard plugin on this site. Each one below reports its own status; open a card to manage that plugin.', 'wpguard-nc-backup' ); ?></p>
+			<h1><?php esc_html_e( 'WPThistle', 'wpthistle-backup-restore' ); ?></h1>
+			<p><?php esc_html_e( 'A home base for every WPThistle plugin on this site. Each one below reports its own status; open a card to manage that plugin.', 'wpthistle-backup-restore' ); ?></p>
 
 			<?php if ( empty( $cards ) ) : ?>
-				<p><em><?php esc_html_e( 'No WPGuard plugins reported a status card.', 'wpguard-nc-backup' ); ?></em></p>
+				<p><em><?php esc_html_e( 'No WPThistle plugins reported a status card.', 'wpthistle-backup-restore' ); ?></em></p>
 			<?php else : ?>
 				<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:16px;">
 					<?php foreach ( $cards as $card ) : ?>
@@ -150,7 +150,7 @@ class Admin {
 							$card,
 							array(
 								'slug'         => '',
-								'title'        => __( '(untitled)', 'wpguard-nc-backup' ),
+								'title'        => __( '(untitled)', 'wpthistle-backup-restore' ),
 								'icon'         => 'dashicons-admin-generic',
 								'status_class' => 'neutral',
 								'status_label' => '',
@@ -195,16 +195,16 @@ class Admin {
 	 * last success.
 	 */
 	public function add_own_status_card( array $cards ): array {
-		$url = admin_url( 'admin.php?page=wpguard-nc-backup' );
+		$url = admin_url( 'admin.php?page=wpthistle-backup-restore' );
 
 		if ( ! Settings::has_credentials() ) {
 			$cards[] = array(
-				'slug'         => 'nc-backup',
-				'title'        => __( 'Backup and Restore', 'wpguard-nc-backup' ),
+				'slug'         => 'backup-restore',
+				'title'        => __( 'Backup and Restore', 'wpthistle-backup-restore' ),
 				'icon'         => 'dashicons-cloud-upload',
 				'status_class' => 'neutral',
-				'status_label' => __( 'Not configured', 'wpguard-nc-backup' ),
-				'detail'       => __( 'Connect a Nextcloud, ownCloud, or OpenCloud server to start backing up.', 'wpguard-nc-backup' ),
+				'status_label' => __( 'Not configured', 'wpthistle-backup-restore' ),
+				'detail'       => __( 'Connect a Nextcloud, ownCloud, or OpenCloud server to start backing up.', 'wpthistle-backup-restore' ),
 				'url'          => $url,
 			);
 			return $cards;
@@ -213,34 +213,34 @@ class Admin {
 		$latest = Job_Store::get_latest();
 		if ( null === $latest ) {
 			$cards[] = array(
-				'slug'         => 'nc-backup',
-				'title'        => __( 'Backup and Restore', 'wpguard-nc-backup' ),
+				'slug'         => 'backup-restore',
+				'title'        => __( 'Backup and Restore', 'wpthistle-backup-restore' ),
 				'icon'         => 'dashicons-cloud-upload',
 				'status_class' => 'warn',
-				'status_label' => __( 'No backup yet', 'wpguard-nc-backup' ),
-				'detail'       => __( 'Configured -- run your first backup.', 'wpguard-nc-backup' ),
+				'status_label' => __( 'No backup yet', 'wpthistle-backup-restore' ),
+				'detail'       => __( 'Configured -- run your first backup.', 'wpthistle-backup-restore' ),
 				'url'          => $url,
 			);
 			return $cards;
 		}
 
 		$status_map = array(
-			'verified'           => array( 'ok', __( 'Backup verified', 'wpguard-nc-backup' ) ),
-			'failed'             => array( 'error', __( 'Last backup failed', 'wpguard-nc-backup' ) ),
-			'uploaded-unverified' => array( 'warn', __( 'Backup in progress', 'wpguard-nc-backup' ) ),
-			'running'            => array( 'warn', __( 'Backup in progress', 'wpguard-nc-backup' ) ),
-			'queued'             => array( 'warn', __( 'Backup in progress', 'wpguard-nc-backup' ) ),
+			'verified'           => array( 'ok', __( 'Backup verified', 'wpthistle-backup-restore' ) ),
+			'failed'             => array( 'error', __( 'Last backup failed', 'wpthistle-backup-restore' ) ),
+			'uploaded-unverified' => array( 'warn', __( 'Backup in progress', 'wpthistle-backup-restore' ) ),
+			'running'            => array( 'warn', __( 'Backup in progress', 'wpthistle-backup-restore' ) ),
+			'queued'             => array( 'warn', __( 'Backup in progress', 'wpthistle-backup-restore' ) ),
 		);
-		list( $status_class, $status_label ) = $status_map[ $latest['status'] ] ?? array( 'neutral', __( 'Unknown status', 'wpguard-nc-backup' ) );
+		list( $status_class, $status_label ) = $status_map[ $latest['status'] ] ?? array( 'neutral', __( 'Unknown status', 'wpthistle-backup-restore' ) );
 
 		$cards[] = array(
-			'slug'         => 'nc-backup',
-			'title'        => __( 'Backup and Restore', 'wpguard-nc-backup' ),
+			'slug'         => 'backup-restore',
+			'title'        => __( 'Backup and Restore', 'wpthistle-backup-restore' ),
 			'icon'         => 'dashicons-cloud-upload',
 			'status_class' => $status_class,
 			'status_label' => $status_label,
 			/* translators: %s: human-readable time difference, e.g. "2 hours". */
-			'detail'       => sprintf( __( '%s ago', 'wpguard-nc-backup' ), human_time_diff( strtotime( $latest['updated_at'] . ' UTC' ) ) ),
+			'detail'       => sprintf( __( '%s ago', 'wpthistle-backup-restore' ), human_time_diff( strtotime( $latest['updated_at'] . ' UTC' ) ) ),
 			'url'          => $url,
 		);
 		return $cards;
@@ -248,12 +248,12 @@ class Admin {
 
 	private function require_capability_and_nonce(): bool {
 		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( array( 'message' => __( 'You do not have permission to do this.', 'wpguard-nc-backup' ) ), 403 );
+			wp_send_json_error( array( 'message' => __( 'You do not have permission to do this.', 'wpthistle-backup-restore' ) ), 403 );
 			return false;
 		}
 		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
 		if ( ! wp_verify_nonce( $nonce, self::NONCE_ACTION ) ) {
-			wp_send_json_error( array( 'message' => __( 'Security check failed; please reload the page.', 'wpguard-nc-backup' ) ), 403 );
+			wp_send_json_error( array( 'message' => __( 'Security check failed; please reload the page.', 'wpthistle-backup-restore' ) ), 403 );
 			return false;
 		}
 		return true;
@@ -279,9 +279,9 @@ class Admin {
 			// Phase 2 (scheduling): apply a schedule change immediately
 			// rather than waiting for the next page load to reconcile it.
 			sync_scheduled_backup();
-			wp_send_json_success( array( 'message' => __( 'Settings saved.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_success( array( 'message' => __( 'Settings saved.', 'wpthistle-backup-restore' ) ) );
 		} else {
-			wp_send_json_error( array( 'message' => __( 'Please fix the errors below.', 'wpguard-nc-backup' ), 'errors' => $result['errors'] ) );
+			wp_send_json_error( array( 'message' => __( 'Please fix the errors below.', 'wpthistle-backup-restore' ), 'errors' => $result['errors'] ) );
 		}
 	}
 
@@ -290,7 +290,7 @@ class Admin {
 			return;
 		}
 		if ( ! Settings::has_credentials() ) {
-			wp_send_json_error( array( 'message' => __( 'Enter and save the server URL, username, and app password / app token first.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Enter and save the server URL, username, and app password / app token first.', 'wpthistle-backup-restore' ) ) );
 			return;
 		}
 		$logger = new Logger( array( Settings::get_app_password() ) );
@@ -316,15 +316,15 @@ class Admin {
 			$destination = 'nextcloud';
 		}
 		if ( 'nextcloud' === $destination && ! Settings::has_credentials() ) {
-			wp_send_json_error( array( 'message' => __( 'Configure and save your cloud storage destination before backing up to it, or use Download Now instead.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Configure and save your cloud storage destination before backing up to it, or use Download Now instead.', 'wpthistle-backup-restore' ) ) );
 			return;
 		}
 		$job_id = Job_Orchestrator::create_job( $destination );
 		if ( '' === $job_id ) {
-			wp_send_json_error( array( 'message' => __( 'A backup is already running.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'A backup is already running.', 'wpthistle-backup-restore' ) ) );
 			return;
 		}
-		wp_schedule_single_event( time() + 5, 'wpguard_nc_cron_advance', array( $job_id ) );
+		wp_schedule_single_event( time() + 5, 'wpthistle_backup_cron_advance', array( $job_id ) );
 		wp_send_json_success( array( 'job_id' => $job_id ) );
 	}
 
@@ -342,16 +342,16 @@ class Admin {
 		// The check below is still real defense in depth for a logged-in
 		// user who lacks the capability.
 		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( esc_html__( 'You do not have permission to do this.', 'wpguard-nc-backup' ), '', array( 'response' => 403 ) );
+			wp_die( esc_html__( 'You do not have permission to do this.', 'wpthistle-backup-restore' ), '', array( 'response' => 403 ) );
 		}
 		$nonce = isset( $_GET['nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['nonce'] ) ) : '';
 		if ( ! wp_verify_nonce( $nonce, self::NONCE_ACTION_DOWNLOAD ) ) {
-			wp_die( esc_html__( 'Security check failed; please reload the page and try again.', 'wpguard-nc-backup' ), '', array( 'response' => 403 ) );
+			wp_die( esc_html__( 'Security check failed; please reload the page and try again.', 'wpthistle-backup-restore' ), '', array( 'response' => 403 ) );
 		}
 		$job_id = isset( $_GET['job_id'] ) ? sanitize_text_field( wp_unslash( $_GET['job_id'] ) ) : '';
 		$job = '' !== $job_id ? Job_Store::get( $job_id ) : null;
 		if ( null === $job || 'download' !== ( $job['destination'] ?? '' ) || 'verified' !== ( $job['status'] ?? '' ) ) {
-			wp_die( esc_html__( 'No downloadable backup is available for that job.', 'wpguard-nc-backup' ), '', array( 'response' => 404 ) );
+			wp_die( esc_html__( 'No downloadable backup is available for that job.', 'wpthistle-backup-restore' ), '', array( 'response' => 404 ) );
 		}
 
 		$token = $job['checkpoint']['download_token'] ?? '';
@@ -363,12 +363,12 @@ class Admin {
 		// resolved path still lands inside the one directory this
 		// endpoint is ever allowed to serve from before trusting it.
 		if ( false === $base || false === $real_dir || 0 !== strpos( $real_dir . DIRECTORY_SEPARATOR, $base . DIRECTORY_SEPARATOR ) ) {
-			wp_die( esc_html__( 'Downloadable backup could not be located.', 'wpguard-nc-backup' ), '', array( 'response' => 404 ) );
+			wp_die( esc_html__( 'Downloadable backup could not be located.', 'wpthistle-backup-restore' ), '', array( 'response' => 404 ) );
 		}
 		$bundle_path = $job['checkpoint']['download_bundle_path'] ?? '';
 		$real_bundle = '' !== $bundle_path ? realpath( $bundle_path ) : false;
 		if ( false === $real_bundle || 0 !== strpos( $real_bundle, $real_dir ) || ! is_file( $real_bundle ) ) {
-			wp_die( esc_html__( 'Downloadable backup file is missing -- it may have expired (pending bundles are removed after 24 hours). Run a new backup.', 'wpguard-nc-backup' ), '', array( 'response' => 404 ) );
+			wp_die( esc_html__( 'Downloadable backup file is missing -- it may have expired (pending bundles are removed after 24 hours). Run a new backup.', 'wpthistle-backup-restore' ), '', array( 'response' => 404 ) );
 		}
 
 		nocache_headers();
@@ -396,7 +396,7 @@ class Admin {
 			return;
 		}
 		Job_Orchestrator::sweep_download_bundles( true );
-		wp_send_json_success( array( 'message' => __( 'Local backup bundle deleted.', 'wpguard-nc-backup' ) ) );
+		wp_send_json_success( array( 'message' => __( 'Local backup bundle deleted.', 'wpthistle-backup-restore' ) ) );
 	}
 
 	/** Phase 2 (one-click restore): a job_id may belong to either orchestrator; dispatched by checkpoint kind. */
@@ -435,7 +435,7 @@ class Admin {
 		if ( '' === $job_id ) {
 			$latest = Job_Store::get_latest();
 			if ( null === $latest ) {
-				wp_send_json_error( array( 'message' => __( 'No backup job found to cancel.', 'wpguard-nc-backup' ) ) );
+				wp_send_json_error( array( 'message' => __( 'No backup job found to cancel.', 'wpthistle-backup-restore' ) ) );
 				return;
 			}
 			$job_id = $latest['job_id'];
@@ -449,7 +449,7 @@ class Admin {
 		if ( 'lock_contended' === ( $job['cancel_result'] ?? '' ) ) {
 			wp_send_json_error( array_merge(
 				$this->public_job_view( $job ),
-				array( 'message' => __( 'Job is actively being advanced right now (AJAX or WP-Cron) -- nothing was changed. Wait a moment and try Cancel again.', 'wpguard-nc-backup' ) )
+				array( 'message' => __( 'Job is actively being advanced right now (AJAX or WP-Cron) -- nothing was changed. Wait a moment and try Cancel again.', 'wpthistle-backup-restore' ) )
 			) );
 			return;
 		}
@@ -462,7 +462,7 @@ class Admin {
 			return;
 		}
 		if ( ! Settings::has_credentials() ) {
-			wp_send_json_error( array( 'message' => __( 'Configure and save your cloud storage destination first.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Configure and save your cloud storage destination first.', 'wpthistle-backup-restore' ) ) );
 			return;
 		}
 		$client = Nextcloud_Client::from_settings( new Logger( array( Settings::get_app_password() ) ) );
@@ -490,16 +490,16 @@ class Admin {
 			return;
 		}
 		if ( Job_Store::has_running_job() ) {
-			wp_send_json_error( array( 'message' => __( 'A backup or restore is already running.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'A backup or restore is already running.', 'wpthistle-backup-restore' ) ) );
 			return;
 		}
 		if ( empty( $_FILES['bundle'] ) || UPLOAD_ERR_OK !== ( $_FILES['bundle']['error'] ?? UPLOAD_ERR_NO_FILE ) ) {
-			wp_send_json_error( array( 'message' => __( 'No file was uploaded, or the upload failed.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'No file was uploaded, or the upload failed.', 'wpthistle-backup-restore' ) ) );
 			return;
 		}
 		$tmp_upload = $_FILES['bundle']['tmp_name'];
 		if ( ! is_uploaded_file( $tmp_upload ) ) {
-			wp_send_json_error( array( 'message' => __( 'Invalid upload.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Invalid upload.', 'wpthistle-backup-restore' ) ) );
 			return;
 		}
 
@@ -519,7 +519,7 @@ class Admin {
 		}
 
 		wp_send_json_success( array(
-			'message'      => __( 'Bundle uploaded and extracted; ready to verify.', 'wpguard-nc-backup' ),
+			'message'      => __( 'Bundle uploaded and extracted; ready to verify.', 'wpthistle-backup-restore' ),
 			'upload_token' => $token,
 		) );
 	}
@@ -536,20 +536,20 @@ class Admin {
 			$upload_token = isset( $_POST['upload_token'] ) ? sanitize_text_field( wp_unslash( $_POST['upload_token'] ) ) : '';
 			$holding = Restore_Orchestrator::upload_dir_for_token( $upload_token );
 			if ( '' === $holding || ! file_exists( $holding . 'manifest.json' ) ) {
-				wp_send_json_error( array( 'message' => __( 'Upload a backup bundle first.', 'wpguard-nc-backup' ) ) );
+				wp_send_json_error( array( 'message' => __( 'Upload a backup bundle first.', 'wpthistle-backup-restore' ) ) );
 				return;
 			}
 			$manifest = json_decode( (string) file_get_contents( $holding . 'manifest.json' ), true );
 			$backup_id = is_array( $manifest ) ? (string) ( $manifest['backup_id'] ?? '' ) : '';
 			if ( '' === $backup_id ) {
-				wp_send_json_error( array( 'message' => __( 'Uploaded bundle\'s manifest.json has no backup_id.', 'wpguard-nc-backup' ) ) );
+				wp_send_json_error( array( 'message' => __( 'Uploaded bundle\'s manifest.json has no backup_id.', 'wpthistle-backup-restore' ) ) );
 				return;
 			}
 			$source = array( 'type' => 'upload', 'upload_dir' => $holding );
 		} else {
 			$backup_id = isset( $_POST['backup_id'] ) ? sanitize_text_field( wp_unslash( $_POST['backup_id'] ) ) : '';
 			if ( '' === $backup_id ) {
-				wp_send_json_error( array( 'message' => __( 'Choose a backup to restore.', 'wpguard-nc-backup' ) ) );
+				wp_send_json_error( array( 'message' => __( 'Choose a backup to restore.', 'wpthistle-backup-restore' ) ) );
 				return;
 			}
 			$source = array( 'type' => 'nextcloud' );
@@ -557,13 +557,13 @@ class Admin {
 
 		$job_id = Restore_Orchestrator::create_restore_job( $source, $backup_id, $confirm );
 		if ( '' === $job_id ) {
-			wp_send_json_error( array( 'message' => __( 'A backup or restore is already running.', 'wpguard-nc-backup' ) ) );
+			wp_send_json_error( array( 'message' => __( 'A backup or restore is already running.', 'wpthistle-backup-restore' ) ) );
 			return;
 		}
 		// security audit finding HIGH-AJAX-1: backups get a WP-Cron fallback so a
 		// closed browser tab doesn't strand them; restore had none at
 		// all until now, the one place a stranded job matters most.
-		wp_schedule_single_event( time() + 5, 'wpguard_nc_cron_advance', array( $job_id ) );
+		wp_schedule_single_event( time() + 5, 'wpthistle_backup_cron_advance', array( $job_id ) );
 		wp_send_json_success( array( 'job_id' => $job_id ) );
 	}
 
@@ -611,138 +611,138 @@ class Admin {
 		$retention_error = get_option( Job_Orchestrator::RETENTION_ERROR_OPTION, '' );
 		?>
 		<div class="wrap">
-			<h1><?php esc_html_e( 'WPGuard Backup and Restore', 'wpguard-nc-backup' ); ?></h1>
+			<h1><?php esc_html_e( 'WPThistle Backup and Restore', 'wpthistle-backup-restore' ); ?></h1>
 
 			<?php if ( $retention_error ) : ?>
 				<div class="notice notice-warning">
-					<p><strong><?php esc_html_e( 'Retention pruning is not completing.', 'wpguard-nc-backup' ); ?></strong>
-					<?php esc_html_e( 'Old backups are NOT being deleted (nothing was deleted either, by design) until this is resolved:', 'wpguard-nc-backup' ); ?>
+					<p><strong><?php esc_html_e( 'Retention pruning is not completing.', 'wpthistle-backup-restore' ); ?></strong>
+					<?php esc_html_e( 'Old backups are NOT being deleted (nothing was deleted either, by design) until this is resolved:', 'wpthistle-backup-restore' ); ?>
 					<?php echo esc_html( $retention_error ); ?></p>
 				</div>
 			<?php endif; ?>
 
 			<?php if ( $latest_verified ) : ?>
-				<p><strong><?php esc_html_e( 'Last verified backup:', 'wpguard-nc-backup' ); ?></strong>
+				<p><strong><?php esc_html_e( 'Last verified backup:', 'wpthistle-backup-restore' ); ?></strong>
 				<?php echo esc_html( $latest_verified['backup_id'] . ' (' . $latest_verified['updated_at'] . ' UTC)' ); ?></p>
 			<?php else : ?>
-				<p><em><?php esc_html_e( 'No verified backup yet.', 'wpguard-nc-backup' ); ?></em></p>
+				<p><em><?php esc_html_e( 'No verified backup yet.', 'wpthistle-backup-restore' ); ?></em></p>
 			<?php endif; ?>
 
-			<h2><?php esc_html_e( 'Connection', 'wpguard-nc-backup' ); ?></h2>
+			<h2><?php esc_html_e( 'Connection', 'wpthistle-backup-restore' ); ?></h2>
 			<table class="form-table" role="presentation">
 				<tr>
-					<th><label for="wpguard_nc_backend"><?php esc_html_e( 'Cloud storage type', 'wpguard-nc-backup' ); ?></label></th>
+					<th><label for="wpthistle_backup_backend"><?php esc_html_e( 'Cloud storage type', 'wpthistle-backup-restore' ); ?></label></th>
 					<td>
-						<select id="wpguard_nc_backend">
-							<option value="nextcloud" <?php selected( $settings['backend'], 'nextcloud' ); ?>><?php esc_html_e( 'Nextcloud', 'wpguard-nc-backup' ); ?></option>
-							<option value="owncloud" <?php selected( $settings['backend'], 'owncloud' ); ?>><?php esc_html_e( 'ownCloud (classic, 10.x)', 'wpguard-nc-backup' ); ?></option>
-							<option value="opencloud" <?php selected( $settings['backend'], 'opencloud' ); ?>><?php esc_html_e( 'OpenCloud', 'wpguard-nc-backup' ); ?></option>
+						<select id="wpthistle_backup_backend">
+							<option value="nextcloud" <?php selected( $settings['backend'], 'nextcloud' ); ?>><?php esc_html_e( 'Nextcloud', 'wpthistle-backup-restore' ); ?></option>
+							<option value="owncloud" <?php selected( $settings['backend'], 'owncloud' ); ?>><?php esc_html_e( 'ownCloud (classic, 10.x)', 'wpthistle-backup-restore' ); ?></option>
+							<option value="opencloud" <?php selected( $settings['backend'], 'opencloud' ); ?>><?php esc_html_e( 'OpenCloud', 'wpthistle-backup-restore' ); ?></option>
 						</select>
-						<p class="description"><?php esc_html_e( 'All three speak the same WebDAV dialect this plugin uses, verified directly against each. The connection and every backup/restore step work identically regardless of which you pick -- this is for your own record (the credential field below already covers all three without needing to know which one is selected).', 'wpguard-nc-backup' ); ?></p>
+						<p class="description"><?php esc_html_e( 'All three speak the same WebDAV dialect this plugin uses, verified directly against each. The connection and every backup/restore step work identically regardless of which you pick -- this is for your own record (the credential field below already covers all three without needing to know which one is selected).', 'wpthistle-backup-restore' ); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_url"><?php esc_html_e( 'Server URL (https only)', 'wpguard-nc-backup' ); ?></label></th>
-					<td><input type="url" id="wpguard_nc_url" value="<?php echo esc_attr( $settings['nextcloud_url'] ); ?>" class="regular-text" placeholder="https://your-server.example.com"></td>
+					<th><label for="wpthistle_backup_url"><?php esc_html_e( 'Server URL (https only)', 'wpthistle-backup-restore' ); ?></label></th>
+					<td><input type="url" id="wpthistle_backup_url" value="<?php echo esc_attr( $settings['nextcloud_url'] ); ?>" class="regular-text" placeholder="https://your-server.example.com"></td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_user"><?php esc_html_e( 'Username (dedicated, non-admin account recommended)', 'wpguard-nc-backup' ); ?></label></th>
-					<td><input type="text" id="wpguard_nc_user" value="<?php echo esc_attr( $settings['nextcloud_user'] ); ?>" class="regular-text"></td>
+					<th><label for="wpthistle_backup_user"><?php esc_html_e( 'Username (dedicated, non-admin account recommended)', 'wpthistle-backup-restore' ); ?></label></th>
+					<td><input type="text" id="wpthistle_backup_user" value="<?php echo esc_attr( $settings['nextcloud_user'] ); ?>" class="regular-text"></td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_pw"><?php esc_html_e( 'App password / app token', 'wpguard-nc-backup' ); ?></label></th>
+					<th><label for="wpthistle_backup_pw"><?php esc_html_e( 'App password / app token', 'wpthistle-backup-restore' ); ?></label></th>
 					<td>
-						<input type="password" id="wpguard_nc_pw" value="" class="regular-text" autocomplete="new-password" <?php echo $locked_pw ? 'disabled' : ''; ?> placeholder="<?php echo esc_attr( $locked_pw ? __( 'Set via WPGUARD_NC_APP_PASSWORD constant', 'wpguard-nc-backup' ) : __( 'leave blank to keep current value', 'wpguard-nc-backup' ) ); ?>">
-						<p class="description"><?php esc_html_e( 'Never echoed back. Generate a dedicated app password (Nextcloud/ownCloud) or app token (OpenCloud) under your account\'s Security settings — do not use your main account password.', 'wpguard-nc-backup' ); ?></p>
+						<input type="password" id="wpthistle_backup_pw" value="" class="regular-text" autocomplete="new-password" <?php echo $locked_pw ? 'disabled' : ''; ?> placeholder="<?php echo esc_attr( $locked_pw ? __( 'Set via WPTHISTLE_BACKUP_APP_PASSWORD constant', 'wpthistle-backup-restore' ) : __( 'leave blank to keep current value', 'wpthistle-backup-restore' ) ); ?>">
+						<p class="description"><?php esc_html_e( 'Never echoed back. Generate a dedicated app password (Nextcloud/ownCloud) or app token (OpenCloud) under your account\'s Security settings — do not use your main account password.', 'wpthistle-backup-restore' ); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_folder"><?php esc_html_e( 'Destination folder', 'wpguard-nc-backup' ); ?></label></th>
-					<td><input type="text" id="wpguard_nc_folder" value="<?php echo esc_attr( $settings['remote_folder'] ); ?>" class="regular-text" placeholder="wpguard-backups"></td>
+					<th><label for="wpthistle_backup_folder"><?php esc_html_e( 'Destination folder', 'wpthistle-backup-restore' ); ?></label></th>
+					<td><input type="text" id="wpthistle_backup_folder" value="<?php echo esc_attr( $settings['remote_folder'] ); ?>" class="regular-text" placeholder="wpthistle-backups"></td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_ca"><?php esc_html_e( 'Custom CA bundle path (advanced, optional)', 'wpguard-nc-backup' ); ?></label></th>
+					<th><label for="wpthistle_backup_ca"><?php esc_html_e( 'Custom CA bundle path (advanced, optional)', 'wpthistle-backup-restore' ); ?></label></th>
 					<td>
-						<input type="text" id="wpguard_nc_ca" value="<?php echo esc_attr( $settings['ca_bundle_path'] ); ?>" class="regular-text" <?php echo $locked_ca ? 'disabled' : ''; ?> placeholder="/absolute/path/to/private-ca.pem">
-						<p class="description"><?php esc_html_e( 'Only for a private CA you operate (e.g. self-hosted Nextcloud). Leave blank for a normal publicly trusted certificate — this never weakens TLS verification, it only adds a trusted root.', 'wpguard-nc-backup' ); ?></p>
+						<input type="text" id="wpthistle_backup_ca" value="<?php echo esc_attr( $settings['ca_bundle_path'] ); ?>" class="regular-text" <?php echo $locked_ca ? 'disabled' : ''; ?> placeholder="/absolute/path/to/private-ca.pem">
+						<p class="description"><?php esc_html_e( 'Only for a private CA you operate (e.g. self-hosted Nextcloud). Leave blank for a normal publicly trusted certificate — this never weakens TLS verification, it only adds a trusted root.', 'wpthistle-backup-restore' ); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_schedule"><?php esc_html_e( 'Automatic backup schedule', 'wpguard-nc-backup' ); ?></label></th>
+					<th><label for="wpthistle_backup_schedule"><?php esc_html_e( 'Automatic backup schedule', 'wpthistle-backup-restore' ); ?></label></th>
 					<td>
-						<select id="wpguard_nc_schedule">
-							<option value="disabled" <?php selected( $settings['schedule'], 'disabled' ); ?>><?php esc_html_e( 'Disabled — manual only', 'wpguard-nc-backup' ); ?></option>
-							<option value="daily" <?php selected( $settings['schedule'], 'daily' ); ?>><?php esc_html_e( 'Daily', 'wpguard-nc-backup' ); ?></option>
-							<option value="weekly" <?php selected( $settings['schedule'], 'weekly' ); ?>><?php esc_html_e( 'Weekly', 'wpguard-nc-backup' ); ?></option>
+						<select id="wpthistle_backup_schedule">
+							<option value="disabled" <?php selected( $settings['schedule'], 'disabled' ); ?>><?php esc_html_e( 'Disabled — manual only', 'wpthistle-backup-restore' ); ?></option>
+							<option value="daily" <?php selected( $settings['schedule'], 'daily' ); ?>><?php esc_html_e( 'Daily', 'wpthistle-backup-restore' ); ?></option>
+							<option value="weekly" <?php selected( $settings['schedule'], 'weekly' ); ?>><?php esc_html_e( 'Weekly', 'wpthistle-backup-restore' ); ?></option>
 						</select>
-						<p class="description"><?php esc_html_e( 'Relies on WP-Cron, same as the manual backup fallback — only fires on site traffic (see Operations docs). Skips a run rather than overlapping if a backup is still genuinely in progress.', 'wpguard-nc-backup' ); ?></p>
+						<p class="description"><?php esc_html_e( 'Relies on WP-Cron, same as the manual backup fallback — only fires on site traffic (see Operations docs). Skips a run rather than overlapping if a backup is still genuinely in progress.', 'wpthistle-backup-restore' ); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_retention"><?php esc_html_e( 'Keep last N backups', 'wpguard-nc-backup' ); ?></label></th>
+					<th><label for="wpthistle_backup_retention"><?php esc_html_e( 'Keep last N backups', 'wpthistle-backup-restore' ); ?></label></th>
 					<td>
-						<input type="number" id="wpguard_nc_retention" min="0" step="1" value="<?php echo esc_attr( (string) $settings['retention_count'] ); ?>" class="small-text">
-						<p class="description"><?php esc_html_e( '0 = keep every backup forever (default). A positive number deletes the oldest backup folder(s) on Nextcloud right after each new backup verifies successfully, once more than that many exist. This permanently deletes data — only increase from 0 once you are comfortable with the number chosen.', 'wpguard-nc-backup' ); ?></p>
+						<input type="number" id="wpthistle_backup_retention" min="0" step="1" value="<?php echo esc_attr( (string) $settings['retention_count'] ); ?>" class="small-text">
+						<p class="description"><?php esc_html_e( '0 = keep every backup forever (default). A positive number deletes the oldest backup folder(s) on Nextcloud right after each new backup verifies successfully, once more than that many exist. This permanently deletes data — only increase from 0 once you are comfortable with the number chosen.', 'wpthistle-backup-restore' ); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_incremental"><?php esc_html_e( 'Incremental file backups', 'wpguard-nc-backup' ); ?></label></th>
+					<th><label for="wpthistle_backup_incremental"><?php esc_html_e( 'Incremental file backups', 'wpthistle-backup-restore' ); ?></label></th>
 					<td>
-						<label><input type="checkbox" id="wpguard_nc_incremental" <?php checked( $settings['incremental_enabled'] ); ?>> <?php esc_html_e( 'Skip re-uploading files unchanged since the last backup', 'wpguard-nc-backup' ); ?></label>
-						<p class="description"><?php esc_html_e( 'Off by default. When on, a file whose size and modified time match the previous backup is referenced instead of re-archived and re-uploaded — the usual speed-up on a site with many files. A full backup is still taken periodically (every 7 backups or 7 days, whichever comes first) regardless of this setting. Every individual backup remains independently verified before being marked complete; see Operations docs for how restore works with this on.', 'wpguard-nc-backup' ); ?></p>
+						<label><input type="checkbox" id="wpthistle_backup_incremental" <?php checked( $settings['incremental_enabled'] ); ?>> <?php esc_html_e( 'Skip re-uploading files unchanged since the last backup', 'wpthistle-backup-restore' ); ?></label>
+						<p class="description"><?php esc_html_e( 'Off by default. When on, a file whose size and modified time match the previous backup is referenced instead of re-archived and re-uploaded — the usual speed-up on a site with many files. A full backup is still taken periodically (every 7 backups or 7 days, whichever comes first) regardless of this setting. Every individual backup remains independently verified before being marked complete; see Operations docs for how restore works with this on.', 'wpthistle-backup-restore' ); ?></p>
 					</td>
 				</tr>
 			</table>
 			<p>
-				<button type="button" class="button button-primary" id="wpguard_nc_save"><?php esc_html_e( 'Save Settings', 'wpguard-nc-backup' ); ?></button>
-				<button type="button" class="button" id="wpguard_nc_test"><?php esc_html_e( 'Test Connection', 'wpguard-nc-backup' ); ?></button>
+				<button type="button" class="button button-primary" id="wpthistle_backup_save"><?php esc_html_e( 'Save Settings', 'wpthistle-backup-restore' ); ?></button>
+				<button type="button" class="button" id="wpthistle_backup_test"><?php esc_html_e( 'Test Connection', 'wpthistle-backup-restore' ); ?></button>
 			</p>
-			<div id="wpguard_nc_settings_result" role="status"></div>
+			<div id="wpthistle_backup_settings_result" role="status"></div>
 
-			<h2><?php esc_html_e( 'Manual backup', 'wpguard-nc-backup' ); ?></h2>
+			<h2><?php esc_html_e( 'Manual backup', 'wpthistle-backup-restore' ); ?></h2>
 			<p>
-				<button type="button" class="button button-primary" id="wpguard_nc_backup_now"><?php esc_html_e( 'Back Up Now', 'wpguard-nc-backup' ); ?></button>
-				<button type="button" class="button" id="wpguard_nc_download_now"><?php esc_html_e( 'Download Now', 'wpguard-nc-backup' ); ?></button>
-				<button type="button" class="button" id="wpguard_nc_cancel_job"><?php esc_html_e( 'Cancel / Reset Stuck Job', 'wpguard-nc-backup' ); ?></button>
+				<button type="button" class="button button-primary" id="wpthistle_backup_backup_now"><?php esc_html_e( 'Back Up Now', 'wpthistle-backup-restore' ); ?></button>
+				<button type="button" class="button" id="wpthistle_backup_download_now"><?php esc_html_e( 'Download Now', 'wpthistle-backup-restore' ); ?></button>
+				<button type="button" class="button" id="wpthistle_backup_cancel_job"><?php esc_html_e( 'Cancel / Reset Stuck Job', 'wpthistle-backup-restore' ); ?></button>
 			</p>
-			<p class="description"><?php esc_html_e( 'Back Up Now sends this backup to your configured cloud storage destination. Download Now instead packages the same backup into one .zip and lets you save it straight to your own computer -- no cloud storage configuration required. A pending download is NOT deleted automatically just because you clicked Download (the server cannot confirm your browser received every byte) -- it stays on this server, guarded against direct web access, until you click "Delete local copy" below, start another Download Now backup (which replaces it), or 24 hours pass, whichever comes first.', 'wpguard-nc-backup' ); ?></p>
-			<p class="description"><?php esc_html_e( 'If a backup never completes (e.g. the site had no other traffic to trigger the WP-Cron fallback), use Cancel to mark it failed so a new backup can start. Already-uploaded parts of a cancelled job are left on Nextcloud untouched.', 'wpguard-nc-backup' ); ?></p>
-			<div id="wpguard_nc_job_status" role="status"></div>
-			<p id="wpguard_nc_job_download_row" style="display:none;"><a class="button button-primary" id="wpguard_nc_job_download_link" href="#"><?php esc_html_e( 'Download backup (.zip)', 'wpguard-nc-backup' ); ?></a> <button type="button" class="button" id="wpguard_nc_job_download_delete"><?php esc_html_e( 'Delete local copy', 'wpguard-nc-backup' ); ?></button></p>
-			<pre id="wpguard_nc_job_log" style="max-height:300px;overflow:auto;background:#fff;border:1px solid #ccd0d4;padding:8px;"></pre>
+			<p class="description"><?php esc_html_e( 'Back Up Now sends this backup to your configured cloud storage destination. Download Now instead packages the same backup into one .zip and lets you save it straight to your own computer -- no cloud storage configuration required. A pending download is NOT deleted automatically just because you clicked Download (the server cannot confirm your browser received every byte) -- it stays on this server, guarded against direct web access, until you click "Delete local copy" below, start another Download Now backup (which replaces it), or 24 hours pass, whichever comes first.', 'wpthistle-backup-restore' ); ?></p>
+			<p class="description"><?php esc_html_e( 'If a backup never completes (e.g. the site had no other traffic to trigger the WP-Cron fallback), use Cancel to mark it failed so a new backup can start. Already-uploaded parts of a cancelled job are left on Nextcloud untouched.', 'wpthistle-backup-restore' ); ?></p>
+			<div id="wpthistle_backup_job_status" role="status"></div>
+			<p id="wpthistle_backup_job_download_row" style="display:none;"><a class="button button-primary" id="wpthistle_backup_job_download_link" href="#"><?php esc_html_e( 'Download backup (.zip)', 'wpthistle-backup-restore' ); ?></a> <button type="button" class="button" id="wpthistle_backup_job_download_delete"><?php esc_html_e( 'Delete local copy', 'wpthistle-backup-restore' ); ?></button></p>
+			<pre id="wpthistle_backup_job_log" style="max-height:300px;overflow:auto;background:#fff;border:1px solid #ccd0d4;padding:8px;"></pre>
 
-			<h2><?php esc_html_e( 'Restore', 'wpguard-nc-backup' ); ?></h2>
-			<p class="description"><strong><?php esc_html_e( 'This overwrites this site\'s current content and database with a chosen backup, in place.', 'wpguard-nc-backup' ); ?></strong>
-			<?php esc_html_e( 'Nothing is ever permanently deleted by it — anything it replaces is renamed aside (database tables under a "wpgbak…" prefix, files into a timestamped rollback folder) for manual recovery, never dropped outright. Still: back up anything you cannot afford to lose before using this on a site that matters.', 'wpguard-nc-backup' ); ?></p>
+			<h2><?php esc_html_e( 'Restore', 'wpthistle-backup-restore' ); ?></h2>
+			<p class="description"><strong><?php esc_html_e( 'This overwrites this site\'s current content and database with a chosen backup, in place.', 'wpthistle-backup-restore' ); ?></strong>
+			<?php esc_html_e( 'Nothing is ever permanently deleted by it — anything it replaces is renamed aside (database tables under a "wpgbak…" prefix, files into a timestamped rollback folder) for manual recovery, never dropped outright. Still: back up anything you cannot afford to lose before using this on a site that matters.', 'wpthistle-backup-restore' ); ?></p>
 			<table class="form-table" role="presentation">
 				<tr>
-					<th><?php esc_html_e( 'Source', 'wpguard-nc-backup' ); ?></th>
+					<th><?php esc_html_e( 'Source', 'wpthistle-backup-restore' ); ?></th>
 					<td>
-						<label><input type="radio" name="wpguard_nc_restore_source" value="nextcloud" checked> <?php esc_html_e( 'Choose from configured cloud storage', 'wpguard-nc-backup' ); ?></label>
-						<select id="wpguard_nc_restore_backup_list" style="margin-left:8px;"><option value=""><?php esc_html_e( '— loading —', 'wpguard-nc-backup' ); ?></option></select>
+						<label><input type="radio" name="wpthistle_backup_restore_source" value="nextcloud" checked> <?php esc_html_e( 'Choose from configured cloud storage', 'wpthistle-backup-restore' ); ?></label>
+						<select id="wpthistle_backup_restore_backup_list" style="margin-left:8px;"><option value=""><?php esc_html_e( '— loading —', 'wpthistle-backup-restore' ); ?></option></select>
 						<br><br>
-						<label><input type="radio" name="wpguard_nc_restore_source" value="upload"> <?php esc_html_e( 'Upload a backup bundle', 'wpguard-nc-backup' ); ?></label>
-						<input type="file" id="wpguard_nc_restore_upload_file" accept=".zip" style="margin-left:8px;">
-						<button type="button" class="button" id="wpguard_nc_restore_upload_btn"><?php esc_html_e( 'Upload', 'wpguard-nc-backup' ); ?></button>
-						<span id="wpguard_nc_restore_upload_result"></span>
-						<p class="description"><?php esc_html_e( 'A single .zip containing manifest.json, COMPLETE.json, database.sql.gz, and files.part-*.zip at its root. Only supports a self-contained (full) backup — an incremental backup\'s ancestor parts can only be reached via the Nextcloud source.', 'wpguard-nc-backup' ); ?></p>
+						<label><input type="radio" name="wpthistle_backup_restore_source" value="upload"> <?php esc_html_e( 'Upload a backup bundle', 'wpthistle-backup-restore' ); ?></label>
+						<input type="file" id="wpthistle_backup_restore_upload_file" accept=".zip" style="margin-left:8px;">
+						<button type="button" class="button" id="wpthistle_backup_restore_upload_btn"><?php esc_html_e( 'Upload', 'wpthistle-backup-restore' ); ?></button>
+						<span id="wpthistle_backup_restore_upload_result"></span>
+						<p class="description"><?php esc_html_e( 'A single .zip containing manifest.json, COMPLETE.json, database.sql.gz, and files.part-*.zip at its root. Only supports a self-contained (full) backup — an incremental backup\'s ancestor parts can only be reached via the Nextcloud source.', 'wpthistle-backup-restore' ); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="wpguard_nc_restore_confirm_text"><?php esc_html_e( 'Confirm', 'wpguard-nc-backup' ); ?></label></th>
+					<th><label for="wpthistle_backup_restore_confirm_text"><?php esc_html_e( 'Confirm', 'wpthistle-backup-restore' ); ?></label></th>
 					<td>
-						<input type="text" id="wpguard_nc_restore_confirm_text" class="regular-text" placeholder="RESTORE">
-						<p class="description"><?php esc_html_e( 'Type RESTORE to enable the button below.', 'wpguard-nc-backup' ); ?></p>
-						<label><input type="checkbox" id="wpguard_nc_restore_confirm_url"> <?php esc_html_e( 'Migrate this backup to this site: this backup is from a different site, and I want every URL in it rewritten to this site\'s own address', 'wpguard-nc-backup' ); ?></label>
-						<p class="description"><?php esc_html_e( 'Checking this does not just skip the mismatch warning -- it rewrites every occurrence of the backup\'s own domain (in post content, widget settings, and everywhere else WordPress stores a URL) to this site\'s domain, before anything is restored live. Leave unchecked to restore this backup onto the exact site it came from.', 'wpguard-nc-backup' ); ?></p>
+						<input type="text" id="wpthistle_backup_restore_confirm_text" class="regular-text" placeholder="RESTORE">
+						<p class="description"><?php esc_html_e( 'Type RESTORE to enable the button below.', 'wpthistle-backup-restore' ); ?></p>
+						<label><input type="checkbox" id="wpthistle_backup_restore_confirm_url"> <?php esc_html_e( 'Migrate this backup to this site: this backup is from a different site, and I want every URL in it rewritten to this site\'s own address', 'wpthistle-backup-restore' ); ?></label>
+						<p class="description"><?php esc_html_e( 'Checking this does not just skip the mismatch warning -- it rewrites every occurrence of the backup\'s own domain (in post content, widget settings, and everywhere else WordPress stores a URL) to this site\'s domain, before anything is restored live. Leave unchecked to restore this backup onto the exact site it came from.', 'wpthistle-backup-restore' ); ?></p>
 					</td>
 				</tr>
 			</table>
 			<p>
-				<button type="button" class="button button-primary" id="wpguard_nc_restore_start" disabled><?php esc_html_e( 'Restore Now', 'wpguard-nc-backup' ); ?></button>
+				<button type="button" class="button button-primary" id="wpthistle_backup_restore_start" disabled><?php esc_html_e( 'Restore Now', 'wpthistle-backup-restore' ); ?></button>
 			</p>
-			<div id="wpguard_nc_restore_status" role="status"></div>
-			<pre id="wpguard_nc_restore_log" style="max-height:300px;overflow:auto;background:#fff;border:1px solid #ccd0d4;padding:8px;"></pre>
+			<div id="wpthistle_backup_restore_status" role="status"></div>
+			<pre id="wpthistle_backup_restore_log" style="max-height:300px;overflow:auto;background:#fff;border:1px solid #ccd0d4;padding:8px;"></pre>
 		</div>
 		<script>
 		(function(){
@@ -759,26 +759,26 @@ class Admin {
 					.then(function(r){ return r.json(); });
 			}
 
-			document.getElementById('wpguard_nc_save').addEventListener('click', function(){
-				post('wpguard_nc_save_settings', {
-					backend: document.getElementById('wpguard_nc_backend').value,
-					nextcloud_url: document.getElementById('wpguard_nc_url').value,
-					nextcloud_user: document.getElementById('wpguard_nc_user').value,
-					app_password: document.getElementById('wpguard_nc_pw').value,
-					remote_folder: document.getElementById('wpguard_nc_folder').value,
-					ca_bundle_path: document.getElementById('wpguard_nc_ca').value,
-					schedule: document.getElementById('wpguard_nc_schedule').value,
-					retention_count: document.getElementById('wpguard_nc_retention').value,
-					incremental_enabled: document.getElementById('wpguard_nc_incremental').checked ? '1' : ''
+			document.getElementById('wpthistle_backup_save').addEventListener('click', function(){
+				post('wpthistle_backup_save_settings', {
+					backend: document.getElementById('wpthistle_backup_backend').value,
+					nextcloud_url: document.getElementById('wpthistle_backup_url').value,
+					nextcloud_user: document.getElementById('wpthistle_backup_user').value,
+					app_password: document.getElementById('wpthistle_backup_pw').value,
+					remote_folder: document.getElementById('wpthistle_backup_folder').value,
+					ca_bundle_path: document.getElementById('wpthistle_backup_ca').value,
+					schedule: document.getElementById('wpthistle_backup_schedule').value,
+					retention_count: document.getElementById('wpthistle_backup_retention').value,
+					incremental_enabled: document.getElementById('wpthistle_backup_incremental').checked ? '1' : ''
 				}).then(function(res){
-					document.getElementById('wpguard_nc_settings_result').textContent = res.data.message;
+					document.getElementById('wpthistle_backup_settings_result').textContent = res.data.message;
 				});
 			});
 
-			document.getElementById('wpguard_nc_test').addEventListener('click', function(){
-				document.getElementById('wpguard_nc_settings_result').textContent = 'Testing...';
-				post('wpguard_nc_test_connection', {}).then(function(res){
-					document.getElementById('wpguard_nc_settings_result').textContent = res.data.message;
+			document.getElementById('wpthistle_backup_test').addEventListener('click', function(){
+				document.getElementById('wpthistle_backup_settings_result').textContent = 'Testing...';
+				post('wpthistle_backup_test_connection', {}).then(function(res){
+					document.getElementById('wpthistle_backup_settings_result').textContent = res.data.message;
 				});
 			});
 
@@ -789,12 +789,12 @@ class Admin {
 
 			function renderJob(job) {
 				currentJobId = job.job_id || currentJobId;
-				renderJobInto('wpguard_nc_job_status', 'wpguard_nc_job_log', job);
-				var row = document.getElementById('wpguard_nc_job_download_row');
+				renderJobInto('wpthistle_backup_job_status', 'wpthistle_backup_job_log', job);
+				var row = document.getElementById('wpthistle_backup_job_download_row');
 				if (job.download_available) {
 					var url = ajaxUrl.replace('admin-ajax.php', 'admin-post.php') +
-						'?action=wpguard_nc_download_bundle&job_id=' + encodeURIComponent(job.job_id) + '&nonce=' + encodeURIComponent(downloadNonce);
-					document.getElementById('wpguard_nc_job_download_link').href = url;
+						'?action=wpthistle_backup_download_bundle&job_id=' + encodeURIComponent(job.job_id) + '&nonce=' + encodeURIComponent(downloadNonce);
+					document.getElementById('wpthistle_backup_job_download_link').href = url;
 					row.style.display = '';
 				} else {
 					row.style.display = 'none';
@@ -802,7 +802,7 @@ class Admin {
 			}
 
 			function pollJob(jobId) {
-				post('wpguard_nc_advance_job', { job_id: jobId }).then(function(res){
+				post('wpthistle_backup_advance_job', { job_id: jobId }).then(function(res){
 					var job = res.data;
 					renderJob(job);
 					if (job.status !== 'verified' && job.status !== 'failed') {
@@ -813,18 +813,18 @@ class Admin {
 					// 5xx) must not silently stop polling forever -- the
 					// WP-Cron fallback keeps the job itself moving
 					// regardless; this just needs to keep checking.
-					document.getElementById('wpguard_nc_job_status').textContent = 'Network error polling for status -- the backup may still be running via WP-Cron. Retrying...';
+					document.getElementById('wpthistle_backup_job_status').textContent = 'Network error polling for status -- the backup may still be running via WP-Cron. Retrying...';
 					setTimeout(function(){ pollJob(jobId); }, 2000);
 				});
 			}
 
 			function renderRestoreJob(job) {
 				currentRestoreJobId = job.job_id || currentRestoreJobId;
-				renderJobInto('wpguard_nc_restore_status', 'wpguard_nc_restore_log', job);
+				renderJobInto('wpthistle_backup_restore_status', 'wpthistle_backup_restore_log', job);
 			}
 
 			function pollRestoreJob(jobId) {
-				post('wpguard_nc_advance_job', { job_id: jobId }).then(function(res){
+				post('wpthistle_backup_advance_job', { job_id: jobId }).then(function(res){
 					var job = res.data;
 					renderRestoreJob(job);
 					if (job.status !== 'verified' && job.status !== 'failed') {
@@ -840,45 +840,45 @@ class Admin {
 					// to keep checking rather than leave the admin
 					// looking at a frozen status box with no indication
 					// anything is still happening.
-					document.getElementById('wpguard_nc_restore_status').textContent = 'Network error polling for status -- the restore may still be running via WP-Cron. Retrying...';
+					document.getElementById('wpthistle_backup_restore_status').textContent = 'Network error polling for status -- the restore may still be running via WP-Cron. Retrying...';
 					setTimeout(function(){ pollRestoreJob(jobId); }, 2000);
 				});
 			}
 
 			function startBackup(destination) {
-				document.getElementById('wpguard_nc_job_download_row').style.display = 'none';
-				post('wpguard_nc_start_backup', { destination: destination }).then(function(res){
+				document.getElementById('wpthistle_backup_job_download_row').style.display = 'none';
+				post('wpthistle_backup_start_backup', { destination: destination }).then(function(res){
 					if (res.success) {
 						pollJob(res.data.job_id);
 					} else {
-						document.getElementById('wpguard_nc_job_status').textContent = res.data.message;
+						document.getElementById('wpthistle_backup_job_status').textContent = res.data.message;
 					}
 				});
 			}
-			document.getElementById('wpguard_nc_backup_now').addEventListener('click', function(){
+			document.getElementById('wpthistle_backup_backup_now').addEventListener('click', function(){
 				startBackup('nextcloud');
 			});
-			document.getElementById('wpguard_nc_download_now').addEventListener('click', function(){
+			document.getElementById('wpthistle_backup_download_now').addEventListener('click', function(){
 				startBackup('download');
 			});
-			document.getElementById('wpguard_nc_job_download_delete').addEventListener('click', function(){
+			document.getElementById('wpthistle_backup_job_download_delete').addEventListener('click', function(){
 				if (!currentJobId) { return; }
 				if (!window.confirm('Delete this local backup bundle? This cannot be undone.')) { return; }
-				post('wpguard_nc_delete_download_bundle', { job_id: currentJobId }).then(function(res){
-					document.getElementById('wpguard_nc_job_download_row').style.display = 'none';
-					document.getElementById('wpguard_nc_job_status').textContent = res.data.message;
+				post('wpthistle_backup_delete_download_bundle', { job_id: currentJobId }).then(function(res){
+					document.getElementById('wpthistle_backup_job_download_row').style.display = 'none';
+					document.getElementById('wpthistle_backup_job_status').textContent = res.data.message;
 				});
 			});
 
-			document.getElementById('wpguard_nc_cancel_job').addEventListener('click', function(){
+			document.getElementById('wpthistle_backup_cancel_job').addEventListener('click', function(){
 				if (!window.confirm('Cancel the current/stuck backup job? This marks it failed so a new backup can start. Already-uploaded parts on Nextcloud are left untouched. This cannot be undone.')) {
 					return;
 				}
-				post('wpguard_nc_cancel_job', currentJobId ? { job_id: currentJobId } : {}).then(function(res){
+				post('wpthistle_backup_cancel_job', currentJobId ? { job_id: currentJobId } : {}).then(function(res){
 					if (res.success) {
 						renderJob(res.data);
 					} else {
-						document.getElementById('wpguard_nc_job_status').textContent = res.data.message;
+						document.getElementById('wpthistle_backup_job_status').textContent = res.data.message;
 					}
 				});
 			});
@@ -891,7 +891,7 @@ class Admin {
 			// Nextcloud or the DB directly. The latest job may be a
 			// backup OR a restore (Job_Store::get_latest() doesn't
 			// distinguish) -- routed to the matching UI section by kind.
-			post('wpguard_nc_job_status', {}).then(function(res){
+			post('wpthistle_backup_job_status', {}).then(function(res){
 				var job = res.data;
 				if (job.status && job.status !== 'none') {
 					if (job.kind === 'restore') {
@@ -911,13 +911,13 @@ class Admin {
 			// --- Restore ---
 
 			function selectedRestoreSource() {
-				var checked = document.querySelector('input[name="wpguard_nc_restore_source"]:checked');
+				var checked = document.querySelector('input[name="wpthistle_backup_restore_source"]:checked');
 				return checked ? checked.value : 'nextcloud';
 			}
 
 			function loadRestorableBackups() {
-				var select = document.getElementById('wpguard_nc_restore_backup_list');
-				post('wpguard_nc_list_restorable_backups', {}).then(function(res){
+				var select = document.getElementById('wpthistle_backup_restore_backup_list');
+				post('wpthistle_backup_list_restorable_backups', {}).then(function(res){
 					select.innerHTML = '';
 					if (!res.success) {
 						var opt = document.createElement('option');
@@ -941,21 +941,21 @@ class Admin {
 			}
 			loadRestorableBackups();
 
-			document.getElementById('wpguard_nc_restore_upload_btn').addEventListener('click', function(){
-				var fileInput = document.getElementById('wpguard_nc_restore_upload_file');
+			document.getElementById('wpthistle_backup_restore_upload_btn').addEventListener('click', function(){
+				var fileInput = document.getElementById('wpthistle_backup_restore_upload_file');
 				if (!fileInput.files.length) {
-					document.getElementById('wpguard_nc_restore_upload_result').textContent = 'Choose a .zip file first.';
+					document.getElementById('wpthistle_backup_restore_upload_result').textContent = 'Choose a .zip file first.';
 					return;
 				}
 				var body = new FormData();
-				body.append('action', 'wpguard_nc_upload_restore_bundle');
+				body.append('action', 'wpthistle_backup_upload_restore_bundle');
 				body.append('nonce', nonce);
 				body.append('bundle', fileInput.files[0]);
-				document.getElementById('wpguard_nc_restore_upload_result').textContent = 'Uploading...';
+				document.getElementById('wpthistle_backup_restore_upload_result').textContent = 'Uploading...';
 				fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body })
 					.then(function(r){ return r.json(); })
 					.then(function(res){
-						document.getElementById('wpguard_nc_restore_upload_result').textContent = res.data.message;
+						document.getElementById('wpthistle_backup_restore_upload_result').textContent = res.data.message;
 						if (res.success) {
 							currentUploadToken = res.data.upload_token;
 						}
@@ -963,27 +963,27 @@ class Admin {
 			});
 
 			function updateRestoreButtonState() {
-				var confirmed = document.getElementById('wpguard_nc_restore_confirm_text').value.trim() === 'RESTORE';
-				document.getElementById('wpguard_nc_restore_start').disabled = !confirmed;
+				var confirmed = document.getElementById('wpthistle_backup_restore_confirm_text').value.trim() === 'RESTORE';
+				document.getElementById('wpthistle_backup_restore_start').disabled = !confirmed;
 			}
-			document.getElementById('wpguard_nc_restore_confirm_text').addEventListener('input', updateRestoreButtonState);
+			document.getElementById('wpthistle_backup_restore_confirm_text').addEventListener('input', updateRestoreButtonState);
 
-			document.getElementById('wpguard_nc_restore_start').addEventListener('click', function(){
+			document.getElementById('wpthistle_backup_restore_start').addEventListener('click', function(){
 				var source = selectedRestoreSource();
 				var payload = {
 					source: source,
-					confirm_url_mismatch: document.getElementById('wpguard_nc_restore_confirm_url').checked ? '1' : ''
+					confirm_url_mismatch: document.getElementById('wpthistle_backup_restore_confirm_url').checked ? '1' : ''
 				};
 				if (source === 'nextcloud') {
-					var backupId = document.getElementById('wpguard_nc_restore_backup_list').value;
+					var backupId = document.getElementById('wpthistle_backup_restore_backup_list').value;
 					if (!backupId) {
-						document.getElementById('wpguard_nc_restore_status').textContent = 'Choose a backup first.';
+						document.getElementById('wpthistle_backup_restore_status').textContent = 'Choose a backup first.';
 						return;
 					}
 					payload.backup_id = backupId;
 				} else {
 					if (!currentUploadToken) {
-						document.getElementById('wpguard_nc_restore_status').textContent = 'Upload a backup bundle first.';
+						document.getElementById('wpthistle_backup_restore_status').textContent = 'Upload a backup bundle first.';
 						return;
 					}
 					payload.upload_token = currentUploadToken;
@@ -991,11 +991,11 @@ class Admin {
 				if (!window.confirm('This will overwrite this site\'s current content and database with the chosen backup, in place. Continue?')) {
 					return;
 				}
-				post('wpguard_nc_start_restore', payload).then(function(res){
+				post('wpthistle_backup_start_restore', payload).then(function(res){
 					if (res.success) {
 						pollRestoreJob(res.data.job_id);
 					} else {
-						document.getElementById('wpguard_nc_restore_status').textContent = res.data.message;
+						document.getElementById('wpthistle_backup_restore_status').textContent = res.data.message;
 					}
 				});
 			});

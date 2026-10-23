@@ -1,5 +1,5 @@
 <?php
-namespace WPGuard\NCBackup;
+namespace WPThistle\BackupRestore;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -14,12 +14,12 @@ class Job_Store {
 
 	public static function table_name(): string {
 		global $wpdb;
-		return $wpdb->prefix . 'wpguard_nc_jobs';
+		return $wpdb->prefix . 'wpthistle_backup_jobs';
 	}
 
 	public static function install_or_upgrade_schema(): void {
-		$installed = get_option( 'wpguard_nc_db_schema_version', 0 );
-		if ( (int) $installed >= WPGUARD_NC_DB_SCHEMA_VERSION ) {
+		$installed = get_option( 'wpthistle_backup_db_schema_version', 0 );
+		if ( (int) $installed >= WPTHISTLE_BACKUP_DB_SCHEMA_VERSION ) {
 			return;
 		}
 		global $wpdb;
@@ -40,7 +40,7 @@ class Job_Store {
 			PRIMARY KEY  (job_id)
 		) {$charset_collate};";
 		dbDelta( $sql );
-		update_option( 'wpguard_nc_db_schema_version', WPGUARD_NC_DB_SCHEMA_VERSION, true );
+		update_option( 'wpthistle_backup_db_schema_version', WPTHISTLE_BACKUP_DB_SCHEMA_VERSION, true );
 	}
 
 	/**
@@ -193,7 +193,7 @@ class Job_Store {
 	}
 
 	private static function lock_name( string $job_id ): string {
-		return 'wpguard_nc_job_' . $job_id;
+		return 'wpthistle_backup_job_' . $job_id;
 	}
 
 	/**
