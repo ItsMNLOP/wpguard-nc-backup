@@ -63,6 +63,7 @@ jobs:
           WP_SOURCE_DB_NAME=$(env_val WP_SOURCE_DB_NAME)
           WP_SOURCE_DB_USER=$(env_val WP_SOURCE_DB_USER)
           WP_SOURCE_DB_PASSWORD=$(env_val WP_SOURCE_DB_PASSWORD)
+          WP_SOURCE_TABLE_PREFIX=$(env_val WP_SOURCE_TABLE_PREFIX)
           WP_ADMIN_USER=$(env_val WP_ADMIN_USER)
           WP_ADMIN_PASSWORD=$(env_val WP_ADMIN_PASSWORD)
           WP_ADMIN_EMAIL=$(env_val WP_ADMIN_EMAIL)
@@ -73,6 +74,7 @@ jobs:
             docker compose run --rm \
               -e WORDPRESS_DB_HOST=db-source -e WORDPRESS_DB_NAME="$WP_SOURCE_DB_NAME" \
               -e WORDPRESS_DB_USER="$WP_SOURCE_DB_USER" -e WORDPRESS_DB_PASSWORD="$WP_SOURCE_DB_PASSWORD" \
+              -e WORDPRESS_TABLE_PREFIX="$WP_SOURCE_TABLE_PREFIX" \
               wpcli wp --path=/var/www/html-source "$@"
           }
 

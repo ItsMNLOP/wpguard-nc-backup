@@ -18,11 +18,13 @@ cd "$DOCKER_DIR"
 
 env_val() { grep "^$1=" .env | cut -d= -f2-; }
 WP_SOURCE_DB_PASSWORD=$(env_val WP_SOURCE_DB_PASSWORD)
+WP_SOURCE_TABLE_PREFIX=$(env_val WP_SOURCE_TABLE_PREFIX)
 
 wp_source() {
   MSYS_NO_PATHCONV=1 docker compose -p wpguard-test --env-file .env run --rm \
     -e WORDPRESS_DB_HOST=db-source -e WORDPRESS_DB_NAME=wp_source \
     -e WORDPRESS_DB_USER=wp_source -e WORDPRESS_DB_PASSWORD="$WP_SOURCE_DB_PASSWORD" \
+    -e WORDPRESS_TABLE_PREFIX="$WP_SOURCE_TABLE_PREFIX" \
     wpcli wp --path=/var/www/html-source "$@" 2>&1 | grep -v '^ Container' || true
 }
 
