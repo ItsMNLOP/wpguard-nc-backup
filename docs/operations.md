@@ -12,9 +12,15 @@ without checking Nextcloud or the DB directly).
 
 CLI (used by the E2E harness, also usable by an admin with shell access):
 ```
-wp wpguard-nc-backup run
+wp wpguard-nc-backup run [--destination=nextcloud|download]
 wp wpguard-nc-backup status
 ```
+
+`--destination=download` runs a credential-free backup and reports the
+local bundle path on success — the WP-CLI equivalent of "Download Now"
+(see below), fixed 2026-10-22 (previously CLI `run` hard-required
+Nextcloud credentials unconditionally, even though the admin UI's AJAX
+path already didn't).
 
 ## Downloadable backups (Phase 3)
 
@@ -329,6 +335,19 @@ job-state-machine shape backups use (same table, same status
 vocabulary, same `try_lock()`/`release_lock()` mutual exclusion via
 `Job_Store`), so a restore in progress blocks a new backup from
 starting and vice versa automatically.
+
+CLI equivalent (fixed 2026-10-22 — previously CLI `restore` only ever
+pulled from Nextcloud, with no counterpart to the admin UI's upload
+path at all):
+```
+wp wpguard-nc-backup restore <backup_id> [--confirm-url-mismatch]
+wp wpguard-nc-backup restore_local <path-to-zip> [--confirm-url-mismatch]
+```
+`restore_local` extracts the given zip and drives the restore exactly
+like an uploaded bundle would (`Restore_Orchestrator::extract_bundle_zip()`
+is the one shared implementation both paths call), so it has the same
+zero-Nextcloud-dependency property — pairs naturally with
+`run --destination=download`'s local bundle path above.
 
 **Two-phase design** (the only way this was judged safe to build at
 all): `restore_acquire` and `restore_preflight` are entirely

@@ -1,5 +1,50 @@
 # STATUS — WPGuard Nextcloud Backup plugin
 
+## WP-CLI credential-free paths, CLEAR TO SHIP, 2026-10-22
+
+Fixes the CLI gap found while re-checking the Phase 3 candidates list:
+`CLI_Command::run()`/`restore()` hard-required Nextcloud credentials
+unconditionally, with no CLI counterpart to the admin AJAX path's
+`destination=download`/upload-bundle routes. `run --destination=download`
+now mirrors `ajax_start_backup()`'s own gating exactly; a new
+`restore_local <path-to-zip>` command mirrors the browser's "Upload a
+backup bundle" path, sharing its exact extraction logic
+(`Restore_Orchestrator::extract_bundle_zip()`, pulled out of
+`ajax_upload_restore_bundle()` so this path-safety-critical code has
+one implementation, not two that could drift apart) rather than a
+second copy of it.
+
+New `tests/unit/RestoreBundleExtractionTest.php` (6 tests: flat
+bundle, wrapper-directory stripping, traversal-entry refusal, mixed-
+nesting refusal, non-zip rejection, forced-.htaccess-rewrite) --
+133/133 -> 139/139 unit tests. Live-verified against the real
+disposable stack: a real `--destination=download` backup with zero
+Nextcloud configured, then `restore_local` against that exact bundle,
+restored successfully. Also found and fixed, pre-existing/unrelated to
+this change: the live `wp-restore` container had `wpmb_` baked into
+its own `WORDPRESS_TABLE_PREFIX` from 29 hours earlier (a stale
+leftover from before `.env` was corrected -- containers don't pick up
+an edited `.env` without a recreate), which broke
+`run-e2e-download-backup.sh`'s real-HTTP login step until
+`--force-recreate wp-restore` was run. Full regression re-run clean
+after both fixes: `run-e2e-download-backup.sh`, `run-e2e.sh`,
+`run-e2e-const-override.sh`, `run-e2e-restore.sh`,
+`run-e2e-restore-migration.sh`, `run-e2e-cancel-job.sh`. Full detail:
+`docs/threat-model.md` T23.
+
+**Vex security audit: CLEAR TO SHIP, one LOW (LOW-CLI-HOLD-1)** --
+`restore_local()` extracted the full bundle to disk before checking
+for a running job, orphaning it indefinitely on lock contention (no
+sweeper covers upload-holding dirs). Fixed same-day: the running-job
+check now happens first, and the holding dir is cleaned up on every
+early-exit path, including one Vex's own writeup incorrectly said
+didn't need it (checked `create_restore_job()`'s source directly --
+its `''` return means no checkpoint was ever created, so `fail()`
+never runs for it either). Fix proven live: a manufactured
+lock-contention case now refuses immediately with zero bytes written.
+139/139 unit tests, full regression re-run green. Full detail:
+`docs/threat-model.md` T23.
+
 ## Doc correction — CI status was stale, 2026-10-21
 
 `gh run list` against the real GitHub repo shows CI has actually been
